@@ -137,9 +137,16 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
                       file=sys.stderr)
         try:
             items = parse_one(text, pdf)
+        except llm.QuotaExhausted as e:
+            # 그날은 회복되지 않는다. 남은 문서를 헛돌리지 않고 멈춘다.
+            # parsed_at 이 null 로 남아 다음 실행이 여기서 이어받는다.
+            print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  {len(docs) - i + 1}건이 남았습니다. 한도 회복 후 같은 명령을"
+                  " 다시 실행하면 남은 것만 처리합니다.", file=sys.stderr)
+            break
         except llm.LLMError as e:
             fail += 1
-            print(f"  [{i}/{len(docs)}] {mcode} 실패: {str(e)[:120]}", file=sys.stderr)
+            print(f"  [{i}/{len(docs)}] {mcode} 실패: {str(e)[:150]}", file=sys.stderr)
             continue
 
         with conn.cursor() as cur:

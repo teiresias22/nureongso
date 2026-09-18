@@ -32,7 +32,12 @@ class LLMError(RuntimeError):
 
 
 class RateLimited(LLMError):
-    """무료 한도 초과. 호출부가 기다렸다 다시 시도할 수 있게 따로 둔다."""
+    """분당 한도 초과. 잠깐 기다리면 풀린다."""
+
+
+class QuotaExhausted(LLMError):
+    """일일 한도 소진. 기다려도 그날은 안 풀리므로 재시도하지 말고 멈춰야 한다.
+    제미나이 무료 등급은 모델당 하루 500건이고 태평양 시간 자정에 초기화된다."""
 
 
 # --------------------------------------------------------------------------- Gemini
@@ -103,9 +108,9 @@ def gemini_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> s
         params={"key": gemini_key()}, json=body, timeout=180,
     )
     if r.status_code == 429:
-        raise RateLimited(r.text[:300])
+        raise _quota_error(r)
     if r.status_code >= 400:
-        raise LLMError(f"{r.status_code}: {r.text[:300]}")
+        raise LLMError(f"{r.status_code}: {_flat(r.text)}")
     data = r.json()
     cands = data.get("candidates") or []
     if not cands:
@@ -115,6 +120,28 @@ def gemini_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> s
     if not text:
         raise LLMError(f"빈 응답 (finishReason={cands[0].get('finishReason')})")
     return text
+
+
+def _flat(text: str, limit: int = 300) -> str:
+    """오류 본문은 여러 줄 JSON 이라 그대로 찍으면 첫 줄만 보인다."""
+    return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def _quota_error(r: httpx.Response) -> LLMError:
+    """분당 제한과 일일 한도 소진을 구분한다."""
+    try:
+        for det in r.json()["error"].get("details", []):
+            for v in det.get("violations", []):
+                qid = v.get("quotaId", "")
+                if "PerDay" in qid:
+                    return QuotaExhausted(
+                        f"제미나이 무료 일일 한도 소진 ({qid}, 한도 {v.get('quotaValue')}건)."
+                        " 태평양 시간 자정에 초기화됩니다. 내일 다시 실행하거나"
+                        " LLM_PROVIDER=ollama 로 바꾸세요."
+                    )
+    except Exception:
+        pass
+    return RateLimited(_flat(r.text))
 
 
 # --------------------------------------------------------------------------- Ollama
@@ -153,9 +180,9 @@ def anthropic_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -
         timeout=180,
     )
     if r.status_code == 429:
-        raise RateLimited(r.text[:300])
+        raise RateLimited(_flat(r.text))
     if r.status_code >= 400:
-        raise LLMError(f"{r.status_code}: {r.text[:300]}")
+        raise LLMError(f"{r.status_code}: {_flat(r.text)}")
     return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()
 
 
