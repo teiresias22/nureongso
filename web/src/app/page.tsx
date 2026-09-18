@@ -10,7 +10,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
 
   const [{ data: members }, { data: stats }] = await Promise.all([
     db.from("member").select("*").eq("is_incumbent", true).order("name"),
-    db.from("member_stats").select("*"),
+    db.from("member_stats").select("*").eq("is_incumbent", true),
   ]);
 
   if (!members?.length) return <Empty />;
@@ -97,7 +97,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     <span>
                       표결참여{" "}
                       <b className="text-foreground">
-                        {pct(s?.vote_attended ?? 0, s?.vote_total ?? 0)}%
+                        {pct((s?.vote_total ?? 0) - (s?.vote_absent ?? 0), s?.vote_total ?? 0)}%
                       </b>
                     </span>
                   </div>

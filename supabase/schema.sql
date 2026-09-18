@@ -144,23 +144,55 @@ create table if not exists ingest_run (
   error      text
 );
 
--- 의원별 요약 (목록 화면용). 수집 후 refresh.
+-- 의원별 요약. 수집 후 `ingest.py refresh` 로 갱신한다.
+--
+-- 집계는 반드시 여기(SQL)에서 한다. PostgREST 는 한 번에 최대 1000행만 반환하므로
+-- 화면에서 행을 받아 세면 1000건이 넘는 의원의 수치가 조용히 잘린다.
 create materialized view if not exists member_stats as
 select
   m.code,
-  count(*) filter (where s.role = 'rep')                      as rep_count,
-  count(*) filter (where s.role = 'co')                       as co_count,
-  count(*) filter (where s.role = 'rep' and b.proc_result like '%가결%') as rep_passed,
-  (select count(*) from vote v where v.member_code = m.code and v.result <> '불참') as vote_attended,
-  (select count(*) from vote v where v.member_code = m.code) as vote_total
+  m.is_incumbent,
+  coalesce(s.rep_count, 0)   as rep_count,
+  coalesce(s.co_count, 0)    as co_count,
+  coalesce(s.rep_passed, 0)  as rep_passed,
+  coalesce(s.rep_pending, 0) as rep_pending,
+  coalesce(v.vote_total, 0)  as vote_total,
+  coalesce(v.vote_yes, 0)    as vote_yes,
+  coalesce(v.vote_no, 0)     as vote_no,
+  coalesce(v.vote_blank, 0)  as vote_blank,
+  coalesce(v.vote_absent, 0) as vote_absent
 from member m
-left join bill_sponsor s on s.member_code = m.code
-left join bill b on b.bill_id = s.bill_id
-group by m.code;
+left join (
+  select s.member_code,
+    count(*) filter (where s.role = 'rep')                                as rep_count,
+    count(*) filter (where s.role = 'co')                                 as co_count,
+    count(*) filter (where s.role = 'rep' and b.proc_result like '%가결%') as rep_passed,
+    count(*) filter (where s.role = 'rep' and b.proc_result is null)      as rep_pending
+  from bill_sponsor s join bill b on b.bill_id = s.bill_id
+  group by s.member_code
+) s on s.member_code = m.code
+left join (
+  select member_code,
+    count(*)                               as vote_total,
+    count(*) filter (where result = '찬성') as vote_yes,
+    count(*) filter (where result = '반대') as vote_no,
+    count(*) filter (where result = '기권') as vote_blank,
+    count(*) filter (where result = '불참') as vote_absent
+  from vote group by member_code
+) v on v.member_code = m.code;
 create unique index if not exists member_stats_code_idx on member_stats (code);
+create index if not exists member_stats_incumbent_idx on member_stats (is_incumbent) where is_incumbent;
+
+-- 의원별 법안 목록을 정렬·제한해서 뽑기 위한 조인 뷰.
+create or replace view member_bill
+with (security_invoker = true) as
+select s.member_code, s.role, b.bill_id, b.bill_no, b.name, b.committee,
+       b.proposed_at, b.proc_result, b.proposer, b.detail_link
+from bill_sponsor s join bill b on b.bill_id = s.bill_id;
 
 -- materialized view 는 RLS 대상이 아니라 직접 권한 부여
 grant select on member_stats to anon, authenticated;
+grant select on member_bill to anon, authenticated;
 
 -- 내부 테이블: 정책 없이 RLS 만 켜서 anon 접근을 전부 차단.
 -- 수집기는 postgres 역할로 직접 접속하므로 RLS 를 우회한다.

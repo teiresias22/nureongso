@@ -19,13 +19,19 @@ export type Member = {
   is_incumbent: boolean;
 };
 
+/** 전부 SQL 에서 집계된 값. 클라이언트에서 행을 세면 PostgREST 의 1000행 상한에 걸린다. */
 export type MemberStats = {
   code: string;
+  is_incumbent?: boolean;
   rep_count: number;
   co_count: number;
   rep_passed: number;
-  vote_attended: number;
+  rep_pending: number;
   vote_total: number;
+  vote_yes: number;
+  vote_no: number;
+  vote_blank: number;
+  vote_absent: number;
 };
 
 export type Bill = {
