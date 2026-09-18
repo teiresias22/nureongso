@@ -1,0 +1,47 @@
+name: 선관위 수집
+
+# 당선인·공약은 선거 때만 바뀐다. 매일 돌릴 이유가 없어 주 1회로 둔다.
+# 새 선거가 치러지면 elections 가 목록을 갱신하고 winners 가 새 당선인을 잡는다.
+on:
+  schedule:
+    - cron: "30 19 * * 1" # 매주 화요일 04:30 KST
+  workflow_dispatch:
+    inputs:
+      office:
+        description: "비우면 시도지사·교육감·구시군의장 전부"
+        default: ""
+
+concurrency:
+  group: ingest # 의정활동 수집과 같은 그룹. 두 수집기가 member 를 함께 쓴다.
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+
+      - run: pip install -r requirements.txt
+        working-directory: collector
+
+      - name: 선거 목록·당선인·공약
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: |
+          python nec.py elections
+          if [ -n "${{ inputs.office }}" ]; then
+            python nec.py winners --office "${{ inputs.office }}"
+            python nec.py pledges --office "${{ inputs.office }}"
+          else
+            python nec.py winners
+            python nec.py pledges
+          fi
+          python ingest.py refresh

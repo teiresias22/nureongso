@@ -1,8 +1,10 @@
-name: ingest
+name: 의정활동 수집
 
+# 국회 법안·발의·표결은 매일 바뀐다. 새벽에 돌려 하루 한 번 최신화한다.
+# 전부 upsert 라 같은 날 여러 번 돌려도 안전하고, 표결은 이미 받은 의안을 건너뛴다.
 on:
   schedule:
-    - cron: "0 19 * * 0" # 매주 월요일 04:00 KST
+    - cron: "0 19 * * *" # 매일 04:00 KST (UTC+9)
   workflow_dispatch:
     inputs:
       step:
@@ -12,18 +14,47 @@ on:
         description: "국회 대수"
         default: "22"
 
+# 앞 실행이 안 끝났으면 새로 돌리지 않는다. 같은 테이블을 동시에 쓰지 않도록.
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r collector/requirements.txt
-      - run: python collector/ingest.py "${{ inputs.step || 'all' }}" --age "${{ inputs.age || '22' }}"
-        working-directory: .
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+
+      - run: pip install -r requirements.txt
+        working-directory: collector
+
+      - name: 수집
+        working-directory: collector
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ASSEMBLY_API_KEY: ${{ secrets.ASSEMBLY_API_KEY }}
+        run: python ingest.py "${{ inputs.step || 'all' }}" --age "${{ inputs.age || '22' }}"
+
+      - name: 결과 요약
+        if: always()
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import os, psycopg
+          with psycopg.connect(os.environ["DATABASE_URL"]) as c, c.cursor() as cur:
+              cur.execute("""select source, rows, error,
+                                    to_char(started_at at time zone 'Asia/Seoul','MM-DD HH24:MI')
+                             from ingest_run order by id desc limit 6""")
+              print("| 단계 | 건수 | 시각 | 오류 |")
+              print("|---|---|---|---|")
+              for s, n, e, t in cur.fetchall():
+                  print(f"| {s} | {n or '-'} | {t} | {(e or '')[:60]} |")
+          PY
