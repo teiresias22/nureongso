@@ -38,8 +38,12 @@ export type MemberStats = {
   pledge_done: number;
 };
 
-/** 직위마다 측정 가능한 활동이 다르다. 국회의원만 법안·표결 기록이 존재한다. */
-export const HAS_BILLS = (office?: string | null) => (office ?? "국회의원") === "국회의원";
+/** 직위가 아니라 실제 데이터 유무로 판단한다. 국회의원이었다가 단체장이 된 사람은
+ *  한 인물로 합쳐지므로, 직위로 가르면 과거 발의 이력이 화면에서 사라진다. */
+export const hasBills = (s?: Pick<MemberStats, "rep_count" | "co_count" | "vote_total">) =>
+  !!s && s.rep_count + s.co_count + s.vote_total > 0;
+
+export const hasPledges = (s?: Pick<MemberStats, "pledge_count">) => !!s && s.pledge_count > 0;
 
 export type Bill = {
   bill_id: string;

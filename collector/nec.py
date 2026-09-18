@@ -186,9 +186,40 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
              "job", "edu", "career", "elected"],
             cands, "election_id,sg_typecode,huboid",
         )
+        register_members(cur, sg_id, code)
         total += len(cands)
         print(f"  {office} {sg_id}: {len(cands)}명", file=sys.stderr)
     return total
+
+
+def register_members(cur, sg_id: str, code: str) -> None:
+    """당선인을 member 로 올리고 candidacy 에 연결한다.
+
+    당선인 수집 단계에서 해야 한다. 공약 수집에 묻어두면 공약 API 가 없는 직위
+    (시도의원 등)는 목록에 영영 안 뜬다.
+
+    같은 이름·생년이 이미 있으면 그 코드를 쓴다. 국회의원이었다가 단체장이 된 사람은
+    한 인물로 합쳐져 과거 발의 이력과 현재 공약이 같은 페이지에 모인다.
+    """
+    cur.execute(
+        "select huboid, name, birth, party, district, office from candidacy"
+        " where election_id = %s and sg_typecode = %s and huboid is not null",
+        (sg_id, code),
+    )
+    for huboid, name, birth, party, district, office in cur.fetchall():
+        cur.execute(
+            "select code from member where name = %s and birth = %s limit 1", (name, birth)
+        )
+        hit = cur.fetchone()
+        mcode = hit[0] if hit else f"nec-{huboid}"
+        upsert(cur, "member",
+               ["code", "name", "birth", "party", "district", "office", "is_incumbent"],
+               [(mcode, name, birth, party, district, office, True)], "code")
+        cur.execute(
+            "update candidacy set member_code = %s where election_id = %s"
+            " and sg_typecode = %s and huboid = %s",
+            (mcode, sg_id, code, huboid),
+        )
 
 
 def num(v):
@@ -219,22 +250,27 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
     total = 0
     for sg_id in sg_ids:
         cur.execute(
-            "select huboid, name from candidacy"
-            " where election_id = %s and sg_typecode = %s and huboid is not null",
+            "select huboid, member_code from candidacy"
+            " where election_id = %s and sg_typecode = %s"
+            " and huboid is not null and member_code is not null",
             (sg_id, code),
         )
         people = cur.fetchall()
-        for huboid, name in people:
+        if not people:
+            print(f"  {office} {sg_id}: 당선인이 없습니다. 먼저 `nec.py winners` 를 실행하세요.",
+                  file=sys.stderr)
+            continue
+        for huboid, mcode in people:
             rows = fetch("pledge", sgId=sg_id, sgTypecode=code, cnddtId=huboid)
             if not rows:
                 continue
             r = rows[0]
-            docs = [(member_code(cur, huboid, sg_id, code), sg_id, None, None)]
+            docs = [(mcode, sg_id, None, None)]
             upsert(cur, "pledge_doc", ["member_code", "election_id", "pdf_url", "raw_text"],
                    docs, "member_code,election_id")
             cur.execute(
                 "select id from pledge_doc where member_code = %s and election_id = %s",
-                (docs[0][0], sg_id),
+                (mcode, sg_id),
             )
             row = cur.fetchone()
             if not row:
@@ -247,7 +283,7 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
                 if not title:
                     continue
                 # 본문 필드는 prmsCont 가 아니라 prmmCont 다 (선관위 API 의 오타). 실측 확인.
-                items.append((doc_id, docs[0][0], sg_id, i, title,
+                items.append((doc_id, mcode, sg_id, i, title,
                               d(r.get(f"prmmCont{i}")) or d(r.get(f"prmsCont{i}")),
                               d(r.get(f"prmsRealmName{i}"))))
             if items:  # 위에서 doc_id 기준으로 지웠으므로 그냥 넣는다
@@ -260,31 +296,6 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
         print(f"  {office} {sg_id}: 공약 {total}건", file=sys.stderr)
     return total
 
-
-def member_code(cur, huboid: str, sg_id: str, code: str) -> str:
-    """선관위 후보자를 member 로 올린다. 국회의원은 열린국회정보 코드를 이미 쓰므로
-    이름+생년으로 붙여보고, 없으면 선관위 huboid 기반 코드를 새로 만든다."""
-    cur.execute(
-        "select name, birth, party, district, office from candidacy"
-        " where election_id = %s and sg_typecode = %s and huboid = %s",
-        (sg_id, code, huboid),
-    )
-    row = cur.fetchone()
-    if not row:
-        return f"nec-{huboid}"
-    name, birth, party, district, office = row
-
-    cur.execute(
-        "select code from member where name = %s and birth = %s limit 1", (name, birth)
-    )
-    hit = cur.fetchone()
-    mcode = hit[0] if hit else f"nec-{huboid}"
-
-    upsert(cur, "member",
-           ["code", "name", "birth", "party", "district", "office", "is_incumbent"],
-           [(mcode, name, birth, party, district, office, True)], "code")
-    cur.execute("update candidacy set member_code = %s where huboid = %s", (mcode, huboid))
-    return mcode
 
 
 # --------------------------------------------------------------------------- run

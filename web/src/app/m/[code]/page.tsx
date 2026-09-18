@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  db, HAS_BILLS, lastPart, partyColor, pct,
+  db, hasBills, hasPledges, lastPart, partyColor, pct,
   type Bill, type Member, type MemberStats,
 } from "@/lib/db";
 
@@ -52,7 +52,8 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
     pledge_count: 0, pledge_done: 0,
   };
   const attended = s.vote_total - s.vote_absent;
-  const hasBills = HAS_BILLS(m.office);
+  const showBills = hasBills(s);
+  const showPledges = hasPledges(s);
 
   return (
     <div className="space-y-6">
@@ -96,7 +97,18 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
       </header>
 
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {hasBills ? (
+        {showPledges && (
+          <>
+            <Stat label="공약" value={s.pledge_count} unit="건" />
+            <Stat
+              label="공약 이행"
+              value={pct(s.pledge_done, s.pledge_count)}
+              unit="%"
+              sub={`완료 ${s.pledge_done}/${s.pledge_count}`}
+            />
+          </>
+        )}
+        {showBills && (
           <>
             <Stat label="대표발의" value={s.rep_count} unit="건" />
             <Stat label="공동발의" value={s.co_count} unit="건" />
@@ -113,20 +125,10 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
               sub={`${attended}/${s.vote_total}회`}
             />
           </>
-        ) : (
-          <>
-            <Stat label="공약" value={s.pledge_count} unit="건" />
-            <Stat
-              label="공약 이행"
-              value={pct(s.pledge_done, s.pledge_count)}
-              unit="%"
-              sub={`완료 ${s.pledge_done}/${s.pledge_count}`}
-            />
-          </>
         )}
       </section>
 
-      {hasBills && s.vote_total > 0 && (
+      {s.vote_total > 0 && (
         <section className="rounded-lg border border-line bg-card p-4">
           <h2 className="text-sm font-semibold">표결 성향</h2>
           <div className="mt-2 flex gap-4 text-sm text-muted">
@@ -168,7 +170,7 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
           </ul>
         ) : (
           <p className="px-4 py-3 text-sm text-muted">
-            {hasBills
+            {m.office === "국회의원"
               ? "국회의원은 선거공약서 제출 대상이 아니라 선관위 공약 API 에 자료가 없습니다. 선거공보 PDF 를 따로 수집해야 합니다."
               : "아직 공약 데이터가 없습니다."}
           </p>
@@ -196,7 +198,7 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
         )}
       </Section>
 
-      {hasBills && (
+      {showBills && (
         <>
           <Section title="대표발의 법안" count={s.rep_count}>
             <BillList bills={(repBills ?? []) as Bill[]} total={s.rep_count} />

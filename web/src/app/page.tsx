@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { db, HAS_BILLS, lastPart, partyColor, pct, type Member, type MemberStats } from "@/lib/db";
+import {
+  db, hasBills, hasPledges, lastPart, partyColor, pct,
+  type Member, type MemberStats,
+} from "@/lib/db";
 
 export const revalidate = 3600;
 
@@ -8,6 +11,9 @@ type SP = { q?: string; party?: string; sort?: string; elect?: string; office?: 
 export default async function Home({ searchParams }: { searchParams: Promise<SP> }) {
   const { q = "", party = "", sort = "rep", elect = "", office = "" } = await searchParams;
 
+  // 현직 전원을 받아 클라이언트에서 거른다. PostgREST 상한이 1000행이라
+  // 지방의원(약 3,900명)까지 넣으면 여기서 조용히 잘린다. 그때는 검색·필터를
+  // 서버 쿼리로 내리고 페이지네이션을 붙여야 한다.
   const [{ data: members }, { data: stats }] = await Promise.all([
     db.from("member").select("*").eq("is_incumbent", true).order("name"),
     db.from("member_stats").select("*").eq("is_incumbent", true),
@@ -115,7 +121,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     </span>
                   </div>
                   <div className="mt-1 flex gap-4 text-xs text-muted">
-                    {HAS_BILLS(m.office) ? (
+                    {hasBills(s) ? (
                       <>
                         <span>
                           대표발의 <b className="text-foreground">{s?.rep_count ?? 0}</b>
@@ -130,19 +136,17 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                           </b>
                         </span>
                       </>
-                    ) : (
+                    ) : hasPledges(s) ? (
                       <>
-                        <span>{m.office}</span>
                         <span>
-                          공약 <b className="text-foreground">{s?.pledge_count ?? 0}</b>건
+                          공약 <b className="text-foreground">{s!.pledge_count}</b>건
                         </span>
                         <span>
-                          이행{" "}
-                          <b className="text-foreground">
-                            {pct(s?.pledge_done ?? 0, s?.pledge_count ?? 0)}%
-                          </b>
+                          이행 <b className="text-foreground">{pct(s!.pledge_done, s!.pledge_count)}%</b>
                         </span>
                       </>
+                    ) : (
+                      <span>수집된 활동 기록 없음</span>
                     )}
                   </div>
                 </div>
