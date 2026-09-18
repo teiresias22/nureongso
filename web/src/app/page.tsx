@@ -144,7 +144,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                           대표공약 <b className="text-foreground">{s!.pledge_count}</b>건
                         </span>
                         <span>
-                          이행 <b className="text-foreground">{pct(s!.pledge_done, s!.pledge_count)}%</b>
+                          이행{" "}
+                          <b className="text-foreground">
+                            {s!.pledge_done > 0 ? `${pct(s!.pledge_done, s!.pledge_count)}%` : "미집계"}
+                          </b>
                         </span>
                       </>
                     ) : (

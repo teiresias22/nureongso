@@ -69,6 +69,8 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
   const attended = s.vote_total - s.vote_absent;
   const showBills = hasBills(s);
   const showPledges = hasPledges(s);
+  // 이행 판정을 아직 한 건도 안 했다. 이때 0% 를 보이면 '아무것도 안 지켰다' 로 읽힌다.
+  const judged = (pledges ?? []).some((p) => p.pledge_status);
 
   return (
     <div className="space-y-6">
@@ -114,12 +116,12 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {showPledges && (
           <>
-            <Stat label="대표공약" value={s.pledge_count} unit="건" sub="선거공약서 기재" />
+            <Stat label="공약" value={s.pledge_count} unit="건" />
             <Stat
-              label="대표공약 이행"
-              value={pct(s.pledge_done, s.pledge_count)}
+              label="공약 이행"
+              value={judged ? pct(s.pledge_done, s.pledge_count) : null}
               unit="%"
-              sub={`완료 ${s.pledge_done}/${s.pledge_count}`}
+              sub={judged ? `완료 ${s.pledge_done}/${s.pledge_count}` : "아직 판정하지 않음"}
             />
           </>
         )}
@@ -171,7 +173,11 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
               const st = (p.pledge_status as unknown as { status: string; decided_by: string } | null);
               return (
                 <li key={p.id} className="flex gap-3 px-4 py-3 text-sm">
-                  <StatusBadge status={st?.status} auto={st?.decided_by !== "reviewer"} />
+                  {st ? (
+                    <StatusBadge status={st.status} auto={st.decided_by !== "reviewer"} />
+                  ) : (
+                    <span className="mt-0.5 shrink-0 text-[11px] text-muted">미판정</span>
+                  )}
                   <div className="min-w-0">
                     {p.category && <p className="text-[11px] text-muted">{p.category}</p>}
                     <p className="font-medium">{p.title}</p>
@@ -235,13 +241,20 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
   );
 }
 
-function Stat({ label, value, unit, sub }: { label: string; value: number; unit: string; sub?: string }) {
+function Stat({ label, value, unit, sub }:
+  { label: string; value: number | null; unit: string; sub?: string }) {
   return (
     <div className="rounded-lg border border-line bg-card p-3">
       <p className="text-xs text-muted">{label}</p>
       <p className="mt-1 text-2xl font-bold tabular-nums">
-        {value}
-        <span className="ml-0.5 text-sm font-normal text-muted">{unit}</span>
+        {value === null ? (
+          <span className="text-base font-normal text-muted">미집계</span>
+        ) : (
+          <>
+            {value}
+            <span className="ml-0.5 text-sm font-normal text-muted">{unit}</span>
+          </>
+        )}
       </p>
       {sub && <p className="text-[11px] text-muted">{sub}</p>}
     </div>
