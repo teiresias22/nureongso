@@ -150,7 +150,19 @@ def ingest_members(cur) -> int:
         "elect_type", "terms", "term_count", "committees", "photo_url",
         "tel", "email", "homepage", "is_incumbent",
     ]
-    upsert(cur, "member", cols, rows, "code")
+    # member 에는 국회의원만 있는 게 아니다. 여기서 is_incumbent 를 무조건 덮으면
+    # 국회의원 출신 단체장·교육감이 현직에서 내려간다 (현역 국회의원이 아니므로).
+    # 국회의원인 사람만 조정하고 다른 직위는 선관위 수집기(nec.py)에 맡긴다.
+    placeholders = ",".join(["%s"] * len(cols))
+    sets = ",".join(f"{c}=excluded.{c}" for c in cols
+                    if c not in ("code", "is_incumbent"))
+    cur.executemany(
+        f"insert into member ({','.join(cols)}) values ({placeholders})"
+        f" on conflict (code) do update set {sets},"
+        "   is_incumbent = case when coalesce(member.office,'국회의원') = '국회의원'"
+        "                       then excluded.is_incumbent else member.is_incumbent end",
+        rows,
+    )
 
     # 현역은 최신값(정당/지역구/위원회)이 현역 API 쪽이 정확하므로 덮어쓴다.
     inc_rows = [
@@ -164,7 +176,8 @@ def ingest_members(cur) -> int:
     ]
     cur.executemany(
         "update member set party=%s, district=%s, elect_type=%s, committees=%s,"
-        " term_count=%s, terms=%s, tel=%s, email=%s, homepage=%s, is_incumbent=true"
+        " term_count=%s, terms=%s, tel=%s, email=%s, homepage=%s,"
+        " is_incumbent=true, office='국회의원'"
         " where code=%s",
         inc_rows,
     )
