@@ -62,7 +62,20 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
           <img src={m.photo_url} alt="" className="h-24 w-20 rounded object-cover" />
         )}
         <div className="min-w-0">
-          <h1 className="text-xl font-bold">{m.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold">{m.name}</h1>
+            {m.elect_type && (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                  m.elect_type.includes("비례")
+                    ? "bg-violet-600 text-white"
+                    : "border border-line text-muted"
+                }`}
+              >
+                {m.elect_type}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm text-muted">
             {lastPart(m.party)} · {m.district} · {m.term_count} ({m.terms})
           </p>

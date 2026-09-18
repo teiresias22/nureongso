@@ -3,10 +3,10 @@ import { db, lastPart, partyColor, pct, type Member, type MemberStats } from "@/
 
 export const revalidate = 3600;
 
-type SP = { q?: string; party?: string; sort?: string };
+type SP = { q?: string; party?: string; sort?: string; elect?: string };
 
 export default async function Home({ searchParams }: { searchParams: Promise<SP> }) {
-  const { q = "", party = "", sort = "rep" } = await searchParams;
+  const { q = "", party = "", sort = "rep", elect = "" } = await searchParams;
 
   const [{ data: members }, { data: stats }] = await Promise.all([
     db.from("member").select("*").eq("is_incumbent", true).order("name"),
@@ -21,6 +21,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
   let rows = members as Member[];
   if (q) rows = rows.filter((m) => m.name.includes(q) || (m.district ?? "").includes(q));
   if (party) rows = rows.filter((m) => lastPart(m.party) === party);
+  if (elect) rows = rows.filter((m) => m.elect_type === elect);
 
   rows = [...rows].sort((a, b) => {
     const sa = statById.get(a.code);
@@ -50,6 +51,15 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
               {p}
             </option>
           ))}
+        </select>
+        <select
+          name="elect"
+          defaultValue={elect}
+          className="rounded-md border border-line bg-card px-3 py-2 text-sm"
+        >
+          <option value="">지역구+비례</option>
+          <option value="지역구">지역구만</option>
+          <option value="비례대표">비례대표만</option>
         </select>
         <select
           name="sort"
@@ -83,6 +93,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
                     <span className="font-semibold">{m.name}</span>
+                    <ElectBadge type={m.elect_type} />
                     <span className="truncate text-xs text-muted">
                       {lastPart(m.party)} · {m.district} · {m.term_count}
                     </span>
@@ -108,6 +119,21 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         })}
       </ul>
     </div>
+  );
+}
+
+/** 비례대표는 지역구가 없어 목록에서 눈에 안 띈다. 배지로 구분한다. */
+function ElectBadge({ type }: { type?: string | null }) {
+  if (!type) return null;
+  const prop = type.includes("비례");
+  return (
+    <span
+      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+        prop ? "bg-violet-600 text-white" : "border border-line text-muted"
+      }`}
+    >
+      {prop ? "비례" : "지역구"}
+    </span>
   );
 }
 
