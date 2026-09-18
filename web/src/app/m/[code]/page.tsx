@@ -57,7 +57,7 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
   return (
     <div className="space-y-6">
       <Link href="/" className="text-xs text-muted hover:underline">
-        ← 전체 의원
+        ← 전체 목록
       </Link>
 
       <header className="flex gap-4 rounded-lg border border-line bg-card p-4">
@@ -82,7 +82,14 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
             )}
           </div>
           <p className="mt-1 text-sm text-muted">
-            {lastPart(m.party)} · {m.district} · {m.term_count} ({m.terms})
+            {[
+              m.office,
+              lastPart(m.party),
+              m.district,
+              m.term_count && m.terms ? `${m.term_count} (${m.terms})` : m.term_count,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
           {m.committees && <p className="mt-1 text-xs text-muted">{m.committees}</p>}
         </div>
@@ -142,9 +149,18 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
               return (
                 <li key={p.id} className="flex gap-3 px-4 py-3 text-sm">
                   <StatusBadge status={st?.status} auto={st?.decided_by !== "reviewer"} />
-                  <div>
+                  <div className="min-w-0">
+                    {p.category && <p className="text-[11px] text-muted">{p.category}</p>}
                     <p className="font-medium">{p.title}</p>
-                    {p.body && <p className="mt-0.5 text-xs text-muted">{p.body}</p>}
+                    {p.body && (
+                      // 공약 본문은 목표·이행방법·재원조달까지 담긴 긴 원문이라 접어 둔다.
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-xs text-muted">
+                          공약 원문 보기
+                        </summary>
+                        <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{p.body}</p>
+                      </details>
+                    )}
                   </div>
                 </li>
               );
@@ -152,7 +168,9 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
           </ul>
         ) : (
           <p className="px-4 py-3 text-sm text-muted">
-            아직 공약 데이터가 없습니다. 선거공보 수집(Phase 3) 후 표시됩니다.
+            {hasBills
+              ? "국회의원은 선거공약서 제출 대상이 아니라 선관위 공약 API 에 자료가 없습니다. 선거공보 PDF 를 따로 수집해야 합니다."
+              : "아직 공약 데이터가 없습니다."}
           </p>
         )}
       </Section>
@@ -162,8 +180,9 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
           <ul className="divide-y divide-line">
             {candidacies.map((c) => (
               <li key={c.id} className="flex justify-between gap-3 px-4 py-2 text-sm">
-                <span>
-                  {c.election_name} · {c.district} · {c.party}
+                <span className="min-w-0 truncate">
+                  {[c.office, c.district, c.party].filter(Boolean).join(" · ")}
+                  <span className="ml-2 text-xs text-muted">{c.election_id}</span>
                 </span>
                 <span className={c.elected ? "font-semibold" : "text-muted"}>
                   {c.vote_rate != null && `${c.vote_rate}% `}
@@ -173,9 +192,7 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
             ))}
           </ul>
         ) : (
-          <p className="px-4 py-3 text-sm text-muted">
-            아직 출마 이력이 없습니다. 선관위 수집(Phase 2) 후 표시됩니다.
-          </p>
+          <p className="px-4 py-3 text-sm text-muted">아직 출마 이력이 없습니다.</p>
         )}
       </Section>
 

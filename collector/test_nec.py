@@ -56,7 +56,9 @@ def test_live():
 
     p = nec.fetch("pledge", sgId=latest, sgTypecode="3", cnddtId=ws[0]["huboid"])
     if p:
-        assert "prmsTitle1" in p[0], f"공약 필드 없음: {list(p[0])[:8]}"
+        assert "prmsTitle1" in p[0], f"공약 제목 필드 없음: {list(p[0])[:8]}"
+        # 본문은 prmsCont 가 아니라 prmmCont. 오타가 고쳐지면 여기서 걸린다.
+        assert "prmmCont1" in p[0] or "prmsCont1" in p[0], "공약 본문 필드를 못 찾음"
 
 
 if __name__ == "__main__":

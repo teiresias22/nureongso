@@ -27,7 +27,7 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="space-y-5">
       <Link href="/" className="text-xs text-muted hover:underline">
-        ← 전체 의원
+        ← 전체 목록
       </Link>
 
       <header className="rounded-lg border border-line bg-card p-4">

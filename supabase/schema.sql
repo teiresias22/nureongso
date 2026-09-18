@@ -124,7 +124,7 @@ create table if not exists candidacy (
 );
 create index if not exists candidacy_member_idx on candidacy (member_code);
 create unique index if not exists candidacy_nec_key
-  on candidacy (election_id, sg_typecode, huboid) where huboid is not null;
+  on candidacy (election_id, sg_typecode, huboid);   -- 부분 인덱스면 ON CONFLICT 가 추론 못 한다
 
 -- 공약 (Phase 3)
 create table if not exists pledge_doc (

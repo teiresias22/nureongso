@@ -2,7 +2,7 @@
 """중앙선거관리위원회 수집기 — 모든 선출직의 당선인·출마이력·공약.
 
 사용:
-    python nec.py elections                  # 역대 선거 목록 (42건)
+    python nec.py elections                  # 역대 선거 목록 (192건: 선거 x 선거종류)
     python nec.py winners --office 시도지사    # 당선인 + 출마이력
     python nec.py winners --all              # 지원 직위 전부
     python nec.py pledges --office 교육감      # 공약 (공약 API 지원 직위만)
@@ -11,7 +11,7 @@
 환경변수: DATABASE_URL, DATA_GO_KR_KEY
     키 발급: https://www.data.go.kr 로그인 > 아래 4개 API 각각 '활용신청'
       중앙선거관리위원회_선거 코드 정보 / 당선인 정보 / 후보자 정보 / 선거공약 정보
-    자동승인이라 신청 즉시 쓸 수 있다. 일반 인증키(Decoding) 를 넣는다.
+    자동승인이라 신청 즉시 쓸 수 있다. 인코딩 키든 디코딩 키든 그대로 넣으면 된다.
 
 국회의원은 열린국회정보(ingest.py)가 의정활동까지 주므로 여기서는 출마 이력만 쓴다.
 """
@@ -21,6 +21,7 @@ import argparse
 import os
 import sys
 import time
+from urllib.parse import unquote
 
 import httpx
 import psycopg
@@ -28,7 +29,13 @@ import psycopg
 from ingest import d, upsert
 
 BASE = "https://apis.data.go.kr/9760000"
+
+# 포털은 '인코딩 키'(%2B 등이 든 것)와 '디코딩 키'를 둘 다 보여준다.
+# httpx 가 params 를 다시 인코딩하므로 인코딩 키를 그대로 주면 이중 인코딩돼
+# SERVICE_KEY_IS_NOT_REGISTERED_ERROR 가 난다. 받은 게 어느 쪽이든 원문으로 되돌린다.
 KEY = os.getenv("DATA_GO_KR_KEY") or None
+if KEY and "%" in KEY:
+    KEY = unquote(KEY)
 
 OPS = {
     "sg_code": f"{BASE}/CommonCodeService/getCommonSgCodeList",
@@ -80,36 +87,41 @@ def fetch(op: str, **params) -> list[dict]:
                         raise RuntimeError(f"{op} {params}: {e}") from e
                     time.sleep(2 * (attempt + 1))
 
-            head, body, total = parse(data, op, params)
-            if head is not None:  # 에러 코드
+            rows, total = parse(data, op, params)
+            if rows is None:  # 데이터 없음
                 return []
-            out.extend(body)
-            if len(out) >= total or not body:
+            out.extend(rows)
+            if len(out) >= total or not rows:
                 break
             page += 1
     return out
 
 
-def parse(data: dict, op: str, params: dict) -> tuple[str | None, list[dict], int]:
-    """공공데이터포털 응답 껍데기를 벗긴다. (에러코드, rows, 총건수)"""
-    if "response" in data:  # 에러 응답
-        h = data["response"].get("header", {})
-        code = h.get("resultCode")
-        if code not in (None, "00", "0"):
-            raise RuntimeError(f"{op} {params}: {code} {h.get('resultMsg')}")
-    root = data.get("getWinnerInfoInqire") or data.get("getCommonSgCodeList") \
-        or data.get("getCnddtElecPrmsInfoInqire") \
-        or data.get("getPofelcddRegistSttusInfoInqire")
-    if root is None:
+def parse(data: dict, op: str, params: dict) -> tuple[list[dict] | None, int]:
+    """공공데이터포털 표준 응답 껍데기를 벗긴다. (rows, 총건수). 데이터 없음이면 (None, 0).
+
+    실제 형태: {"response": {"header": {"resultCode": "INFO-00"},
+                             "body": {"items": {"item": [...]}, "totalCount": N}}}
+    """
+    if "OpenAPI_ServiceResponse" in data:  # 인증·경로 오류는 이 껍데기로 온다
+        m = data["OpenAPI_ServiceResponse"]["cmmMsgHeader"]
+        raise RuntimeError(f"{op}: {m.get('errMsg')} ({m.get('returnAuthMsg')})")
+
+    r = data.get("response")
+    if r is None:
         raise RuntimeError(f"{op} {params}: 예상치 못한 응답 {list(data)[:5]}")
-    head = root[0]["head"]
-    result = next((h["RESULT"] for h in head if "RESULT" in h), {})
-    code = result.get("resultCode") or result.get("CODE") or ""
-    if code and not str(code).startswith(("INFO-00", "00")):
-        return str(code), [], 0
-    total = next((h["totalCount"] for h in head if "totalCount" in h), 0)
-    rows = next((r["item"] for r in root if "item" in r), [])
-    return None, rows, total
+    code = str(r.get("header", {}).get("resultCode", ""))
+    if code.startswith("INFO-0") and code != "INFO-00":
+        return None, 0  # INFO-03 등 = 해당 조건에 데이터 없음
+    if not code.startswith("INFO-00"):
+        raise RuntimeError(f"{op} {params}: {code} {r.get('header', {}).get('resultMsg')}")
+
+    body = r.get("body") or {}
+    items = body.get("items")
+    rows = items.get("item") if isinstance(items, dict) else items
+    if isinstance(rows, dict):  # 1건이면 리스트가 아니라 객체로 온다
+        rows = [rows]
+    return rows or [], int(body.get("totalCount") or 0)
 
 
 # --------------------------------------------------------------------------- 선거
@@ -234,8 +246,10 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
                 title = d(r.get(f"prmsTitle{i}"))
                 if not title:
                     continue
-                items.append((doc_id, docs[0][0], sg_id, i,
-                              title, d(r.get(f"prmsCont{i}")), d(r.get(f"prmsRealmName{i}"))))
+                # 본문 필드는 prmsCont 가 아니라 prmmCont 다 (선관위 API 의 오타). 실측 확인.
+                items.append((doc_id, docs[0][0], sg_id, i, title,
+                              d(r.get(f"prmmCont{i}")) or d(r.get(f"prmsCont{i}")),
+                              d(r.get(f"prmsRealmName{i}"))))
             if items:  # 위에서 doc_id 기준으로 지웠으므로 그냥 넣는다
                 cur.executemany(
                     "insert into pledge (doc_id, member_code, election_id, order_no,"
@@ -257,14 +271,14 @@ def member_code(cur, huboid: str, sg_id: str, code: str) -> str:
     )
     row = cur.fetchone()
     if not row:
-        return f"nec:{huboid}"
+        return f"nec-{huboid}"
     name, birth, party, district, office = row
 
     cur.execute(
         "select code from member where name = %s and birth = %s limit 1", (name, birth)
     )
     hit = cur.fetchone()
-    mcode = hit[0] if hit else f"nec:{huboid}"
+    mcode = hit[0] if hit else f"nec-{huboid}"
 
     upsert(cur, "member",
            ["code", "name", "birth", "party", "district", "office", "is_incumbent"],
