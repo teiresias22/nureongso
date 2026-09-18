@@ -62,6 +62,16 @@ SG_TYPES = {
 PLEDGE_TYPES = {c for c, (_, has) in SG_TYPES.items() if has}
 OFFICE_CODE = {name: code for code, (name, _) in SG_TYPES.items()}
 
+# 비례대표는 별도 선거로 치러지지만 당선되면 같은 직위다. 화면에서는 하나로 묶는다.
+OFFICE_GROUP = {"국회의원비례대표": "국회의원", "시도의원비례대표": "시도의원",
+                "구시군의원비례대표": "구시군의원"}
+PROPORTIONAL = {"7", "8", "9"}
+
+
+def office_of(code: str) -> str:
+    name = SG_TYPES.get(code, ("기타", False))[0]
+    return OFFICE_GROUP.get(name, name)
+
 
 def fetch(op: str, **params) -> list[dict]:
     """페이지를 돌며 전체 row 를 모은다. 데이터 없음(INFO-200 류)은 빈 리스트."""
@@ -134,7 +144,7 @@ def ingest_elections(cur) -> int:
         code = d(r.get("sgTypecode"))
         out.append((
             d(r.get("sgId")), code, d(r.get("sgName")), d(r.get("sgVotedate")),
-            SG_TYPES.get(code, ("기타", False))[0],
+            office_of(code),
         ))
     upsert(cur, "election", ["sg_id", "sg_typecode", "name", "vote_date", "office"],
            out, "sg_id,sg_typecode")
@@ -170,8 +180,8 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
         cands = []
         for r in rows:
             cands.append((
-                d(r.get("sgId")), code, office, d(r.get("huboid")),
-                d(r.get("name")), d(r.get("birthday")),
+                d(r.get("sgId")), code, office_of(code), d(r.get("huboid")),
+                d(r.get("name")), birth_of(r.get("birthday")),
                 d(r.get("jdName")), d(r.get("sggName")), d(r.get("sdName")),
                 d(r.get("wiwName")), d(r.get("giho")),
                 num(r.get("dugsu")), num(r.get("dugyul")),
@@ -186,13 +196,32 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
              "job", "edu", "career", "elected"],
             cands, "election_id,sg_typecode,huboid",
         )
-        register_members(cur, sg_id, code)
+        # 가장 최근 선거의 당선인만 현직이다. 과거 선거는 이력으로만 남긴다.
+        register_members(cur, sg_id, code, current=(sg_id == sg_ids[0]))
         total += len(cands)
         print(f"  {office} {sg_id}: {len(cands)}명", file=sys.stderr)
+    sync_office(cur)
     return total
 
 
-def register_members(cur, sg_id: str, code: str) -> None:
+def sync_office(cur) -> None:
+    """member.office 를 '가장 최근에 당선된 선거의 직위' 로 맞춘다.
+
+    수집 순서에 의존하지 않는다. 국회의원이었다가 단체장이 된 사람은 단체장으로 바뀐다.
+    """
+    cur.execute("""
+        update member m set office = c.office
+        from (
+          select distinct on (member_code) member_code, office
+          from candidacy
+          where elected and member_code is not null and office is not null
+          order by member_code, election_id desc
+        ) c
+        where c.member_code = m.code and m.office is distinct from c.office
+    """)
+
+
+def register_members(cur, sg_id: str, code: str, current: bool = True) -> None:
     """당선인을 member 로 올리고 candidacy 에 연결한다.
 
     당선인 수집 단계에서 해야 한다. 공약 수집에 묻어두면 공약 API 가 없는 직위
@@ -200,26 +229,54 @@ def register_members(cur, sg_id: str, code: str) -> None:
 
     같은 이름·생년이 이미 있으면 그 코드를 쓴다. 국회의원이었다가 단체장이 된 사람은
     한 인물로 합쳐져 과거 발의 이력과 현재 공약이 같은 페이지에 모인다.
+
+    current=False 는 지난 선거의 당선인이라 현직으로 올리면 안 된다는 뜻이다.
+    이미 현직인 사람을 내리지는 않는다 (다른 선거에서 현직일 수 있다).
     """
     cur.execute(
         "select huboid, name, birth, party, district, office from candidacy"
         " where election_id = %s and sg_typecode = %s and huboid is not null",
         (sg_id, code),
     )
+    elect_type = "비례대표" if code in PROPORTIONAL else "지역구"
     for huboid, name, birth, party, district, office in cur.fetchall():
         cur.execute(
             "select code from member where name = %s and birth = %s limit 1", (name, birth)
         )
         hit = cur.fetchone()
         mcode = hit[0] if hit else f"nec-{huboid}"
-        upsert(cur, "member",
-               ["code", "name", "birth", "party", "district", "office", "is_incumbent"],
-               [(mcode, name, birth, party, district, office, True)], "code")
+        # 이미 있는 사람의 값은 덮지 않는다. 열린국회정보 쪽이 더 자세하다
+        # (예: 지역구가 '서울 종로구' vs 선관위 '종로구'). 빈 칸만 채운다.
+        cur.execute(
+            "insert into member (code, name, birth, party, district, office,"
+            " elect_type, is_incumbent) values (%s,%s,%s,%s,%s,%s,%s,%s)"
+            " on conflict (code) do update set"
+            "   party        = coalesce(member.party, excluded.party),"
+            "   district     = coalesce(member.district, excluded.district),"
+            "   elect_type   = coalesce(member.elect_type, excluded.elect_type),"
+            "   is_incumbent = member.is_incumbent or excluded.is_incumbent",
+            (mcode, name, birth, party, district, office, elect_type, current),
+        )
         cur.execute(
             "update candidacy set member_code = %s where election_id = %s"
             " and sg_typecode = %s and huboid = %s",
             (mcode, sg_id, code, huboid),
         )
+
+
+def birth_of(v):
+    """생년월일을 YYYY-MM-DD 로 통일.
+
+    선관위는 '19670502', 열린국회정보는 '1967-05-02' 로 준다. 형식이 다르면
+    이름+생년 매칭이 전부 빗나가 같은 사람이 둘로 갈린다. 실제로 1,255명이 갈렸었다.
+    """
+    v = d(v)
+    if not v:
+        return None
+    digits = "".join(ch for ch in v if ch.isdigit())
+    if len(digits) == 8:
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    return v
 
 
 def num(v):
@@ -300,7 +357,7 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
 
 # --------------------------------------------------------------------------- run
 
-OFFICES = ["시도지사", "교육감"]  # 1차 확장 대상. 늘리려면 여기에 추가.
+OFFICES = ["시도지사", "교육감", "구시군의장"]  # 늘리려면 여기에 추가.
 
 
 def main():

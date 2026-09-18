@@ -40,6 +40,21 @@ def test_code_table():
     assert all(o in nec.OFFICE_CODE for o in nec.OFFICES)
 
 
+def test_birth_normalisation():
+    """생년월일 형식이 어긋나면 인물이 둘로 갈린다. 실제로 1,255명이 갈렸었다."""
+    assert nec.birth_of("19670502") == "1967-05-02"
+    assert nec.birth_of("1967-05-02") == "1967-05-02"
+    assert nec.birth_of("") is None and nec.birth_of(None) is None
+
+
+def test_office_grouping():
+    """비례대표는 별도 선거지만 당선되면 같은 직위다."""
+    assert nec.office_of("7") == "국회의원"
+    assert nec.office_of("2") == "국회의원"
+    assert nec.office_of("8") == "시도의원"
+    assert nec.office_of("3") == "시도지사"
+
+
 def test_live():
     """키가 있을 때만. 선거 목록과 최신 시도지사 당선인을 실제로 받아본다."""
     els = nec.fetch("sg_code")
@@ -64,6 +79,8 @@ def test_live():
 if __name__ == "__main__":
     test_key_required()
     test_code_table()
+    test_birth_normalisation()
+    test_office_grouping()
     test_endpoint_paths_exist()
     if not os.getenv("DATA_GO_KR_KEY"):
         raise SystemExit("경로·코드표 검증 통과. DATA_GO_KR_KEY 를 넣으면 실제 응답까지 검증합니다.")
