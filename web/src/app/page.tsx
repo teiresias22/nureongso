@@ -117,7 +117,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     <span className="font-semibold">{m.name}</span>
                     <ElectBadge type={m.elect_type} />
                     <span className="truncate text-xs text-muted">
-                      {[lastPart(m.party), m.district, m.term_count].filter(Boolean).join(" · ")}
+                      {[lastPart(m.party), lastPart(m.district), m.term_count]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </span>
                   </div>
                   <div className="mt-1 flex gap-4 text-xs text-muted">

@@ -101,7 +101,7 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
             {[
               m.office,
               lastPart(m.party),
-              m.district,
+              lastPart(m.district),
               m.term_count && m.terms ? `${m.term_count} (${m.terms})` : m.term_count,
             ]
               .filter(Boolean)
