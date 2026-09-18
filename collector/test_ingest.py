@@ -1,4 +1,6 @@
-"""DB 없이 도는 최소 검증. `python test_ingest.py` 로 실행."""
+"""DB 없이 도는 최소 검증. `python test_ingest.py` 로 실행. ASSEMBLY_API_KEY 필요."""
+import os
+
 import ingest
 
 
@@ -8,27 +10,47 @@ def test_parse_dt():
     assert ingest.parse_dt("") is None and ingest.parse_dt(None) is None
 
 
-def test_fetch_and_shape():
-    """실제 API 한 페이지를 받아 필드명이 그대로인지 확인한다."""
-    ingest.PAGE = 5
-    members = ingest.fetch("incumbent", max_rows=5)
-    assert members and {"MONA_CD", "HG_NM", "POLY_NM"} <= members[0].keys()
+def test_key_required():
+    """키 없이 호출하면 서버가 첫 5행만 반복하므로 아예 막아야 한다."""
+    saved, ingest.KEY = ingest.KEY, None
+    try:
+        ingest.fetch("incumbent")
+        raise AssertionError("키 없이 호출이 통과되면 안 된다")
+    except RuntimeError as e:
+        assert "ASSEMBLY_API_KEY" in str(e)
+    finally:
+        ingest.KEY = saved
 
-    bills = ingest.fetch("bills", max_rows=5, AGE=22)
-    b = bills[0]
+
+def test_pagination_advances():
+    """페이지가 실제로 넘어가는지. 키가 무효하면 여기서 걸린다."""
+    ingest.PAGE = 100
+    rows = ingest.fetch("incumbent")
+    assert len(rows) >= 295, f"현역 의원이 {len(rows)}명뿐 — 페이지네이션 확인"
+    assert len({r["MONA_CD"] for r in rows}) == len(rows), "중복 행이 있다"
+
+
+def test_field_names():
+    """API 응답 필드명이 코드가 기대하는 그대로인지."""
+    ingest.PAGE = 100
+    b = ingest.fetch("bills", max_rows=5, AGE=22)[0]
     assert {"BILL_ID", "RST_MONA_CD", "PUBL_MONA_CD", "PROPOSE_DT"} <= b.keys()
-    # 공동발의자 코드가 콤마 구분 문자열인지
-    if b.get("PUBL_MONA_CD"):
-        assert all(c.strip() for c in b["PUBL_MONA_CD"].split(","))
 
-    plenary = ingest.fetch("plenary", max_rows=5, AGE=22)
-    assert {"BILL_ID", "PROC_RESULT_CD", "YES_TCNT"} <= plenary[0].keys()
+    p = ingest.fetch("plenary", max_rows=5, AGE=22)[0]
+    assert {"BILL_ID", "PROC_RESULT_CD", "YES_TCNT"} <= p.keys()
 
-    votes = ingest.fetch("votes", max_rows=5, AGE=22, BILL_ID=plenary[0]["BILL_ID"])
-    assert {"MONA_CD", "RESULT_VOTE_MOD", "VOTE_DATE"} <= votes[0].keys()
+    v = ingest.fetch("votes", max_rows=5, AGE=22, BILL_ID=p["BILL_ID"])[0]
+    assert {"MONA_CD", "RESULT_VOTE_MOD", "VOTE_DATE"} <= v.keys()
+
+    m = ingest.fetch("allmember", max_rows=5)[0]
+    assert {"NAAS_CD", "NAAS_NM", "GTELT_ERACO", "NAAS_PIC"} <= m.keys()
 
 
 if __name__ == "__main__":
     test_parse_dt()
-    test_fetch_and_shape()
+    test_key_required()
+    if not os.getenv("ASSEMBLY_API_KEY"):
+        raise SystemExit("ASSEMBLY_API_KEY 를 설정하면 나머지 검증도 실행됩니다.")
+    test_pagination_advances()
+    test_field_names()
     print("ok")

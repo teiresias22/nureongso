@@ -162,6 +162,11 @@ create unique index if not exists member_stats_code_idx on member_stats (code);
 -- materialized view 는 RLS 대상이 아니라 직접 권한 부여
 grant select on member_stats to anon, authenticated;
 
+-- 내부 테이블: 정책 없이 RLS 만 켜서 anon 접근을 전부 차단.
+-- 수집기는 postgres 역할로 직접 접속하므로 RLS 를 우회한다.
+alter table pledge_doc enable row level security;
+alter table ingest_run enable row level security;
+
 -- 공개 읽기 전용
 alter table member enable row level security;
 alter table bill enable row level security;

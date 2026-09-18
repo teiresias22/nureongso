@@ -10,11 +10,12 @@
     python ingest.py all --age 22
 
 환경변수: DATABASE_URL (Supabase > Settings > Database > Connection string),
-          ASSEMBLY_API_KEY (선택. 없으면 익명 호출, 속도 제한 있음)
+          ASSEMBLY_API_KEY (필수. https://open.assembly.go.kr 무료 발급)
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -36,15 +37,24 @@ SERVICES = {
 
 
 def fetch(service: str, max_rows: int | None = None, **params) -> list[dict]:
-    """서비스 전체 row 를 페이지 순회로 가져온다. max_rows 로 조기 종료(테스트용)."""
+    """서비스 전체 row 를 페이지 순회로 가져온다. max_rows 로 조기 종료(테스트용).
+
+    인증키 없이 호출하면 서버가 pIndex/pSize 를 무시하고 매번 첫 5행만 돌려준다.
+    (총건수 head 는 정상값을 주므로 조용히 같은 행을 반복 수집하게 된다.)
+    그래서 KEY 는 필수이고, 그래도 페이지가 안 넘어가면 아래에서 중단한다.
+    """
+    if not KEY:
+        raise RuntimeError(
+            "ASSEMBLY_API_KEY 가 필요합니다. 키 없이 호출하면 서버가 페이지네이션을 무시하고"
+            " 첫 5행만 반복해서 돌려줍니다. https://open.assembly.go.kr 에서 무료 발급하세요."
+        )
     name = SERVICES[service]
     out: list[dict] = []
+    seen: set[str] = set()
     page = 1
     with httpx.Client(timeout=60, headers={"User-Agent": "nureongso/0.1"}) as c:
         while True:
-            q = {"Type": "json", "pIndex": page, "pSize": PAGE, **params}
-            if KEY:
-                q["KEY"] = KEY
+            q = {"Type": "json", "pIndex": page, "pSize": PAGE, "KEY": KEY, **params}
             for attempt in range(3):
                 try:
                     data = c.get(f"{BASE}/{name}", params=q).json()
@@ -63,8 +73,16 @@ def fetch(service: str, max_rows: int | None = None, **params) -> list[dict]:
 
             body = data[name]
             rows = next((b["row"] for b in body if "row" in b), [])
-            out.extend(rows)
             total = body[0]["head"][0]["list_total_count"]
+
+            # 페이지가 실제로 넘어갔는지 확인. 서버가 pIndex 를 무시하면 같은 행이 다시 온다.
+            fresh = [r for r in rows if (k := json.dumps(r, sort_keys=True)) not in seen and not seen.add(k)]
+            if rows and not fresh:
+                raise RuntimeError(
+                    f"{name}: pIndex={page} 가 이전 페이지와 같은 행을 반환했습니다."
+                    " 인증키가 유효한지 확인하세요."
+                )
+            out.extend(fresh)
             print(f"  {name} {len(out)}/{total}", file=sys.stderr)
             if len(out) >= total or not rows or (max_rows and len(out) >= max_rows):
                 break
