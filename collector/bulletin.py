@@ -93,7 +93,9 @@ def extract_text(pdf: bytes) -> str:
     import pdfplumber  # 무거워서 필요할 때만
 
     with pdfplumber.open(io.BytesIO(pdf)) as doc:
-        return "\n".join((p.extract_text() or "") for p in doc.pages).strip()
+        text = "\n".join((p.extract_text() or "") for p in doc.pages)
+    # 일부 공보에는 NUL 이 섞여 있다. Postgres text 는 NUL 을 못 담아 insert 가 죽는다.
+    return text.replace("\x00", "").strip()
 
 
 def ingest(conn, sg_id: str, sg_type: str, limit: int | None, skip_done: bool) -> None:

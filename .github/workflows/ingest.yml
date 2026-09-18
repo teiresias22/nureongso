@@ -58,3 +58,5 @@ jobs:
               for s, n, e, t in cur.fetchall():
                   print(f"| {s} | {n or '-'} | {t} | {(e or '')[:60]} |")
           PY
+
+# 최초 등록 트리거
