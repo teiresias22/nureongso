@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -84,8 +85,13 @@ def gemini_model() -> str:
     return _gemini_model
 
 
-def gemini_call(prompt: str, schema: dict | None) -> str:
-    body: dict = {"contents": [{"parts": [{"text": prompt}]}]}
+def gemini_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> str:
+    parts: list[dict] = []
+    if pdf:
+        parts.append({"inline_data": {"mime_type": "application/pdf",
+                                      "data": base64.b64encode(pdf).decode()}})
+    parts.append({"text": prompt})
+    body: dict = {"contents": [{"parts": parts}]}
     cfg: dict = {"temperature": 0}
     if schema:
         cfg["responseMimeType"] = "application/json"
@@ -113,7 +119,9 @@ def gemini_call(prompt: str, schema: dict | None) -> str:
 
 # --------------------------------------------------------------------------- Ollama
 
-def ollama_call(prompt: str, schema: dict | None) -> str:
+def ollama_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> str:
+    if pdf:
+        raise LLMError("ollama 는 PDF 입력을 지원하지 않습니다. LLM_PROVIDER=gemini 로 바꾸세요.")
     model = os.getenv("OLLAMA_MODEL", "qwen3:8b")
     body = {"model": model, "prompt": prompt, "stream": False,
             "options": {"temperature": 0}}
@@ -130,7 +138,9 @@ def ollama_call(prompt: str, schema: dict | None) -> str:
 
 # --------------------------------------------------------------------------- Anthropic
 
-def anthropic_call(prompt: str, schema: dict | None) -> str:
+def anthropic_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> str:
+    if pdf:
+        raise LLMError("이 경로는 PDF 입력을 지원하지 않습니다. LLM_PROVIDER=gemini 로 바꾸세요.")
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise LLMError("ANTHROPIC_API_KEY 가 없습니다. (무료 등급 없음 — 사용량만큼 과금됩니다)")
@@ -152,14 +162,19 @@ def anthropic_call(prompt: str, schema: dict | None) -> str:
 CALLS = {"gemini": gemini_call, "ollama": ollama_call, "anthropic": anthropic_call}
 
 
-def complete(prompt: str, schema: dict | None = None, retries: int = 4) -> str:
-    """한 번 호출. 429 는 기다렸다 다시 시도한다(무료 등급은 분당 제한이 빡빡하다)."""
+def complete(prompt: str, schema: dict | None = None, retries: int = 4,
+             pdf: bytes | None = None) -> str:
+    """한 번 호출. 429 는 기다렸다 다시 시도한다(무료 등급은 분당 제한이 빡빡하다).
+
+    pdf 를 주면 텍스트 대신 PDF 원본을 그대로 넘긴다. 글꼴에 문자 매핑이 없어
+    텍스트 추출이 (cid:NNNN) 으로 깨지는 공보를 이 경로로 처리한다.
+    """
     call = CALLS.get(PROVIDER)
     if not call:
         raise LLMError(f"모르는 LLM_PROVIDER: {PROVIDER} (가능: {', '.join(CALLS)})")
     for attempt in range(retries):
         try:
-            return call(prompt, schema)
+            return call(prompt, schema, pdf)
         except RateLimited:
             if attempt == retries - 1:
                 raise

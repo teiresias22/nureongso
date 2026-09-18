@@ -16,15 +16,26 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 import psycopg
 
+import bulletin
 import llm
 
 # 선거공보는 공약 외에 학력·경력·재산·병역 신고내역이 절반을 차지한다.
 # 그래도 통째로 넣는다. 잘라내려다 공약을 날리는 쪽이 더 나쁘다.
 MAX_CHARS = 60_000
+
+# 글꼴에 문자 매핑(ToUnicode)이 없는 PDF 는 텍스트가 (cid:NNNN) 으로 나온다.
+# 이런 공보는 추출본으로 읽어봐야 소용이 없어 PDF 원본을 그대로 모델에 넘긴다.
+CID = re.compile(r"\(cid:\d+\)")
+CID_LIMIT = 0.05
+
+
+def cid_ratio(text: str) -> float:
+    return sum(len(x) for x in CID.findall(text)) / (len(text) or 1)
 
 SCHEMA = {
     "type": "object",
@@ -64,9 +75,21 @@ PROMPT = """아래는 한국 선거의 '선거공보' PDF 에서 추출한 텍�
 {text}
 --- 선거공보 텍스트 끝 ---"""
 
+# 텍스트가 깨진 공보는 PDF 를 그대로 넘긴다. 규칙은 같고 입력만 다르다.
+PDF_PROMPT = PROMPT.split("--- 선거공보 텍스트 시작 ---")[0].replace(
+    "아래는 한국 선거의 '선거공보' PDF 에서 추출한 텍스트다.\n"
+    "다단 편집이라 줄 순서가 뒤엉켜 있고 학력·경력·재산신고 같은 공약이 아닌 내용도 섞여 있다.",
+    "첨부한 PDF 는 한국 선거의 '선거공보' 다.\n"
+    "학력·경력·재산신고 같은 공약이 아닌 내용도 섞여 있다.",
+)
 
-def parse_one(text: str) -> list[dict]:
-    out = llm.complete_json(PROMPT.format(text=text[:MAX_CHARS]), SCHEMA)
+
+def parse_one(text: str, pdf: bytes | None = None) -> list[dict]:
+    if pdf:
+        prompt = PDF_PROMPT
+    else:
+        prompt = PROMPT.format(text=text[:MAX_CHARS])
+    out = llm.complete_json(prompt, SCHEMA, pdf=pdf)
     items = out.get("pledges") if isinstance(out, dict) else out
     if not isinstance(items, list):
         raise llm.LLMError(f"pledges 배열이 아닙니다: {str(out)[:200]}")
@@ -88,7 +111,7 @@ def parse_one(text: str) -> list[dict]:
 def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "select id, member_code, raw_text from pledge_doc"
+            "select id, member_code, raw_text, pdf_url from pledge_doc"
             " where election_id = %s and kind = '선거공보'"
             " and raw_text is not null and raw_text <> ''"
             + ("" if redo else " and parsed_at is null")
@@ -101,10 +124,19 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
         docs = docs[:limit]
     print(f"  대상 {len(docs)}건", file=sys.stderr)
 
-    ok = fail = total = 0
-    for i, (doc_id, mcode, text) in enumerate(docs, 1):
+    ok = fail = total = via_pdf = 0
+    for i, (doc_id, mcode, text, pdf_url) in enumerate(docs, 1):
+        pdf = None
+        if cid_ratio(text) > CID_LIMIT and pdf_url:
+            try:
+                with bulletin.client() as c:
+                    pdf = c.get(pdf_url).content
+                via_pdf += 1
+            except Exception as e:
+                print(f"  [{i}] PDF 재다운로드 실패, 텍스트로 진행: {str(e)[:70]}",
+                      file=sys.stderr)
         try:
-            items = parse_one(text)
+            items = parse_one(text, pdf)
         except llm.LLMError as e:
             fail += 1
             print(f"  [{i}/{len(docs)}] {mcode} 실패: {str(e)[:120]}", file=sys.stderr)
@@ -129,7 +161,8 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
             print(f"  [{i}/{len(docs)}] 성공 {ok} 실패 {fail} 공약 {total}건",
                   file=sys.stderr)
 
-    print(f"[parse] {sg_id}: 문서 {ok}건에서 공약 {total}건 (실패 {fail})", file=sys.stderr)
+    print(f"[parse] {sg_id}: 문서 {ok}건에서 공약 {total}건"
+          f" (실패 {fail}, PDF 직접읽기 {via_pdf})", file=sys.stderr)
 
 
 def main():
