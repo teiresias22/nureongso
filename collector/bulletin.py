@@ -103,31 +103,35 @@ def ingest(conn, sg_id: str, sg_type: str, limit: int | None, skip_done: bool) -
         rows = list_docs(c, sg_id, sg_type)
 
     with conn.cursor() as cur:
+        # 공보 사이트는 재보궐 당선인을 직전 총선 페이지에 묶어 보여주는데, 선관위 API 는
+        # 재보궐을 별도 선거로 등록한다. 그래서 선거를 좁히지 않고 직위로만 찾고,
+        # 저장할 때는 그 사람의 실제 선거ID 를 쓴다.
         cur.execute(
-            "select huboid, member_code from candidacy"
-            " where election_id = %s and sg_typecode = %s and member_code is not null",
-            (sg_id, sg_type),
+            "select huboid, member_code, election_id from candidacy"
+            " where sg_typecode = %s and member_code is not null",
+            (sg_type,),
         )
-        by_hubo = dict(cur.fetchall())
+        by_hubo = {h: (m, e) for h, m, e in cur.fetchall()}
         cur.execute(
-            "select member_code from pledge_doc"
-            " where election_id = %s and raw_text is not null", (sg_id,)
+            "select member_code, election_id from pledge_doc"
+            " where kind = '선거공보' and raw_text is not null"
         )
-        done = {r[0] for r in cur.fetchall()}
+        done = set(cur.fetchall())
 
     todo = []
     unmatched = 0
     for r in rows:
         path = bulletin_path(r)
-        mcode = by_hubo.get(str(r.get("huboid")))
         if not path:
             continue
-        if not mcode:
+        hit = by_hubo.get(str(r.get("huboid")))
+        if not hit:
             unmatched += 1
             continue
-        if skip_done and mcode in done:
+        mcode, elec = hit
+        if skip_done and (mcode, elec) in done:
             continue
-        todo.append((mcode, path, r))
+        todo.append((mcode, elec, path, r))
 
     print(f"  대상 {len(todo)}명 (미제출·이미받음 제외, 인물 매칭 실패 {unmatched}명)",
           file=sys.stderr)
@@ -139,8 +143,8 @@ def ingest(conn, sg_id: str, sg_type: str, limit: int | None, skip_done: bool) -
 
     ok = fail = 0
     with client() as c:
-        for i, (mcode, path, r) in enumerate(todo, 1):
-            name = f"{sg_id}_{r.get('sggname')}_{r.get('hbjname')}_선거공보.pdf"
+        for i, (mcode, elec, path, r) in enumerate(todo, 1):
+            name = f"{elec}_{r.get('sggname')}_{r.get('hbjname')}_선거공보.pdf"
             url = f"{DOWN_URL}?requestedFileName={name}&requestedFullPath={path}"
             try:
                 pdf = download(c, path, name)
@@ -153,11 +157,12 @@ def ingest(conn, sg_id: str, sg_type: str, limit: int | None, skip_done: bool) -
 
             with conn.cursor() as cur:
                 cur.execute(
-                    "insert into pledge_doc (member_code, election_id, pdf_url, raw_text,"
-                    " parsed_at) values (%s,%s,%s,%s,null)"
-                    " on conflict (member_code, election_id) do update set"
-                    "   pdf_url = excluded.pdf_url, raw_text = excluded.raw_text",
-                    (mcode, sg_id, url, text),
+                    "insert into pledge_doc (member_code, election_id, kind, pdf_url,"
+                    " raw_text, parsed_at) values (%s,%s,'선거공보',%s,%s,null)"
+                    " on conflict (member_code, election_id, kind) do update set"
+                    "   pdf_url = excluded.pdf_url, raw_text = excluded.raw_text,"
+                    "   parsed_at = null",
+                    (mcode, elec, url, text),
                 )
             conn.commit()
             ok += 1

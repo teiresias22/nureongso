@@ -322,12 +322,15 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
             if not rows:
                 continue
             r = rows[0]
-            docs = [(mcode, sg_id, None, None)]
-            upsert(cur, "pledge_doc", ["member_code", "election_id", "pdf_url", "raw_text"],
-                   docs, "member_code,election_id")
             cur.execute(
-                "select id from pledge_doc where member_code = %s and election_id = %s",
+                "insert into pledge_doc (member_code, election_id, kind)"
+                " values (%s,%s,'공약서')"
+                " on conflict (member_code, election_id, kind) do nothing",
                 (mcode, sg_id),
+            )
+            cur.execute(
+                "select id from pledge_doc where member_code = %s and election_id = %s"
+                " and kind = '공약서'", (mcode, sg_id),
             )
             row = cur.fetchone()
             if not row:
@@ -346,7 +349,8 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
             if items:  # 위에서 doc_id 기준으로 지웠으므로 그냥 넣는다
                 cur.executemany(
                     "insert into pledge (doc_id, member_code, election_id, order_no,"
-                    " title, body, category) values (%s,%s,%s,%s,%s,%s,%s)",
+                    " title, body, category, source)"
+                    " values (%s,%s,%s,%s,%s,%s,%s,'공약서')",
                     items,
                 )
             total += len(items)

@@ -9,6 +9,21 @@ export const revalidate = 3600;
 
 const MAX = 50;
 
+/** 공약 출처가 둘이라 섞으면 안 된다. 대표공약은 법정 상한이 있는 5~10건이고,
+ *  선거공보는 후보가 낸 전체 공약이다. */
+const PLEDGE_SOURCES = [
+  {
+    key: "선거공보",
+    title: "공약 (선거공보)",
+    note: "후보가 유권자에게 배포한 선거공보에서 뽑은 공약입니다. AI 가 PDF 원문을 읽어 정리했습니다.",
+  },
+  {
+    key: "공약서",
+    title: "대표공약 (선거공약서)",
+    note: "후보가 선거관리위원회에 제출한 선거공약서의 대표 공약입니다. 공직선거법상 게재 수가 제한돼 지방선거는 5개, 대통령선거는 10개까지만 실립니다.",
+  },
+] as const;
+
 /** 의원의 법안 목록. 건수는 member_stats 에서 따로 읽는다 — PostgREST 가 1000행에서 잘라서
  *  여기 길이를 세면 1000건 넘는 의원의 통계가 조용히 틀어진다. */
 const bills = (code: string, role: "rep" | "co") =>
@@ -38,7 +53,7 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
     db.from("candidacy").select("*").eq("member_code", code).order("election_id", { ascending: false }),
     db
       .from("pledge")
-      .select("id, title, body, category, election_id, pledge_status(status, decided_by)")
+      .select("id, title, body, category, election_id, source, pledge_status(status, decided_by)")
       .eq("member_code", code)
       .order("order_no"),
   ]);
@@ -143,16 +158,16 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
         </section>
       )}
 
-      <Section title="대표공약" count={pledges?.length ?? 0}>
-        {pledges?.length ? (
-          <>
+      {PLEDGE_SOURCES.map(({ key, title, note }) => {
+        const list = (pledges ?? []).filter((p) => (p.source ?? "선거공보") === key);
+        if (!list.length) return null;
+        return (
+          <Section key={key} title={title} count={list.length}>
             <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
-              후보가 선거공약서에 올린 대표 공약입니다. 공직선거법상 게재 수가 제한돼
-              지방선거는 5개, 대통령선거는 10개까지만 실립니다.{" "}
-              <b className="text-foreground">후보의 전체 공약이 아닙니다.</b> 전체는 선거공보에 있습니다.
+              {note}
             </p>
             <ul className="divide-y divide-line">
-            {pledges.map((p) => {
+            {list.map((p) => {
               const st = (p.pledge_status as unknown as { status: string; decided_by: string } | null);
               return (
                 <li key={p.id} className="flex gap-3 px-4 py-3 text-sm">
@@ -174,15 +189,15 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
               );
             })}
             </ul>
-          </>
-        ) : (
-          <p className="px-4 py-3 text-sm text-muted">
-            {m.office === "국회의원"
-              ? "국회의원은 선거공약서 제출 대상이 아니라 선관위 공약 API 에 자료가 없습니다. 선거공보 PDF 를 따로 수집해야 합니다."
-              : "아직 공약 데이터가 없습니다."}
-          </p>
-        )}
-      </Section>
+          </Section>
+        );
+      })}
+
+      {!pledges?.length && (
+        <Section title="공약" count={0}>
+          <p className="px-4 py-3 text-sm text-muted">아직 공약 데이터가 없습니다.</p>
+        </Section>
+      )}
 
       <Section title="출마 이력" count={candidacies?.length ?? 0}>
         {candidacies?.length ? (

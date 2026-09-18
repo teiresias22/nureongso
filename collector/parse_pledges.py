@@ -89,7 +89,8 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "select id, member_code, raw_text from pledge_doc"
-            " where election_id = %s and raw_text is not null and raw_text <> ''"
+            " where election_id = %s and kind = '선거공보'"
+            " and raw_text is not null and raw_text <> ''"
             + ("" if redo else " and parsed_at is null")
             + " order by id",
             (sg_id,),
@@ -115,7 +116,8 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
             cur.execute("delete from pledge where doc_id = %s", (doc_id,))
             cur.executemany(
                 "insert into pledge (doc_id, member_code, election_id, order_no,"
-                " title, body, category) values (%s,%s,%s,%s,%s,%s,%s)",
+                " title, body, category, source)"
+                " values (%s,%s,%s,%s,%s,%s,%s,'선거공보')",
                 [(doc_id, mcode, sg_id, n, it["title"], it["body"], it["category"])
                  for n, it in enumerate(items, 1)],
             )
