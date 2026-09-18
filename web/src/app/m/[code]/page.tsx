@@ -99,9 +99,9 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {showPledges && (
           <>
-            <Stat label="공약" value={s.pledge_count} unit="건" />
+            <Stat label="대표공약" value={s.pledge_count} unit="건" sub="선거공약서 기재" />
             <Stat
-              label="공약 이행"
+              label="대표공약 이행"
               value={pct(s.pledge_done, s.pledge_count)}
               unit="%"
               sub={`완료 ${s.pledge_done}/${s.pledge_count}`}
@@ -143,9 +143,15 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
         </section>
       )}
 
-      <Section title="공약" count={pledges?.length ?? 0}>
+      <Section title="대표공약" count={pledges?.length ?? 0}>
         {pledges?.length ? (
-          <ul className="divide-y divide-line">
+          <>
+            <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
+              후보가 선거공약서에 올린 대표 공약입니다. 공직선거법상 게재 수가 제한돼
+              지방선거는 5개, 대통령선거는 10개까지만 실립니다.{" "}
+              <b className="text-foreground">후보의 전체 공약이 아닙니다.</b> 전체는 선거공보에 있습니다.
+            </p>
+            <ul className="divide-y divide-line">
             {pledges.map((p) => {
               const st = (p.pledge_status as unknown as { status: string; decided_by: string } | null);
               return (
@@ -167,7 +173,8 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
                 </li>
               );
             })}
-          </ul>
+            </ul>
+          </>
         ) : (
           <p className="px-4 py-3 text-sm text-muted">
             {m.office === "국회의원"

@@ -139,7 +139,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     ) : hasPledges(s) ? (
                       <>
                         <span>
-                          공약 <b className="text-foreground">{s!.pledge_count}</b>건
+                          대표공약 <b className="text-foreground">{s!.pledge_count}</b>건
                         </span>
                         <span>
                           이행 <b className="text-foreground">{pct(s!.pledge_done, s!.pledge_count)}%</b>
