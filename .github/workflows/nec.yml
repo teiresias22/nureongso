@@ -45,3 +45,5 @@ jobs:
             python nec.py pledges
           fi
           python ingest.py refresh
+
+# 최초 등록 트리거
