@@ -1,0 +1,29 @@
+name: ingest
+
+on:
+  schedule:
+    - cron: "0 19 * * 0" # 매주 월요일 04:00 KST
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "members | bills | plenary | votes | refresh | all"
+        default: all
+      age:
+        description: "국회 대수"
+        default: "22"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r collector/requirements.txt
+      - run: python collector/ingest.py "${{ inputs.step || 'all' }}" --age "${{ inputs.age || '22' }}"
+        working-directory: .
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ASSEMBLY_API_KEY: ${{ secrets.ASSEMBLY_API_KEY }}
