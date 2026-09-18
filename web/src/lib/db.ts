@@ -8,6 +8,7 @@ export const db = createClient(url, key, { auth: { persistSession: false } });
 export type Member = {
   code: string;
   name: string;
+  office: string | null;
   party: string | null;
   district: string | null;
   elect_type: string | null;
@@ -23,6 +24,7 @@ export type Member = {
 export type MemberStats = {
   code: string;
   is_incumbent?: boolean;
+  office?: string | null;
   rep_count: number;
   co_count: number;
   rep_passed: number;
@@ -32,7 +34,12 @@ export type MemberStats = {
   vote_no: number;
   vote_blank: number;
   vote_absent: number;
+  pledge_count: number;
+  pledge_done: number;
 };
+
+/** 직위마다 측정 가능한 활동이 다르다. 국회의원만 법안·표결 기록이 존재한다. */
+export const HAS_BILLS = (office?: string | null) => (office ?? "국회의원") === "국회의원";
 
 export type Bill = {
   bill_id: string;

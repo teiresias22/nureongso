@@ -18,9 +18,11 @@ create table if not exists member (
   tel           text,
   email         text,
   homepage      text,
+  office        text not null default '국회의원',   -- 국회의원 / 시도지사 / 교육감 ...
   is_incumbent  boolean not null default false,
   updated_at    timestamptz not null default now()
 );
+create index if not exists member_office_idx on member (office) where is_incumbent;
 create index if not exists member_name_idx on member (name);
 create index if not exists member_incumbent_idx on member (is_incumbent) where is_incumbent;
 
@@ -72,23 +74,57 @@ create table if not exists plenary_bill (
   yes_cnt     int, no_cnt int, blank_cnt int, vote_cnt int, member_cnt int
 );
 
--- 역대 출마 이력 (선관위, Phase 2)
+-- 선관위 선거 목록 (getCommonSgCodeList). sg_id = 선거일 YYYYMMDD.
+create table if not exists election (
+  sg_id       text not null,
+  sg_typecode text not null,
+  name        text,
+  vote_date   date,
+  office      text,
+  primary key (sg_id, sg_typecode)
+);
+
+-- 선거종류코드. data.nec.go.kr LOD 전수 대조로 확인.
+-- has_pledge_api = 선거공약서 제출 대상이라 공약이 API 로 내려오는 직위.
+create table if not exists sg_type (
+  code   text primary key,
+  office text not null,
+  has_pledge_api boolean not null default false
+);
+insert into sg_type (code, office, has_pledge_api) values
+  ('1','대통령',true), ('2','국회의원',false), ('3','시도지사',true),
+  ('4','구시군의장',true), ('5','시도의원',false), ('6','구시군의원',false),
+  ('7','국회의원비례대표',false), ('8','시도의원비례대표',false),
+  ('9','구시군의원비례대표',false), ('10','교육의원',false), ('11','교육감',true)
+on conflict (code) do update
+  set office = excluded.office, has_pledge_api = excluded.has_pledge_api;
+
+-- 출마 이력 (선관위 당선인/후보자 API)
 create table if not exists candidacy (
   id            bigserial primary key,
   member_code   text references member(code) on delete cascade,
-  election_id   text,
+  election_id   text,                      -- sgId
+  sg_typecode   text,
+  office        text,
+  huboid        text,                      -- 선관위 후보자 고유키
   election_name text,
-  sg_type       text,
-  district      text,
+  district      text,                      -- sggName
+  sd_name       text,
+  wiw_name      text,
   party         text,
   name          text,
   birth         text,
+  giho          text,
   votes         bigint,
   vote_rate     numeric,
-  elected       boolean,
-  unique (election_id, sg_type, district, name)
+  job           text,
+  edu           text,
+  career        text,
+  elected       boolean
 );
 create index if not exists candidacy_member_idx on candidacy (member_code);
+create unique index if not exists candidacy_nec_key
+  on candidacy (election_id, sg_typecode, huboid) where huboid is not null;
 
 -- 공약 (Phase 3)
 create table if not exists pledge_doc (
@@ -152,6 +188,7 @@ create materialized view if not exists member_stats as
 select
   m.code,
   m.is_incumbent,
+  m.office,
   coalesce(s.rep_count, 0)   as rep_count,
   coalesce(s.co_count, 0)    as co_count,
   coalesce(s.rep_passed, 0)  as rep_passed,
@@ -160,7 +197,9 @@ select
   coalesce(v.vote_yes, 0)    as vote_yes,
   coalesce(v.vote_no, 0)     as vote_no,
   coalesce(v.vote_blank, 0)  as vote_blank,
-  coalesce(v.vote_absent, 0) as vote_absent
+  coalesce(v.vote_absent, 0) as vote_absent,
+  coalesce(p.pledge_count, 0) as pledge_count,
+  coalesce(p.pledge_done, 0)  as pledge_done
 from member m
 left join (
   select s.member_code,
@@ -179,7 +218,14 @@ left join (
     count(*) filter (where result = '기권') as vote_blank,
     count(*) filter (where result = '불참') as vote_absent
   from vote group by member_code
-) v on v.member_code = m.code;
+) v on v.member_code = m.code
+left join (
+  select pl.member_code,
+    count(*)                                  as pledge_count,
+    count(*) filter (where st.status = '완료') as pledge_done
+  from pledge pl left join pledge_status st on st.pledge_id = pl.id
+  group by pl.member_code
+) p on p.member_code = m.code;
 create unique index if not exists member_stats_code_idx on member_stats (code);
 create index if not exists member_stats_incumbent_idx on member_stats (is_incumbent) where is_incumbent;
 
@@ -209,11 +255,13 @@ alter table candidacy enable row level security;
 alter table pledge enable row level security;
 alter table pledge_status enable row level security;
 alter table pledge_evidence enable row level security;
+alter table election enable row level security;
+alter table sg_type enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { db, lastPart, partyColor, pct, type Member, type MemberStats } from "@/lib/db";
+import { db, HAS_BILLS, lastPart, partyColor, pct, type Member, type MemberStats } from "@/lib/db";
 
 export const revalidate = 3600;
 
-type SP = { q?: string; party?: string; sort?: string; elect?: string };
+type SP = { q?: string; party?: string; sort?: string; elect?: string; office?: string };
 
 export default async function Home({ searchParams }: { searchParams: Promise<SP> }) {
-  const { q = "", party = "", sort = "rep", elect = "" } = await searchParams;
+  const { q = "", party = "", sort = "rep", elect = "", office = "" } = await searchParams;
 
   const [{ data: members }, { data: stats }] = await Promise.all([
     db.from("member").select("*").eq("is_incumbent", true).order("name"),
@@ -17,11 +17,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
 
   const statById = new Map((stats ?? []).map((s: MemberStats) => [s.code, s]));
   const parties = [...new Set(members.map((m: Member) => lastPart(m.party)).filter(Boolean))].sort();
+  const offices = [...new Set(members.map((m: Member) => m.office ?? "국회의원"))].sort();
 
   let rows = members as Member[];
   if (q) rows = rows.filter((m) => m.name.includes(q) || (m.district ?? "").includes(q));
   if (party) rows = rows.filter((m) => lastPart(m.party) === party);
   if (elect) rows = rows.filter((m) => m.elect_type === elect);
+  if (office) rows = rows.filter((m) => (m.office ?? "국회의원") === office);
 
   rows = [...rows].sort((a, b) => {
     const sa = statById.get(a.code);
@@ -40,6 +42,20 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
           placeholder="이름 또는 지역구"
           className="min-w-40 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm"
         />
+        {offices.length > 1 && (
+          <select
+            name="office"
+            defaultValue={office}
+            className="rounded-md border border-line bg-card px-3 py-2 text-sm"
+          >
+            <option value="">전체 직위</option>
+            {offices.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           name="party"
           defaultValue={party}
@@ -75,7 +91,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         </button>
       </form>
 
-      <p className="text-xs text-muted">현역 의원 {rows.length}명</p>
+      <p className="text-xs text-muted">현직 {rows.length}명</p>
 
       <ul className="grid gap-2 sm:grid-cols-2">
         {rows.map((m) => {
@@ -95,22 +111,39 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     <span className="font-semibold">{m.name}</span>
                     <ElectBadge type={m.elect_type} />
                     <span className="truncate text-xs text-muted">
-                      {lastPart(m.party)} · {m.district} · {m.term_count}
+                      {[lastPart(m.party), m.district, m.term_count].filter(Boolean).join(" · ")}
                     </span>
                   </div>
                   <div className="mt-1 flex gap-4 text-xs text-muted">
-                    <span>
-                      대표발의 <b className="text-foreground">{s?.rep_count ?? 0}</b>
-                    </span>
-                    <span>
-                      공동발의 <b className="text-foreground">{s?.co_count ?? 0}</b>
-                    </span>
-                    <span>
-                      표결참여{" "}
-                      <b className="text-foreground">
-                        {pct((s?.vote_total ?? 0) - (s?.vote_absent ?? 0), s?.vote_total ?? 0)}%
-                      </b>
-                    </span>
+                    {HAS_BILLS(m.office) ? (
+                      <>
+                        <span>
+                          대표발의 <b className="text-foreground">{s?.rep_count ?? 0}</b>
+                        </span>
+                        <span>
+                          공동발의 <b className="text-foreground">{s?.co_count ?? 0}</b>
+                        </span>
+                        <span>
+                          표결참여{" "}
+                          <b className="text-foreground">
+                            {pct((s?.vote_total ?? 0) - (s?.vote_absent ?? 0), s?.vote_total ?? 0)}%
+                          </b>
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{m.office}</span>
+                        <span>
+                          공약 <b className="text-foreground">{s?.pledge_count ?? 0}</b>건
+                        </span>
+                        <span>
+                          이행{" "}
+                          <b className="text-foreground">
+                            {pct(s?.pledge_done ?? 0, s?.pledge_count ?? 0)}%
+                          </b>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </Link>

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { db, lastPart, partyColor, pct, type Bill, type Member, type MemberStats } from "@/lib/db";
+import {
+  db, HAS_BILLS, lastPart, partyColor, pct,
+  type Bill, type Member, type MemberStats,
+} from "@/lib/db";
 
 export const revalidate = 3600;
 
@@ -46,8 +49,10 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
     code,
     rep_count: 0, co_count: 0, rep_passed: 0, rep_pending: 0,
     vote_total: 0, vote_yes: 0, vote_no: 0, vote_blank: 0, vote_absent: 0,
+    pledge_count: 0, pledge_done: 0,
   };
   const attended = s.vote_total - s.vote_absent;
+  const hasBills = HAS_BILLS(m.office);
 
   return (
     <div className="space-y-6">
@@ -84,23 +89,37 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
       </header>
 
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label="대표발의" value={s.rep_count} unit="건" />
-        <Stat label="공동발의" value={s.co_count} unit="건" />
-        <Stat
-          label="대표발의 가결률"
-          value={pct(s.rep_passed, s.rep_count)}
-          unit="%"
-          sub={`가결 ${s.rep_passed} · 계류 ${s.rep_pending}`}
-        />
-        <Stat
-          label="본회의 표결 참여"
-          value={pct(attended, s.vote_total)}
-          unit="%"
-          sub={`${attended}/${s.vote_total}회`}
-        />
+        {hasBills ? (
+          <>
+            <Stat label="대표발의" value={s.rep_count} unit="건" />
+            <Stat label="공동발의" value={s.co_count} unit="건" />
+            <Stat
+              label="대표발의 가결률"
+              value={pct(s.rep_passed, s.rep_count)}
+              unit="%"
+              sub={`가결 ${s.rep_passed} · 계류 ${s.rep_pending}`}
+            />
+            <Stat
+              label="본회의 표결 참여"
+              value={pct(attended, s.vote_total)}
+              unit="%"
+              sub={`${attended}/${s.vote_total}회`}
+            />
+          </>
+        ) : (
+          <>
+            <Stat label="공약" value={s.pledge_count} unit="건" />
+            <Stat
+              label="공약 이행"
+              value={pct(s.pledge_done, s.pledge_count)}
+              unit="%"
+              sub={`완료 ${s.pledge_done}/${s.pledge_count}`}
+            />
+          </>
+        )}
       </section>
 
-      {s.vote_total > 0 && (
+      {hasBills && s.vote_total > 0 && (
         <section className="rounded-lg border border-line bg-card p-4">
           <h2 className="text-sm font-semibold">표결 성향</h2>
           <div className="mt-2 flex gap-4 text-sm text-muted">
@@ -160,13 +179,17 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
         )}
       </Section>
 
-      <Section title="대표발의 법안" count={s.rep_count}>
-        <BillList bills={(repBills ?? []) as Bill[]} total={s.rep_count} />
-      </Section>
+      {hasBills && (
+        <>
+          <Section title="대표발의 법안" count={s.rep_count}>
+            <BillList bills={(repBills ?? []) as Bill[]} total={s.rep_count} />
+          </Section>
 
-      <Section title="공동발의 법안" count={s.co_count}>
-        <BillList bills={(coBills ?? []) as Bill[]} total={s.co_count} />
-      </Section>
+          <Section title="공동발의 법안" count={s.co_count}>
+            <BillList bills={(coBills ?? []) as Bill[]} total={s.co_count} />
+          </Section>
+        </>
+      )}
     </div>
   );
 }
