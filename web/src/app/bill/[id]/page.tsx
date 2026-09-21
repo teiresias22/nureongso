@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db, lastPart, partyColor, type Bill } from "@/lib/db";
@@ -14,6 +15,25 @@ type Sponsor = {
 };
 
 type SP = { from?: string };
+
+export async function generateMetadata(
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Metadata> {
+  const { id } = await params;
+  const { data } = await db
+    .from("bill")
+    .select("name, bill_no, proc_result, summary")
+    .eq("bill_id", id)
+    .maybeSingle();
+  if (!data) return { title: "찾을 수 없는 법안" };
+
+  const b = data as Pick<Bill, "name" | "bill_no" | "proc_result"> & { summary: string | null };
+  // 국회가 준 제안이유 원문을 그대로 줄인다. 새로 요약하지 않는다.
+  const description = b.summary
+    ? b.summary.replace(/\s+/g, " ").slice(0, 160)
+    : `의안번호 ${b.bill_no} · ${b.proc_result ?? "계류 중"}. 발의자와 처리 결과를 봅니다.`;
+  return { title: b.name, description, openGraph: { title: b.name, description } };
+}
 
 export default async function BillPage({
   params,

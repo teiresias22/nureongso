@@ -341,7 +341,21 @@ from candidacy c join member m on m.code = c.member_code
 where c.elected and c.office is not null
 group by c.member_code, c.office;
 
-grant select on member_region, party_stats, region_stats, member_office_term
+-- 지역으로 대표를 찾는 길(`/my`). member.district 는 직위마다 모양이 달라 못 쓴다
+-- (국회의원 '대구 북구을', 시도지사 '대구광역시', 구시군의장 '검단구'). 특히 구시군의장의
+-- '광주시' 는 경기 광주시인데 광주광역시와 구별이 안 된다. 선관위가 주는 sd_name/wiw_name
+-- 만이 시도·시군구가 분리된 깨끗한 키다.
+-- 현직으로 좁히는 이유: 역대까지 넣으면 2,285행이라 PostgREST 1000행 상한에 조용히 잘린다.
+create or replace view member_area
+with (security_invoker = true) as
+select distinct on (c.member_code)
+  c.member_code, coalesce(m.office, c.office) as office, c.sd_name, c.wiw_name
+from candidacy c join member m on m.code = c.member_code and m.is_incumbent
+-- 국회의원 출신 단체장이 의원 시절 지역구로 잡히지 않게 현재 직위의 당선만 본다.
+where c.elected and c.office = coalesce(m.office, c.office)
+order by c.member_code, c.election_id desc;
+
+grant select on member_region, party_stats, region_stats, member_office_term, member_area
   to anon, authenticated;
 
 

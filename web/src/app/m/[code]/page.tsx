@@ -1,8 +1,9 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
-  partyColor, pct, termLabel,
+  partyColor, pct, shortDistrict, SITE, termLabel,
   type Bill, type Member, type MemberStats, type OfficeTerm,
 } from "@/lib/db";
 
@@ -52,6 +53,39 @@ function bills(code: string, role: "rep" | "co", filter: string, page: number) {
 }
 
 type SP = { rep?: string; co?: string; repPage?: string; coPage?: string };
+
+/** 이 서비스는 팜플랫에서 이름을 보고 검색해 들어오는 것으로 시작한다.
+ *  558명이 레이아웃의 기본 제목 하나를 공유하면 그 경로가 막힌다. */
+export async function generateMetadata(
+  { params }: { params: Promise<{ code: string }> },
+): Promise<Metadata> {
+  const { code } = await params;
+  const [{ data: member }, { data: stats }] = await Promise.all([
+    db.from("member").select("name, office, party, district").eq("code", code).maybeSingle(),
+    db.from("member_stats").select("*").eq("code", code).maybeSingle(),
+  ]);
+  if (!member) return { title: "찾을 수 없는 사람" };
+
+  const m = member as Pick<Member, "name" | "office" | "party" | "district">;
+  const s = (stats ?? undefined) as MemberStats | undefined;
+  const who = [m.office ?? "국회의원", lastPart(m.party), shortDistrict(m.district)]
+    .filter(Boolean)
+    .join(" ");
+
+  // 검색 결과에서 클릭을 만드는 건 홍보 문구가 아니라 수치다.
+  const facts: string[] = [];
+  if (hasBills(s)) {
+    facts.push(`대표발의 ${s!.rep_count}건(가결 ${s!.rep_passed})`, `공동발의 ${s!.co_count}건`);
+  }
+  if (hasPledges(s)) facts.push(`공약 ${s!.pledge_count}건`);
+
+  const title = `${m.name} · ${who}`;
+  const description = facts.length
+    ? `${title}. ${facts.join(" · ")}. 공약과 의정활동 기록을 원문 출처와 함께 봅니다.`
+    : `${title}. 공약과 활동 기록을 원문 출처와 함께 봅니다.`;
+
+  return { title, description, openGraph: { title, description, type: "profile" } };
+}
 
 export default async function MemberPage({
   params, searchParams,
@@ -110,8 +144,23 @@ export default async function MemberPage({
   // 이행 판정을 아직 한 건도 안 했다. 이때 0% 를 보이면 '아무것도 안 지켰다' 로 읽힌다.
   const judged = (pledges ?? []).some((p) => p.pledge_status);
 
+  // 구글이 이 페이지를 '인물' 로 인식해야 이름 검색에 걸린다. 라이브러리 없이 객체 하나.
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Person",
+    name: m.name,
+    jobTitle: m.office ?? "국회의원",
+    affiliation: lastPart(m.party) || undefined,
+    image: m.photo_url || undefined,
+    url: `${SITE}/m/${code}`,
+  };
+
   return (
     <div className="space-y-6">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <div className="flex items-center justify-between">
         <Link href="/" className="text-xs text-muted hover:underline">
           ← 전체 목록

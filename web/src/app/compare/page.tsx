@@ -7,7 +7,7 @@ import {
 export const revalidate = 3600;
 
 export const metadata = {
-  title: "의원 비교 — 누렁소검은소",
+  title: "의원 비교",
   description: "두 사람의 의정활동과 공약을 나란히 놓고 비교합니다.",
 };
 

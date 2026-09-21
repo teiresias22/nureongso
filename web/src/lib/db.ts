@@ -5,6 +5,14 @@ const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export const db = createClient(url, key, { auth: { persistSession: false } });
 
+/** 사이트 절대 주소. OG 이미지와 sitemap 은 상대 경로로는 동작하지 않는다.
+ *  Vercel 은 VERCEL_PROJECT_PRODUCTION_URL 을 알아서 넣어준다. */
+export const SITE =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
+
 export type Member = {
   code: string;
   name: string;

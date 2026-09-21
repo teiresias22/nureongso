@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SITE } from "@/lib/db";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "누렁소검은소 — 선출직 공약·의정활동 기록",
+  // 없으면 og:image 가 상대 경로로 나가 카카오톡·트위터에서 썸네일이 안 뜬다.
+  metadataBase: new URL(SITE),
+  title: {
+    default: "누렁소검은소 — 선출직 공약·의정활동 기록",
+    // 사람 이름으로 검색해 들어오는 서비스다. 개별 페이지 제목이 앞에 와야 한다.
+    template: "%s — 누렁소검은소",
+  },
   description:
     "국회의원·시도지사·교육감이 무슨 공약을 했고 얼마나 지켰는지, 어떤 활동을 했는지 한눈에.",
 };
@@ -19,6 +26,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <span className="text-xs text-muted">선출직이 실제로 한 일</span>
             <nav className="ml-auto flex gap-3 text-xs text-muted">
+              <Link href="/my" className="hover:text-foreground">
+                내 지역
+              </Link>
               <Link href="/stats" className="hover:text-foreground">
                 통계
               </Link>
