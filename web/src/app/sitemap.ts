@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
-import { db, SITE } from "@/lib/db";
+import { db } from "@/lib/db";
+import { SITE } from "@/lib/site";
 
 export const revalidate = 86400;
 

@@ -3,9 +3,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
-  partyColor, pct, shortDistrict, SITE, termLabel,
+  partyColor, pct, shortDistrict, termLabel,
   type Bill, type Member, type MemberStats, type OfficeTerm,
 } from "@/lib/db";
+import { SITE } from "@/lib/site";
 
 export const revalidate = 3600;
 
