@@ -131,11 +131,13 @@ create table if not exists pledge_doc (
   id          bigserial primary key,
   member_code text references member(code) on delete cascade,
   election_id text,
+  kind        text not null default '선거공보',  -- 공약서 | 선거공보
   pdf_url     text,
   raw_text    text,
-  parsed_at   timestamptz,
-  unique (member_code, election_id)
+  parsed_at   timestamptz
 );
+create unique index if not exists pledge_doc_key
+  on pledge_doc (member_code, election_id, kind);
 
 create table if not exists pledge (
   id          bigserial primary key,
@@ -145,9 +147,15 @@ create table if not exists pledge (
   order_no    int,
   title       text not null,
   body        text,
-  category    text
+  category    text,                      -- 주제 (교통·복지 ...)
+  source      text,                      -- 공약서 | 선거공보
+  -- 무엇을 보면 이행을 확인할 수 있는가. 주제가 아니라 '확인 수단'.
+  -- 한국 공약은 한 항목에 여러 수단을 묶어서 배열이어야 한다.
+  kinds       text[]                     -- 입법 | 예산사업 | 조례제도 | 선언 | 기타
 );
 create index if not exists pledge_member_idx on pledge (member_code);
+create index if not exists pledge_source_idx on pledge (member_code, source);
+create index if not exists pledge_kinds_idx on pledge using gin (kinds);
 
 -- 이행 판정 (Phase 4)
 create table if not exists pledge_status (
@@ -169,6 +177,8 @@ create table if not exists pledge_evidence (
   score      numeric
 );
 create index if not exists pledge_evidence_pledge_idx on pledge_evidence (pledge_id);
+create unique index if not exists pledge_evidence_key
+  on pledge_evidence (pledge_id, kind, ref_id);
 
 -- 수집 로그
 create table if not exists ingest_run (
@@ -198,8 +208,12 @@ select
   coalesce(v.vote_no, 0)     as vote_no,
   coalesce(v.vote_blank, 0)  as vote_blank,
   coalesce(v.vote_absent, 0) as vote_absent,
-  coalesce(p.pledge_count, 0) as pledge_count,
-  coalesce(p.pledge_done, 0)  as pledge_done
+  coalesce(p.pledge_count, 0)  as pledge_count,
+  coalesce(p.pledge_done, 0)   as pledge_done,
+  coalesce(p.pledge_judged, 0) as pledge_judged,
+  coalesce(p.pledge_law, 0)    as pledge_law,
+  coalesce(p.pledge_law_filed, 0)  as pledge_law_filed,
+  coalesce(p.pledge_law_passed, 0) as pledge_law_passed
 from member m
 left join (
   select s.member_code,
@@ -221,8 +235,13 @@ left join (
 ) v on v.member_code = m.code
 left join (
   select pl.member_code,
-    count(*)                                  as pledge_count,
-    count(*) filter (where st.status = '완료') as pledge_done
+    count(*)                                        as pledge_count,
+    count(*) filter (where st.status = '완료')       as pledge_done,
+    count(*) filter (where st.pledge_id is not null) as pledge_judged,
+    count(*) filter (where '입법' = any(pl.kinds))   as pledge_law,
+    count(*) filter (where '입법' = any(pl.kinds)
+                       and st.note in ('law_filed','law_passed'))  as pledge_law_filed,
+    count(*) filter (where st.note = 'law_passed')  as pledge_law_passed
   from pledge pl left join pledge_status st on st.pledge_id = pl.id
   group by pl.member_code
 ) p on p.member_code = m.code;

@@ -62,8 +62,11 @@ export const NOTE_LABEL: Record<string, string> = {
 
 export const noteText = (note?: string | null) => {
   if (!note) return "";
-  if (note.startsWith("no_measure:"))
-    return `법안·표결로는 확인할 수 없는 유형입니다 (${KIND_LABEL[note.slice(11)] ?? note.slice(11)})`;
+  if (note.startsWith("no_measure:")) {
+    // judge.py 는 유형을 '+' 로 이어 붙인다. 예: no_measure:예산사업+조례제도
+    const kinds = note.slice(11).split("+").map((k) => KIND_LABEL[k] ?? k).join(", ");
+    return `법안으로는 확인할 수 없는 유형입니다 (${kinds})`;
+  }
   return NOTE_LABEL[note] ?? note;
 };
 

@@ -54,7 +54,7 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
     db
       .from("pledge")
       .select(
-        "id, title, body, category, election_id, source, kind, pledge_status(status, decided_by, note), pledge_evidence(kind, ref_id, summary, score)",
+        "id, title, body, category, election_id, source, kinds, pledge_status(status, decided_by, note), pledge_evidence(kind, ref_id, summary, score)",
       )
       .eq("member_code", code)
       .order("order_no"),
@@ -200,7 +200,9 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
                   )}
                   <div className="min-w-0">
                     <p className="text-[11px] text-muted">
-                      {[p.category, p.kind && KIND_LABEL[p.kind]].filter(Boolean).join(" · ")}
+                      {[p.category, ...(p.kinds ?? []).map((k: string) => KIND_LABEL[k] ?? k)]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </p>
                     <p className="font-medium">{p.title}</p>
                     {st?.note && (
