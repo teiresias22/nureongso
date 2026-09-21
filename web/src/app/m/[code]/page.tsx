@@ -98,6 +98,9 @@ export default async function MemberPage({
   };
   const attended = s.vote_total - s.vote_absent;
   const showBills = hasBills(s);
+  // terms·term_count·committees·elect_type 는 국회 전용 필드다. 국회의원 출신
+  // 단체장에게 그대로 보이면 지금 그 직위의 정보로 오해된다.
+  const isMP = (m.office ?? "국회의원") === "국회의원";
   const showPledges = hasPledges(s);
   // 이행 판정을 아직 한 건도 안 했다. 이때 0% 를 보이면 '아무것도 안 지켰다' 로 읽힌다.
   const judged = (pledges ?? []).some((p) => p.pledge_status);
@@ -122,7 +125,7 @@ export default async function MemberPage({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold">{m.name}</h1>
-            {m.elect_type && (
+            {isMP && m.elect_type && (
               <span
                 className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
                   m.elect_type.includes("비례")
@@ -139,12 +142,15 @@ export default async function MemberPage({
               m.office,
               lastPart(m.party),
               lastPart(m.district),
-              m.term_count && m.terms ? `${m.term_count} (${m.terms})` : m.term_count,
+              // 국회 선수는 국회의원일 때만. 단체장에게 붙으면 그 직위의 선수로 오해된다.
+              isMP ? (m.term_count && m.terms ? `${m.term_count} (${m.terms})` : m.term_count) : null,
             ]
               .filter(Boolean)
               .join(" · ")}
           </p>
-          {m.committees && <p className="mt-1 text-xs text-muted">{m.committees}</p>}
+          {isMP && m.committees && (
+            <p className="mt-1 text-xs text-muted">{m.committees}</p>
+          )}
         </div>
       </header>
 

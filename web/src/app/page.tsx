@@ -117,13 +117,21 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                   <div className="flex items-center gap-1.5">
                     {/* 이름은 줄이지 않는다. 누구인지가 이 카드의 핵심이다. */}
                     <span className="whitespace-nowrap font-semibold">{m.name}</span>
-                    <ElectBadge type={m.elect_type} />
+                    {(m.office ?? "국회의원") === "국회의원" && (
+                      <ElectBadge type={m.elect_type} />
+                    )}
                     <span className="ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted">
                       {m.office ?? "국회의원"}
                     </span>
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted">
-                    {[lastPart(m.party), shortDistrict(m.district), m.term_count]
+                    {[
+                      lastPart(m.party),
+                      shortDistrict(m.district),
+                      // 선수(초선·재선)는 국회 대수 기준이라 단체장에게 붙이면 오해를 준다.
+                      // 오세훈은 16대 의원 '초선' 이지만 서울시장으로는 여러 번 당선됐다.
+                      (m.office ?? "국회의원") === "국회의원" ? m.term_count : null,
+                    ]
                       .filter(Boolean)
                       .join(" · ")}
                   </p>

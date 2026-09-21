@@ -205,19 +205,34 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
 
 
 def sync_office(cur) -> None:
-    """member.office 를 '가장 최근에 당선된 선거의 직위' 로 맞춘다.
+    """member 의 현재 직위·정당·지역구를 '가장 최근 당선된 선거' 기준으로 맞춘다.
 
     수집 순서에 의존하지 않는다. 국회의원이었다가 단체장이 된 사람은 단체장으로 바뀐다.
+
+    등록(register_members)은 빈 칸만 채우므로 이미 있는 사람의 정당·지역구를 덮지
+    않는다. 그래서 여기서 따로 맞춰야 한다. 안 그러면 오세훈이 16대 의원 시절인
+    '한나라당 · 강남구을' 로 남는다.
+
+    현직 국회의원은 열린국회정보 현역 API 쪽이 더 최신(임기 중 당적 변경 반영)이라
+    정당·지역구를 건드리지 않는다.
     """
     cur.execute("""
-        update member m set office = c.office
-        from (
-          select distinct on (member_code) member_code, office
+        with latest as (
+          select distinct on (member_code) member_code, office, party, district
           from candidacy
           where elected and member_code is not null and office is not null
           order by member_code, election_id desc
-        ) c
-        where c.member_code = m.code and m.office is distinct from c.office
+        )
+        update member m
+        set office   = c.office,
+            party    = case when c.office <> '국회의원' then c.party    else m.party    end,
+            district = case when c.office <> '국회의원' then c.district else m.district end
+        from latest c
+        where c.member_code = m.code
+          and (m.office is distinct from c.office
+               or (c.office <> '국회의원'
+                   and (m.party is distinct from c.party
+                        or m.district is distinct from c.district)))
     """)
 
 

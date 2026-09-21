@@ -298,7 +298,11 @@ left join lateral (
 -- 정당별 / 지역별 집계. 같은 컬럼 구성이라 화면에서 한 컴포넌트로 다룬다.
 create or replace view party_stats
 with (security_invoker = true) as
-select r.office, r.party as name, count(*) as members,
+select r.office,
+  -- 역대 정당이 '/' 로 이어져 오면 가장 최근 것만 쓴다.
+  -- 안 그러면 '더불어민주당', '더불어민주당/더불어민주당' 이 따로 집계된다.
+  split_part(r.party, '/', array_length(string_to_array(r.party, '/'), 1)) as name,
+  count(*) as members,
   sum(s.rep_count) as rep_count, sum(s.co_count) as co_count,
   sum(s.rep_passed) as rep_passed, sum(s.vote_total) as vote_total,
   sum(s.vote_total - s.vote_absent) as vote_attended,
@@ -306,7 +310,7 @@ select r.office, r.party as name, count(*) as members,
   sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed
 from member_region r join member_stats s on s.code = r.code
 where r.is_incumbent and r.party is not null
-group by r.office, r.party;
+group by r.office, split_part(r.party, '/', array_length(string_to_array(r.party, '/'), 1));
 
 create or replace view region_stats
 with (security_invoker = true) as

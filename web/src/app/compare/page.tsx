@@ -113,7 +113,12 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
                   <b className="truncate">{m!.name}</b>
                 </span>
                 <p className="mt-1 truncate text-xs text-muted">
-                  {[m!.office, lastPart(m!.party), lastPart(m!.district), m!.term_count]
+                  {[
+                    m!.office,
+                    lastPart(m!.party),
+                    lastPart(m!.district),
+                    (m!.office ?? "국회의원") === "국회의원" ? m!.term_count : null,
+                  ]
                     .filter(Boolean)
                     .join(" · ")}
                 </p>
