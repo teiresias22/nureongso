@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  db, hasBills, hasPledges, lastPart, partyColor, pct,
+  db, hasBills, hasPledges, KIND_LABEL, lastPart, noteText, partyColor, pct,
   type Bill, type Member, type MemberStats,
 } from "@/lib/db";
 
@@ -53,7 +53,9 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
     db.from("candidacy").select("*").eq("member_code", code).order("election_id", { ascending: false }),
     db
       .from("pledge")
-      .select("id, title, body, category, election_id, source, pledge_status(status, decided_by)")
+      .select(
+        "id, title, body, category, election_id, source, kind, pledge_status(status, decided_by, note), pledge_evidence(kind, ref_id, summary, score)",
+      )
       .eq("member_code", code)
       .order("order_no"),
   ]);
@@ -64,7 +66,8 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
     code,
     rep_count: 0, co_count: 0, rep_passed: 0, rep_pending: 0,
     vote_total: 0, vote_yes: 0, vote_no: 0, vote_blank: 0, vote_absent: 0,
-    pledge_count: 0, pledge_done: 0,
+    pledge_count: 0, pledge_done: 0, pledge_judged: 0,
+    pledge_law: 0, pledge_law_filed: 0, pledge_law_passed: 0,
   };
   const attended = s.vote_total - s.vote_absent;
   const showBills = hasBills(s);
@@ -117,12 +120,22 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
         {showPledges && (
           <>
             <Stat label="공약" value={s.pledge_count} unit="건" />
-            <Stat
-              label="공약 이행"
-              value={judged ? pct(s.pledge_done, s.pledge_count) : null}
-              unit="%"
-              sub={judged ? `완료 ${s.pledge_done}/${s.pledge_count}` : "아직 판정하지 않음"}
-            />
+            {/* 이행률은 해석이고 발의·가결은 사실이다. 사실을 먼저 보여준다. */}
+            {s.pledge_law > 0 ? (
+              <Stat
+                label="법률로 재는 공약"
+                value={s.pledge_law}
+                unit="건"
+                sub={`발의 ${s.pledge_law_filed} · 통과 ${s.pledge_law_passed}`}
+              />
+            ) : (
+              <Stat
+                label="공약 이행"
+                value={judged ? pct(s.pledge_done, s.pledge_count) : null}
+                unit="%"
+                sub={judged ? `완료 ${s.pledge_done}/${s.pledge_count}` : "아직 판정하지 않음"}
+              />
+            )}
           </>
         )}
         {showBills && (
@@ -166,11 +179,18 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
         return (
           <Section key={key} title={title} count={list.length}>
             <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
-              {note}
+              {note}{" "}
+              <Link href="/rules" className="underline underline-offset-2">
+                판정 기준
+              </Link>
             </p>
             <ul className="divide-y divide-line">
             {list.map((p) => {
-              const st = (p.pledge_status as unknown as { status: string; decided_by: string } | null);
+              const st = p.pledge_status as unknown as
+                { status: string; decided_by: string; note: string | null } | null;
+              const ev = (p.pledge_evidence ?? []) as unknown as {
+                kind: string; ref_id: string; summary: string | null; score: number | null;
+              }[];
               return (
                 <li key={p.id} className="flex gap-3 px-4 py-3 text-sm">
                   {st ? (
@@ -179,8 +199,28 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
                     <span className="mt-0.5 shrink-0 text-[11px] text-muted">미판정</span>
                   )}
                   <div className="min-w-0">
-                    {p.category && <p className="text-[11px] text-muted">{p.category}</p>}
+                    <p className="text-[11px] text-muted">
+                      {[p.category, p.kind && KIND_LABEL[p.kind]].filter(Boolean).join(" · ")}
+                    </p>
                     <p className="font-medium">{p.title}</p>
+                    {st?.note && (
+                      <p className="mt-0.5 text-xs text-muted">{noteText(st.note)}</p>
+                    )}
+                    {ev.length > 0 && (
+                      <ul className="mt-1.5 space-y-1">
+                        {ev.map((e) => (
+                          <li key={e.ref_id} className="text-xs">
+                            <Link
+                              href={`/bill/${e.ref_id}`}
+                              className="text-foreground underline underline-offset-2"
+                            >
+                              근거 법안
+                            </Link>
+                            {e.summary && <span className="ml-1 text-muted">{e.summary}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     {p.body && (
                       // 공약 본문은 목표·이행방법·재원조달까지 담긴 긴 원문이라 접어 둔다.
                       <details className="mt-1">

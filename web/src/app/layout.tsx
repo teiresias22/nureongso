@@ -23,7 +23,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
         <footer className="mx-auto max-w-5xl px-4 py-10 text-xs text-muted">
           출처: 열린국회정보 Open API, 중앙선거관리위원회 공공데이터. 수치는 수집 시점 기준이며
-          집계 방식은 서비스가 정한 것입니다.
+          집계 방식은 서비스가 정한 것입니다.{" "}
+          <Link href="/rules" className="underline underline-offset-2">
+            판정 기준 보기
+          </Link>
         </footer>
       </body>
     </html>
