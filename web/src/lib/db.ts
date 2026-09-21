@@ -58,6 +58,7 @@ export const NOTE_LABEL: Record<string, string> = {
   law_filed: "관련 법안을 발의했습니다",
   law_none_2y: "임기 2년이 지났지만 관련 법안이 없습니다",
   law_none_early: "관련 법안이 아직 없습니다 (임기 2년 미만)",
+  not_checked: "아직 법안을 대조하지 않았습니다",
 };
 
 export const noteText = (note?: string | null) => {

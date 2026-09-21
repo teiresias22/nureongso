@@ -298,6 +298,8 @@ judged as (
       when not ('입법' = any(p.kinds)) then '판단불가'
       when ev.passed             then '완료'
       when ev.n > 0              then '진행'
+      -- 법안을 찾아보지도 않았으면 '없다' 고 말할 수 없다. 매칭을 돌린 의원만 판정한다.
+      when not matched.ok        then '판단불가'
       when %(start)s::date + (%(grace)s || ' years')::interval < now() then '미착수'
       else '판단불가'
     end as status,
@@ -306,11 +308,17 @@ judged as (
                                  then 'no_measure:' || array_to_string(p.kinds, '+')
       when ev.passed             then 'law_passed'
       when ev.n > 0              then 'law_filed'
+      when not matched.ok        then 'not_checked'
       when %(start)s::date + (%(grace)s || ' years')::interval < now() then 'law_none_2y'
       else 'law_none_early'
     end as note,
     ev.conf
-  from pledge p left join ev on ev.pledge_id = p.id
+  from pledge p
+  left join ev on ev.pledge_id = p.id
+  cross join lateral (
+    select exists (select 1 from ingest_run r
+                    where r.source = 'match:' || p.member_code) as ok
+  ) matched
   where p.kinds is not null
 )
 insert into pledge_status (pledge_id, status, confidence, decided_by, note, updated_at)
