@@ -173,9 +173,40 @@ def ingest(conn, sg_id: str, sg_type: str, limit: int | None, skip_done: bool) -
     print(f"[bulletin] {sg_id}/{sg_type}: 저장 {ok}, 실패 {fail}", file=sys.stderr)
 
 
+def ingest_photos(conn, sg_id: str, sg_type: str) -> None:
+    """당선인 사진. 열린국회정보는 국회의원만 주고 단체장·교육감은 선관위에 있다.
+
+    CDN(cdn.nec.go.kr)은 국내 전용이라 밖에서 안 뚫리지만 정책·공약마당 도메인으로는
+    같은 경로가 열린다. 링크만 저장하고 파일은 보관하지 않는다.
+    """
+    with client() as c:
+        rows = list_docs(c, sg_id, sg_type)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "select huboid, member_code from candidacy"
+            " where sg_typecode = %s and member_code is not null", (sg_type,))
+        by_hubo = dict(cur.fetchall())
+
+    pairs = []
+    for r in rows:
+        path = (r.get("filename") or "").strip()
+        mcode = by_hubo.get(str(r.get("huboid")))
+        if path and mcode:
+            pairs.append((ORIGIN + path, mcode))
+
+    with conn.cursor() as cur:
+        # 이미 사진이 있으면 덮지 않는다. 열린국회정보 쪽이 더 크고 선명하다.
+        cur.executemany(
+            "update member set photo_url = %s where code = %s and photo_url is null", pairs)
+        n = cur.rowcount
+    conn.commit()
+    print(f"[photos] {sg_id}/{sg_type}: 후보 {len(pairs)}명 중 {n}명 채움", file=sys.stderr)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("step", choices=["list", "fetch"])
+    p.add_argument("step", choices=["list", "fetch", "photos"])
     p.add_argument("--sg", required=True, help="선거ID (선거일 YYYYMMDD)")
     p.add_argument("--type", required=True, help="선거종류코드 (2=국회의원, 3=시도지사 ...)")
     p.add_argument("--limit", type=int, default=None)
@@ -195,7 +226,10 @@ def main():
     if not dsn:
         sys.exit("DATABASE_URL 이 없습니다.")
     with psycopg.connect(dsn) as conn:
-        ingest(conn, a.sg, a.type, a.limit, skip_done=not a.redo)
+        if a.step == "photos":
+            ingest_photos(conn, a.sg, a.type)
+        else:
+            ingest(conn, a.sg, a.type, a.limit, skip_done=not a.redo)
 
 
 if __name__ == "__main__":

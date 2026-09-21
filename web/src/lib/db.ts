@@ -110,6 +110,20 @@ export function lastPart(v?: string | null) {
   return v ? v.split("/").pop()!.trim() : "";
 }
 
+/** 시도 이름을 통용 약칭으로. '전남광주통합특별시 서구갑' 같은 긴 지역구를 줄인다. */
+const SIDO_SHORT: Record<string, string> = {
+  경상남도: "경남", 경상북도: "경북", 전라남도: "전남", 전라북도: "전북",
+  충청남도: "충남", 충청북도: "충북", 경기도: "경기", 강원도: "강원", 제주도: "제주",
+};
+
+export function shortDistrict(v?: string | null) {
+  const d = lastPart(v);
+  if (!d || d === "비례대표") return ""; // 비례대표는 배지로 이미 보인다
+  const [head, ...rest] = d.split(" ");
+  const bare = head.replace(/(특별자치시|특별자치도|특별시|광역시|자치도)$/, "");
+  return [SIDO_SHORT[bare] ?? bare, ...rest].join(" ");
+}
+
 export function pct(n: number, d: number) {
   return d > 0 ? Math.round((n / d) * 100) : 0;
 }

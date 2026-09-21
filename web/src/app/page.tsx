@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  db, hasBills, hasPledges, lastPart, partyColor, pct,
+  db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type Member, type MemberStats,
 } from "@/lib/db";
 
@@ -112,17 +112,22 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                   className="w-1 shrink-0 rounded-full"
                   style={{ background: partyColor(m.party) }}
                 />
+                <Photo src={m.photo_url} name={m.name} />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-semibold">{m.name}</span>
+                  <div className="flex items-center gap-1.5">
+                    {/* 이름은 줄이지 않는다. 누구인지가 이 카드의 핵심이다. */}
+                    <span className="whitespace-nowrap font-semibold">{m.name}</span>
                     <ElectBadge type={m.elect_type} />
-                    <span className="truncate text-xs text-muted">
-                      {[lastPart(m.party), lastPart(m.district), m.term_count]
-                        .filter(Boolean)
-                        .join(" · ")}
+                    <span className="ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted">
+                      {m.office ?? "국회의원"}
                     </span>
                   </div>
-                  <div className="mt-1 flex gap-4 text-xs text-muted">
+                  <p className="mt-0.5 truncate text-xs text-muted">
+                    {[lastPart(m.party), shortDistrict(m.district), m.term_count]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
                     {hasBills(s) ? (
                       <>
                         <span>
@@ -141,7 +146,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     ) : hasPledges(s) ? (
                       <>
                         <span>
-                          대표공약 <b className="text-foreground">{s!.pledge_count}</b>건
+                          공약 <b className="text-foreground">{s!.pledge_count}</b>건
                         </span>
                         <span>
                           이행{" "}
@@ -164,17 +169,31 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
   );
 }
 
-/** 비례대표는 지역구가 없어 목록에서 눈에 안 띈다. 배지로 구분한다. */
+/** 비례대표만 표시한다. 지역구는 옆에 지역명이 이미 있어 배지가 중복이다. */
 function ElectBadge({ type }: { type?: string | null }) {
-  if (!type) return null;
-  const prop = type.includes("비례");
+  if (!type?.includes("비례")) return null;
   return (
-    <span
-      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-        prop ? "bg-violet-600 text-white" : "border border-line text-muted"
-      }`}
-    >
-      {prop ? "비례" : "지역구"}
+    <span className="shrink-0 rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+      비례
+    </span>
+  );
+}
+
+/** 사진이 없거나 못 불러오면 이름이 뒤에서 드러난다. 클라이언트 스크립트 없이 처리한다.
+ *  국회 사진 서버는 브라우저 UA 를 요구하므로 서버에서 미리 받아두지 않고 그대로 link 한다. */
+function Photo({ src, name }: { src?: string | null; name: string }) {
+  return (
+    <span className="relative grid h-12 w-10 shrink-0 place-items-center overflow-hidden rounded bg-line text-xs text-muted">
+      {name.slice(-2)}
+      {src && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      )}
     </span>
   );
 }
