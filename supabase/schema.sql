@@ -38,6 +38,7 @@ create table if not exists bill (
   proc_dt       date,
   proposer      text,                      -- "홍길동의원 등 10인"
   detail_link   text,
+  summary       text,                      -- 제안이유·주요내용 (BPMBILLSUMMARY 원문)
   updated_at    timestamptz not null default now()
 );
 create index if not exists bill_age_idx on bill (age);
@@ -51,6 +52,15 @@ create table if not exists bill_sponsor (
   primary key (bill_id, member_code, role)
 );
 create index if not exists bill_sponsor_member_idx on bill_sponsor (member_code, role);
+create index if not exists bill_sponsor_bill_idx on bill_sponsor (bill_id);
+
+-- bill_sponsor.member_code 에는 외래키가 없어(수집 순서 때문) PostgREST 가 member 를
+-- 임베드하지 못한다. 법안 상세의 발의자 목록이 비지 않도록 조인 뷰를 둔다.
+create or replace view bill_sponsor_member
+with (security_invoker = true) as
+select s.bill_id, s.role, m.code, m.name, m.party, m.district, m.office, m.is_incumbent
+from bill_sponsor s join member m on m.code = s.member_code;
+grant select on bill_sponsor_member to anon, authenticated;
 
 -- 본회의 표결 (의원 x 의안)
 create table if not exists vote (

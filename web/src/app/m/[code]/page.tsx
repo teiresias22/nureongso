@@ -7,7 +7,16 @@ import {
 
 export const revalidate = 3600;
 
-const MAX = 50;
+const PAGE = 50;
+
+/** 처리 상태 필터. proc_result 는 '원안가결/수정가결/폐기/대안반영폐기...' 처럼
+ *  값이 여러 가지라 접두 매칭이 아니라 의미 단위로 묶는다. */
+const BILL_FILTERS = [
+  { key: "", label: "전체" },
+  { key: "passed", label: "가결" },
+  { key: "pending", label: "계류" },
+  { key: "dropped", label: "폐기·기타" },
+] as const;
 
 /** 공약 출처가 둘이라 섞으면 안 된다. 대표공약은 법정 상한이 있는 5~10건이고,
  *  선거공보는 후보가 낸 전체 공약이다. */
@@ -26,30 +35,48 @@ const PLEDGE_SOURCES = [
 
 /** 의원의 법안 목록. 건수는 member_stats 에서 따로 읽는다 — PostgREST 가 1000행에서 잘라서
  *  여기 길이를 세면 1000건 넘는 의원의 통계가 조용히 틀어진다. */
-const bills = (code: string, role: "rep" | "co") =>
-  db
+function bills(code: string, role: "rep" | "co", filter: string, page: number) {
+  let q = db
     .from("member_bill")
-    .select("bill_id,bill_no,name,committee,proposed_at,proc_result,proposer,detail_link")
+    .select("bill_id,bill_no,name,committee,proposed_at,proc_result,proposer,detail_link",
+            { count: "exact" })
     .eq("member_code", code)
-    .eq("role", role)
+    .eq("role", role);
+  if (filter === "passed") q = q.like("proc_result", "%가결%");
+  else if (filter === "pending") q = q.is("proc_result", null);
+  else if (filter === "dropped") q = q.not("proc_result", "is", null).not("proc_result", "like", "%가결%");
+  return q
     .order("proposed_at", { ascending: false })
-    .limit(MAX);
+    .range((page - 1) * PAGE, page * PAGE - 1);
+}
 
-export default async function MemberPage({ params }: { params: Promise<{ code: string }> }) {
+type SP = { rep?: string; co?: string; repPage?: string; coPage?: string };
+
+export default async function MemberPage({
+  params, searchParams,
+}: {
+  params: Promise<{ code: string }>;
+  searchParams: Promise<SP>;
+}) {
   const { code } = await params;
+  const sp = await searchParams;
+  const repFilter = sp.rep ?? "";
+  const coFilter = sp.co ?? "";
+  const repPage = Math.max(1, Number(sp.repPage) || 1);
+  const coPage = Math.max(1, Number(sp.coPage) || 1);
 
   const [
     { data: member },
     { data: stats },
-    { data: repBills },
-    { data: coBills },
+    { data: repBills, count: repTotal },
+    { data: coBills, count: coTotal },
     { data: candidacies },
     { data: pledges },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
-    bills(code, "rep"),
-    bills(code, "co"),
+    bills(code, "rep", repFilter, repPage),
+    bills(code, "co", coFilter, coPage),
     db.from("candidacy").select("*").eq("member_code", code).order("election_id", { ascending: false }),
     db
       .from("pledge")
@@ -276,11 +303,29 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
       {showBills && (
         <>
           <Section title="대표발의 법안" count={s.rep_count}>
-            <BillList bills={(repBills ?? []) as Bill[]} total={s.rep_count} />
+            <BillList
+              bills={(repBills ?? []) as Bill[]}
+              total={repTotal ?? 0}
+              from={code}
+              param="rep"
+              pageParam="repPage"
+              filter={repFilter}
+              page={repPage}
+              keep={{ co: coFilter, coPage: String(coPage) }}
+            />
           </Section>
 
           <Section title="공동발의 법안" count={s.co_count}>
-            <BillList bills={(coBills ?? []) as Bill[]} total={s.co_count} />
+            <BillList
+              bills={(coBills ?? []) as Bill[]}
+              total={coTotal ?? 0}
+              from={code}
+              param="co"
+              pageParam="coPage"
+              filter={coFilter}
+              page={coPage}
+              keep={{ rep: repFilter, repPage: String(repPage) }}
+            />
           </Section>
         </>
       )}
@@ -332,27 +377,84 @@ function StatusBadge({ status, auto }: { status?: string; auto?: boolean }) {
   );
 }
 
-function BillList({ bills, total }: { bills: Bill[]; total: number }) {
-  if (!bills.length) return <p className="px-4 py-3 text-sm text-muted">없습니다.</p>;
+function BillList({
+  bills, total, from, param, pageParam, filter, page, keep,
+}: {
+  bills: Bill[]; total: number; from: string;
+  param: string; pageParam: string; filter: string; page: number;
+  keep: Record<string, string>;
+}) {
+  // 필터를 바꾸면 그 목록의 쪽 번호만 1로 되돌리고, 다른 목록의 상태는 유지한다.
+  const link = (next: Record<string, string>) => {
+    const q = new URLSearchParams({ ...keep, [param]: filter, [pageParam]: String(page), ...next });
+    for (const [k, v] of [...q]) if (!v || v === "1") q.delete(k);
+    const qs = q.toString();
+    return qs ? `?${qs}#${param}` : `#${param}`;
+  };
+  const last = Math.max(1, Math.ceil(total / PAGE));
+
   return (
-    <>
-      <ul className="divide-y divide-line">
-        {bills.map((b) => (
-          <li key={b.bill_id} className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm">
-            <Link href={`/bill/${b.bill_id}`} className="min-w-0 truncate hover:underline">
-              {b.name}
-            </Link>
-            <span className="shrink-0 text-xs text-muted">
-              {b.proposed_at} · {b.proc_result ?? "계류"}
-            </span>
-          </li>
+    <div id={param}>
+      <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 py-2">
+        {BILL_FILTERS.map((f) => (
+          <Link
+            key={f.key}
+            href={link({ [param]: f.key, [pageParam]: "1" })}
+            className={`rounded px-2 py-1 text-xs ${
+              filter === f.key ? "bg-foreground text-background" : "text-muted hover:text-foreground"
+            }`}
+          >
+            {f.label}
+          </Link>
         ))}
-      </ul>
-      {total > bills.length && (
-        <p className="px-4 py-2 text-xs text-muted">
-          최근 {bills.length}건만 표시 (전체 {total}건)
-        </p>
+        <span className="ml-auto text-xs text-muted">{total.toLocaleString()}건</span>
+      </div>
+
+      {!bills.length ? (
+        <p className="px-4 py-3 text-sm text-muted">해당하는 법안이 없습니다.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {bills.map((b) => (
+            <li
+              key={b.bill_id}
+              className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm"
+            >
+              {/* from 을 달아 법안 상세에서 이 의원 페이지로 돌아올 수 있게 한다 */}
+              <Link
+                href={`/bill/${b.bill_id}?from=${from}`}
+                className="min-w-0 truncate hover:underline"
+              >
+                {b.name}
+              </Link>
+              <span className="shrink-0 text-xs text-muted">
+                {b.proposed_at} · {b.proc_result ?? "계류"}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
-    </>
+
+      {last > 1 && (
+        <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs">
+          {page > 1 ? (
+            <Link href={link({ [pageParam]: String(page - 1) })} className="text-muted hover:underline">
+              ← 이전
+            </Link>
+          ) : (
+            <span />
+          )}
+          <span className="text-muted">
+            {page} / {last}
+          </span>
+          {page < last ? (
+            <Link href={link({ [pageParam]: String(page + 1) })} className="text-muted hover:underline">
+              다음 →
+            </Link>
+          ) : (
+            <span />
+          )}
+        </div>
+      )}
+    </div>
   );
 }

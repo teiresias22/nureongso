@@ -6,6 +6,7 @@
     python ingest.py bills --age 22     # 발의법률안 + 발의/공동발의
     python ingest.py plenary --age 22   # 본회의 처리 의안
     python ingest.py votes --age 22     # 본회의 표결 (plenary 먼저 실행)
+    python ingest.py summaries --age 22 # 법안 제안이유·주요내용
     python ingest.py refresh            # member_stats 갱신
     python ingest.py all --age 22
 
@@ -33,6 +34,7 @@ SERVICES = {
     "bills": "nzmimeepazxkubdpn",  # 국회의원 발의법률안
     "plenary": "ncocpgfiaoituanbr",  # 본회의 처리 의안 (표결 집계)
     "votes": "nojepdqqaweusdfbi",  # 국회의원 본회의 표결
+    "summary": "BPMBILLSUMMARY",  # 법률안 제안이유 및 주요내용 (BILL_NO 필수)
 }
 
 
@@ -279,6 +281,41 @@ def parse_dt(v):
     return f"{date[:4]}-{date[4:6]}-{date[6:8]} {t[:2]}:{t[2:4]}:{t[4:6]}"
 
 
+
+def ingest_summaries(cur, age: int, limit: int | None = None) -> int:
+    """법안 제안이유·주요내용. 의안 1건당 1회 호출이라 없는 것만 받는다.
+
+    BPMBILLSUMMARY 는 BILL_ID 를 안 받고 BILL_NO 만 받는다. AGE 만 주면 ERROR-300 이다.
+    """
+    cur.execute(
+        "select bill_id, bill_no from bill"
+        " where age = %s and bill_no is not null and summary is null"
+        " order by proposed_at desc", (age,))
+    todo = cur.fetchall()
+    if limit:
+        todo = todo[:limit]
+    print(f"  요약 없는 의안 {len(todo)}건", file=sys.stderr)
+
+    got = 0
+    for i, (bid, bno) in enumerate(todo, 1):
+        try:
+            rows = fetch("summary", BILL_NO=bno)
+        except Exception as e:
+            print(f"  [{i}/{len(todo)}] {bno} 실패: {str(e)[:70]}", file=sys.stderr)
+            continue
+        # BILL_NO 는 대수가 다르면 겹칠 수 있어 BILL_ID 가 같은 행을 고른다.
+        hit = next((r for r in rows if d(r.get("BILL_ID")) == bid), None)
+        text = d(hit.get("SUMMARY")) if hit else None
+        if text:
+            cur.execute("update bill set summary = %s where bill_id = %s",
+                        (text.replace("\x00", ""), bid))
+            got += 1
+        if i % 50 == 0 or i == len(todo):
+            cur.connection.commit()  # 오래 걸리는 단계라 부분 결과를 남긴다
+            print(f"  [{i}/{len(todo)}] 수집 {got}건", file=sys.stderr)
+    return got
+
+
 # --------------------------------------------------------------------------- run
 
 
@@ -287,6 +324,9 @@ STEPS = {
     "bills": lambda cur, age: ingest_bills(cur, age),
     "plenary": lambda cur, age: ingest_plenary(cur, age),
     "votes": lambda cur, age: ingest_votes(cur, age),
+    # 의안 1건당 1회 호출이라 첫 실행이 오래 걸린다. 중간중간 커밋해서
+    # 도중에 끊겨도 받은 만큼 남고, 다음 실행이 없는 것만 이어받는다.
+    "summaries": lambda cur, age: ingest_summaries(cur, age),
 }
 
 

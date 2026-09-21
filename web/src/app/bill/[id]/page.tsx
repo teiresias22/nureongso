@@ -1,33 +1,61 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { db, lastPart, partyColor, type Bill, type Member } from "@/lib/db";
+import { db, lastPart, partyColor, type Bill } from "@/lib/db";
 
 export const revalidate = 3600;
 
-export default async function BillPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+/** 발의자 조인 뷰. bill_sponsor.member_code 에는 외래키가 없어 PostgREST 가
+ *  member 를 임베드하지 못한다. member_bill 과 같은 방식으로 뷰를 쓴다. */
+type Sponsor = {
+  role: "rep" | "co";
+  code: string;
+  name: string;
+  party: string | null;
+};
 
-  const [{ data: bill }, { data: sponsors }, { data: plenary }] = await Promise.all([
-    db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
-    db
-      .from("bill_sponsor")
-      .select("role, member:member(code,name,party,district)")
-      .eq("bill_id", id),
-    db.from("plenary_bill").select("*").eq("bill_id", id).maybeSingle(),
-  ]);
+type SP = { from?: string };
+
+export default async function BillPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<SP>;
+}) {
+  const { id } = await params;
+  const { from } = await searchParams;
+
+  const [{ data: bill }, { data: sponsors }, { data: plenary }, { data: backTo }] =
+    await Promise.all([
+      db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
+      db
+        .from("bill_sponsor_member")
+        .select("role, code, name, party")
+        .eq("bill_id", id)
+        .order("role")
+        .order("name"),
+      db.from("plenary_bill").select("*").eq("bill_id", id).maybeSingle(),
+      // 어느 의원 페이지에서 왔는지 알면 그리로 돌아간다
+      from
+        ? db.from("member").select("code, name").eq("code", from).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
 
   if (!bill) notFound();
-  const b = bill as Bill;
+  const b = bill as Bill & { summary: string | null };
 
-  type S = { role: "rep" | "co"; member: Member | null };
-  const list = ((sponsors ?? []) as unknown as S[]).filter((s) => s.member);
-  const rep = list.filter((s) => s.role === "rep").map((s) => s.member!);
-  const co = list.filter((s) => s.role === "co").map((s) => s.member!);
+  const list = (sponsors ?? []) as Sponsor[];
+  const rep = list.filter((s) => s.role === "rep");
+  const co = list.filter((s) => s.role === "co");
+  const back = backTo as { code: string; name: string } | null;
 
   return (
     <div className="space-y-5">
-      <Link href="/" className="text-xs text-muted hover:underline">
-        ← 전체 목록
+      <Link
+        href={back ? `/m/${back.code}` : "/"}
+        className="text-xs text-muted hover:underline"
+      >
+        ← {back ? `${back.name} 의원` : "전체 목록"}
       </Link>
 
       <header className="rounded-lg border border-line bg-card p-4">
@@ -52,12 +80,27 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
         )}
       </header>
 
+      {b.summary && (
+        <section className="rounded-lg border border-line bg-card">
+          <h2 className="border-b border-line px-4 py-2 text-sm font-semibold">
+            제안이유 및 주요내용
+          </h2>
+          {/* 국회가 제공하는 원문 그대로다. 요약하거나 고쳐 쓰지 않는다. */}
+          <p className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed">
+            {b.summary}
+          </p>
+          <p className="border-t border-line px-4 py-2 text-xs text-muted">
+            출처: 열린국회정보 「법률안 제안이유 및 주요내용」 원문
+          </p>
+        </section>
+      )}
+
       {plenary && (
         <section className="rounded-lg border border-line bg-card p-4 text-sm">
           <h2 className="font-semibold">본회의 표결 결과</h2>
           <p className="mt-2 text-muted">
-            재석 {plenary.vote_cnt} · 찬성 <b className="text-foreground">{plenary.yes_cnt}</b> · 반대{" "}
-            <b className="text-foreground">{plenary.no_cnt}</b> · 기권{" "}
+            재석 {plenary.vote_cnt} · 찬성 <b className="text-foreground">{plenary.yes_cnt}</b> ·
+            반대 <b className="text-foreground">{plenary.no_cnt}</b> · 기권{" "}
             <b className="text-foreground">{plenary.blank_cnt}</b>
           </p>
         </section>
@@ -69,7 +112,7 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
   );
 }
 
-function Group({ title, members }: { title: string; members: Member[] }) {
+function Group({ title, members }: { title: string; members: Sponsor[] }) {
   return (
     <section className="overflow-hidden rounded-lg border border-line bg-card">
       <h2 className="border-b border-line px-4 py-2 text-sm font-semibold">
