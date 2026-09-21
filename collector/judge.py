@@ -42,29 +42,52 @@ CLASSIFY_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"id": {"type": "integer"},
-                               "kind": {"type": "string", "enum": KINDS}},
-                "required": ["id", "kind"],
+                "properties": {
+                    "id": {"type": "integer"},
+                    "kinds": {"type": "array",
+                              "items": {"type": "string", "enum": KINDS}},
+                },
+                "required": ["id", "kinds"],
             },
         }
     },
     "required": ["items"],
 }
 
-CLASSIFY_PROMPT = """한국 선거 공약 목록이다. 각 공약을 **무엇으로 이행 여부를 확인할 수 있는가**
+CLASSIFY_PROMPT = """한국 선거 공약 목록이다. 각 공약을 **무엇을 보면 이행 여부를 확인할 수 있는가**
 기준으로 분류하라. 공약의 주제(교통·복지 등)가 아니라 '확인 수단' 으로 나누는 것이다.
 
-- 입법: 법률의 제정·개정이 있어야 이뤄진다. 국회 법안 발의·통과로 확인한다.
-- 예산사업: 특정 시설·도로·기관을 짓거나 유치하거나 사업을 벌인다. 예산 편성과 착공으로 확인한다.
-- 조례제도: 지방자치단체 조례나 행정 제도·지침 변경으로 이뤄진다.
-- 선언: 구체적 대상이나 수단이 없는 방향 제시다. ("살기 좋은 도시", "소통하는 의정")
-  무엇을 보면 이뤄졌는지 말할 수 없으면 선언이다.
+유형:
+- 입법: 국회가 법률을 만들거나 고쳐야 이뤄진다. 법안 발의·통과로 확인한다.
+- 예산사업: 시설·도로·기관을 짓거나 유치하거나 사업을 벌인다. 예산 편성과 착공으로 확인한다.
+- 조례제도: **지방자치단체** 조례나 지자체 행정 절차·지침 변경으로 이뤄진다.
+- 선언: 확인할 수단이 없다. 무엇을 보면 이뤄졌는지 말할 수 없으면 선언이다.
 - 기타: 위 어디에도 맞지 않는다.
 
-판단이 애매하면 더 좁은 쪽(입법 < 예산사업 < 조례제도)이 아니라 **선언**으로 보내라.
-잘못 입법으로 분류하면 없는 법안을 찾게 되어 판정이 틀어진다.
+**입법과 조례를 가르는 기준 (가장 자주 틀리는 부분)**
+전국 어디서나 똑같이 적용되는 것은 법률이다. 조례는 그 지자체 안에서만 효력이 있다.
+다음은 전부 **입법**이다. 조례로는 절대 못 한다:
+  세금(취득세·양도세·종부세·소득세), 근로조건(근로시간·주4일제·휴가·최저임금),
+  건강보험·국민연금 급여, 형벌과 수사권, 국가 자격·면허, 전국 단위 지원금·수당 제도.
+반대로 그 지역 안에서만 정하는 것은 조례제도다:
+  지자체 조례 제정, 구청 인허가 절차, 지역 시설 운영 방식, 지자체 자체 지원금.
 
-모든 공약에 대해 {"items":[{"id":<id>,"kind":"<유형>"}]} 형식으로 답하라. 빠뜨리지 마라.
+**공약 하나에 서로 다른 수단이 섞여 있으면 해당하는 유형을 모두 쓴다.**
+예: "복지 확대 — 유급휴가 1개월 확대, 복지관 건립" → ["입법","예산사업"]
+    (유급휴가는 법 개정, 복지관은 예산)
+하나만 고르려다 법률 공약을 놓치면 그 공약은 영원히 판정할 수 없게 된다.
+
+단, **본문에 실제로 적혀 있는 수단만** 쓴다. "이걸 하려면 조례도 필요하겠지" 같은
+추측으로 유형을 늘리지 마라. 대부분의 공약은 유형이 1개다.
+"선언" 은 다른 유형과 함께 쓸 수 없다. 확인할 수단이 하나라도 있으면 선언이 아니다.
+
+**선언으로 보내는 경우와 아닌 경우**
+- 선언이다: "살기 좋은 도시", "소통하는 의정", "△△ 설치 **검토**" (검토는 하겠다는 말이 아니다)
+- 선언이 아니다: 수단이 본문에 적혀 있으면 그 수단의 유형을 쓴다. 제목이 추상적이어도
+  본문에 "간병비 건강보험 적용", "○○법 개정" 같은 구체적 수단이 있으면 입법이다.
+
+모든 공약에 대해 {"items":[{"id":<id>,"kinds":["<유형>",...]}]} 형식으로 답하라.
+빠뜨리지 마라. kinds 는 보통 1개, 섞였으면 2~3개다.
 
 공약 목록:
 {items}"""
@@ -116,7 +139,7 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "select member_code, count(*) from pledge"
-            + ("" if redo else " where kind is null")
+            + ("" if redo else " where kinds is null")
             + " group by member_code order by member_code"
         )
         targets = cur.fetchall()
@@ -129,7 +152,7 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge where member_code = %s"
-                + ("" if redo else " and kind is null"),
+                + ("" if redo else " and kinds is null"),
                 (mcode,),
             )
             rows = cur.fetchall()
@@ -150,10 +173,18 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             continue
 
         valid = {pid for pid, _, _ in rows}
-        pairs = [(it["kind"], it["id"]) for it in out.get("items", [])
-                 if it.get("id") in valid and it.get("kind") in KINDS]
+        pairs = []
+        for it in out.get("items", []):
+            if it.get("id") not in valid:
+                continue
+            ks = set(k for k in (it.get("kinds") or []) if k in KINDS)
+            # '선언' 은 '확인할 수단이 없다' 는 뜻이라 다른 유형과 같이 설 수 없다.
+            if len(ks) > 1:
+                ks.discard("선언")
+            if ks:
+                pairs.append((sorted(ks), it["id"]))
         with conn.cursor() as cur:
-            cur.executemany("update pledge set kind = %s where id = %s", pairs)
+            cur.executemany("update pledge set kinds = %s where id = %s", pairs)
         conn.commit()
         done += 1
         tagged += len(pairs)
@@ -175,7 +206,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
             """
             select p.member_code, count(*)
             from pledge p
-            where p.kind = '입법'
+            where '입법' = any(p.kinds)
               and exists (select 1 from bill_sponsor s
                            where s.member_code = p.member_code and s.role = 'rep')
               %s
@@ -194,7 +225,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
-                " where member_code = %s and kind = '입법' order by id", (mcode,))
+                " where member_code = %s and '입법' = any(kinds) order by id", (mcode,))
             pledges = cur.fetchall()
             cur.execute(
                 "select bill_id, name, coalesce(proc_result,'계류') from member_bill"
@@ -264,14 +295,15 @@ with ev as (
 judged as (
   select p.id as pledge_id,
     case
-      when p.kind <> '입법'      then '판단불가'
+      when not ('입법' = any(p.kinds)) then '판단불가'
       when ev.passed             then '완료'
       when ev.n > 0              then '진행'
       when %(start)s::date + (%(grace)s || ' years')::interval < now() then '미착수'
       else '판단불가'
     end as status,
     case
-      when p.kind <> '입법'      then 'no_measure:' || coalesce(p.kind, '미분류')
+      when not ('입법' = any(p.kinds))
+                                 then 'no_measure:' || array_to_string(p.kinds, '+')
       when ev.passed             then 'law_passed'
       when ev.n > 0              then 'law_filed'
       when %(start)s::date + (%(grace)s || ' years')::interval < now() then 'law_none_2y'
@@ -279,7 +311,7 @@ judged as (
     end as note,
     ev.conf
   from pledge p left join ev on ev.pledge_id = p.id
-  where p.kind is not null
+  where p.kinds is not null
 )
 insert into pledge_status (pledge_id, status, confidence, decided_by, note, updated_at)
 select pledge_id, status, conf, 'auto', note, now() from judged
