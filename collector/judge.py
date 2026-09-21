@@ -253,7 +253,8 @@ DECIDE_SQL = """
 with ev as (
   select e.pledge_id,
          max(e.score) as conf,
-         bool_or(b.proc_result like '%가결%') as passed,
+         -- psycopg 는 주석까지 훑어 퍼센트 기호를 파라미터로 본다. 리터럴은 두 번 써야 한다.
+         bool_or(b.proc_result like '%%가결%%') as passed,
          count(*) as n
   from pledge_evidence e
   join bill b on b.bill_id = e.ref_id
