@@ -1,4 +1,4 @@
 collector/.venv/
-collector/.env
+collector/.env*
 .env
 __pycache__/
