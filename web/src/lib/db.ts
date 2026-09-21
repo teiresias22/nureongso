@@ -112,3 +112,19 @@ export function lastPart(v?: string | null) {
 export function pct(n: number, d: number) {
   return d > 0 ? Math.round((n / d) * 100) : 0;
 }
+
+/** 정당별·지역별 집계. 두 뷰가 같은 컬럼 구성이라 화면에서 한 컴포넌트로 다룬다. */
+export type GroupStats = {
+  office: string | null;
+  name: string;
+  members: number;
+  rep_count: number;
+  co_count: number;
+  rep_passed: number;
+  vote_total: number;
+  vote_attended: number;
+  pledge_count: number;
+  pledge_law: number;
+  pledge_law_filed: number;
+  pledge_law_passed: number;
+};

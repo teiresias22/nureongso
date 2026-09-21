@@ -259,6 +259,60 @@ from bill_sponsor s join bill b on b.bill_id = s.bill_id;
 grant select on member_stats to anon, authenticated;
 grant select on member_bill to anon, authenticated;
 
+-- 시도는 선관위 sd_name 이 정확하다. member.district 는 '서울 강서구병' 처럼
+-- 시군구까지 붙어 있고 역대 값이 슬래시로 이어져 오기도 한다.
+create or replace view member_region
+with (security_invoker = true) as
+select m.code, m.office, m.party, m.is_incumbent,
+  case
+    when c.sd_name = '전국' then '비례대표'
+    when c.sd_name is not null then
+      case regexp_replace(c.sd_name, '(특별자치시|특별자치도|특별시|광역시|자치도)$', '')
+        when '경상남도' then '경남' when '경상북도' then '경북'
+        when '전라남도' then '전남' when '전라북도' then '전북'
+        when '충청남도' then '충남' when '충청북도' then '충북'
+        when '경기도'   then '경기' when '강원도'   then '강원'
+        when '제주도'   then '제주'
+        else regexp_replace(c.sd_name, '(특별자치시|특별자치도|특별시|광역시|자치도|도)$', '')
+      end
+    when m.district = '비례대표' then '비례대표'
+    else coalesce(nullif(split_part(split_part(m.district, '/', -1), ' ', 1), ''), '미상')
+  end as region
+from member m
+left join lateral (
+  select sd_name from candidacy c
+  where c.member_code = m.code and c.elected and c.sd_name is not null
+  order by c.election_id desc limit 1
+) c on true;
+
+-- 정당별 / 지역별 집계. 같은 컬럼 구성이라 화면에서 한 컴포넌트로 다룬다.
+create or replace view party_stats
+with (security_invoker = true) as
+select r.office, r.party as name, count(*) as members,
+  sum(s.rep_count) as rep_count, sum(s.co_count) as co_count,
+  sum(s.rep_passed) as rep_passed, sum(s.vote_total) as vote_total,
+  sum(s.vote_total - s.vote_absent) as vote_attended,
+  sum(s.pledge_count) as pledge_count, sum(s.pledge_law) as pledge_law,
+  sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed
+from member_region r join member_stats s on s.code = r.code
+where r.is_incumbent and r.party is not null
+group by r.office, r.party;
+
+create or replace view region_stats
+with (security_invoker = true) as
+select r.office, r.region as name, count(*) as members,
+  sum(s.rep_count) as rep_count, sum(s.co_count) as co_count,
+  sum(s.rep_passed) as rep_passed, sum(s.vote_total) as vote_total,
+  sum(s.vote_total - s.vote_absent) as vote_attended,
+  sum(s.pledge_count) as pledge_count, sum(s.pledge_law) as pledge_law,
+  sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed
+from member_region r join member_stats s on s.code = r.code
+where r.is_incumbent
+group by r.office, r.region;
+
+grant select on member_region, party_stats, region_stats to anon, authenticated;
+
+
 -- 내부 테이블: 정책 없이 RLS 만 켜서 anon 접근을 전부 차단.
 -- 수집기는 postgres 역할로 직접 접속하므로 RLS 를 우회한다.
 alter table pledge_doc enable row level security;

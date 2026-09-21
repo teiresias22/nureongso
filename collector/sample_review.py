@@ -15,15 +15,23 @@ import sys
 
 import psycopg
 
+# 유형별로 고르게 뽑는다. 한 유형만 잘 맞는 상황을 놓치지 않기 위해서다.
+# kinds 가 배열이라 unnest 로 펼친 뒤 유형마다 같은 수를 뽑는다.
 KIND_SQL = """
-select m.name, m.office, p.kind, p.category, p.title, coalesce(p.body, '') as body
-from (
-  select *, row_number() over (partition by kind order by md5(id::text)) as rn
-  from pledge where kind is not null
-) p
-join member m on m.code = p.member_code
-where p.rn <= %(per)s
-order by p.kind, m.name
+with flat as (
+  select p.id, p.title, coalesce(p.body,'') as body, p.category, p.kinds,
+         unnest(p.kinds) as one, p.member_code
+  from pledge p where p.kinds is not null
+),
+picked as (
+  select *, row_number() over (partition by one order by md5(id::text || one)) as rn
+  from flat
+)
+select distinct on (id) m.name, m.office, picked.kinds, picked.category,
+       picked.title, picked.body
+from picked join member m on m.code = picked.member_code
+where picked.rn <= %(per)s
+order by id
 """
 
 MATCH_SQL = """
@@ -51,11 +59,11 @@ def main():
 
     with psycopg.connect(dsn) as c, c.cursor() as cur:
         if a.what == "kind":
-            cur.execute("select count(distinct kind) from pledge where kind is not null")
+            cur.execute("select count(distinct k) from pledge, unnest(kinds) k")
             kinds = cur.fetchone()[0] or 1
             cur.execute(KIND_SQL, {"per": max(1, a.n // kinds)})
-            for name, office, kind, cat, title, body in cur.fetchall():
-                print(f"[{kind}] {name}({office}) · {cat}")
+            for name, office, ks, cat, title, body in cur.fetchall():
+                print(f"[{'+'.join(ks)}] {name}({office}) · {cat}")
                 print(f"    {title}")
                 if body:
                     print(f"    └ {body[:150].replace(chr(10), ' ')}")

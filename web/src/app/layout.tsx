@@ -18,6 +18,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               누렁소검은소
             </Link>
             <span className="text-xs text-muted">선출직이 실제로 한 일</span>
+            <nav className="ml-auto flex gap-3 text-xs text-muted">
+              <Link href="/stats" className="hover:text-foreground">
+                통계
+              </Link>
+              <Link href="/compare" className="hover:text-foreground">
+                비교
+              </Link>
+              <Link href="/rules" className="hover:text-foreground">
+                판정 기준
+              </Link>
+            </nav>
           </div>
         </header>
         <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>

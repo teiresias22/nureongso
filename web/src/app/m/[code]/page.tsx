@@ -77,9 +77,14 @@ export default async function MemberPage({ params }: { params: Promise<{ code: s
 
   return (
     <div className="space-y-6">
-      <Link href="/" className="text-xs text-muted hover:underline">
-        ← 전체 목록
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link href="/" className="text-xs text-muted hover:underline">
+          ← 전체 목록
+        </Link>
+        <Link href={`/compare?a=${code}`} className="text-xs text-muted hover:underline">
+          다른 사람과 비교 →
+        </Link>
+      </div>
 
       <header className="flex gap-4 rounded-lg border border-line bg-card p-4">
         <span className="w-1.5 rounded-full" style={{ background: partyColor(m.party) }} />
