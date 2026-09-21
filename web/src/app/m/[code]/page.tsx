@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  db, hasBills, hasPledges, KIND_LABEL, lastPart, noteText, partyColor, pct,
-  type Bill, type Member, type MemberStats,
+  db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
+  partyColor, pct, termLabel,
+  type Bill, type Member, type MemberStats, type OfficeTerm,
 } from "@/lib/db";
 
 export const revalidate = 3600;
@@ -71,6 +72,7 @@ export default async function MemberPage({
     { data: repBills, count: repTotal },
     { data: coBills, count: coTotal },
     { data: candidacies },
+    { data: terms },
     { data: pledges },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
@@ -78,6 +80,7 @@ export default async function MemberPage({
     bills(code, "rep", repFilter, repPage),
     bills(code, "co", coFilter, coPage),
     db.from("candidacy").select("*").eq("member_code", code).order("election_id", { ascending: false }),
+    db.from("member_office_term").select("*").eq("member_code", code),
     db
       .from("pledge")
       .select(
@@ -101,6 +104,8 @@ export default async function MemberPage({
   // terms·term_count·committees·elect_type 는 국회 전용 필드다. 국회의원 출신
   // 단체장에게 그대로 보이면 지금 그 직위의 정보로 오해된다.
   const isMP = (m.office ?? "국회의원") === "국회의원";
+  // 국회의원은 열린국회정보의 선수를, 나머지는 선관위 당선 횟수를 쓴다.
+  const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m.office);
   const showPledges = hasPledges(s);
   // 이행 판정을 아직 한 건도 안 했다. 이때 0% 를 보이면 '아무것도 안 지켰다' 로 읽힌다.
   const judged = (pledges ?? []).some((p) => p.pledge_status);
@@ -143,13 +148,27 @@ export default async function MemberPage({
               lastPart(m.party),
               lastPart(m.district),
               // 국회 선수는 국회의원일 때만. 단체장에게 붙으면 그 직위의 선수로 오해된다.
-              isMP ? (m.term_count && m.terms ? `${m.term_count} (${m.terms})` : m.term_count) : null,
+              isMP
+                ? m.term_count && m.terms
+                  ? `${m.term_count} (${m.terms})`
+                  : m.term_count
+                : // 단체장·교육감은 국회 선수가 없다. 그 직위로 몇 번 당선됐는지를 센다.
+                  termLabel(term?.wins),
             ]
               .filter(Boolean)
               .join(" · ")}
           </p>
           {isMP && m.committees && (
             <p className="mt-1 text-xs text-muted">{m.committees}</p>
+          )}
+          {term?.last_vote_rate != null && (
+            <p className="mt-1 text-xs text-muted">
+              {electionYear(term.last_election)}년 당선 · 득표율{" "}
+              <b className="text-foreground">{term.last_vote_rate}%</b>
+              {term.wins > 1 && (
+                <> · {electionYear(term.first_election)}년부터 {term.wins}회 당선</>
+              )}
+            </p>
           )}
         </div>
       </header>

@@ -324,7 +324,25 @@ from member_region r join member_stats s on s.code = r.code
 where r.is_incumbent
 group by r.office, r.region;
 
-grant select on member_region, party_stats, region_stats to anon, authenticated;
+-- 선수(몇 선)와 득표율. 국회의원은 열린국회정보가 term_count 를 주지만
+-- 단체장·교육감은 없어서 선관위 당선 이력을 센다.
+-- is_current 가 없으면 역대 당선인까지 2,400행이 넘어 PostgREST 1000행 상한에 걸린다.
+create or replace view member_office_term
+with (security_invoker = true) as
+select
+  c.member_code, c.office,
+  count(*)                                        as wins,
+  bool_or(m.is_incumbent and m.office = c.office) as is_current,
+  max(c.election_id)                              as last_election,
+  (array_agg(c.vote_rate order by c.election_id desc))[1] as last_vote_rate,
+  (array_agg(c.district  order by c.election_id desc))[1] as last_district,
+  min(c.election_id)                              as first_election
+from candidacy c join member m on m.code = c.member_code
+where c.elected and c.office is not null
+group by c.member_code, c.office;
+
+grant select on member_region, party_stats, region_stats, member_office_term
+  to anon, authenticated;
 
 
 -- 내부 테이블: 정책 없이 RLS 만 켜서 anon 접근을 전부 차단.

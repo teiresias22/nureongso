@@ -143,3 +143,23 @@ export type GroupStats = {
   pledge_law_filed: number;
   pledge_law_passed: number;
 };
+
+/** 선수와 득표율. 국회의원은 열린국회정보가 term_count 를 주지만 단체장·교육감은
+ *  없어서 선관위 당선 이력을 센다. */
+export type OfficeTerm = {
+  member_code: string;
+  office: string;
+  wins: number;
+  is_current?: boolean;
+  last_election: string | null;
+  last_vote_rate: number | null;
+  last_district: string | null;
+  first_election: string | null;
+};
+
+/** 1 → 초선, 2 → 재선, 3 이상 → N선. 국회 관행과 같은 표기. */
+export const termLabel = (n?: number | null) =>
+  !n ? "" : n === 1 ? "초선" : n === 2 ? "재선" : `${n}선`;
+
+/** 선거ID(YYYYMMDD) → '2026' */
+export const electionYear = (id?: string | null) => (id ? id.slice(0, 4) : "");

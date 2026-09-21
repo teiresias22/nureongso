@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
-  db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
-  type Member, type MemberStats,
+  db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termLabel,
+  type Member, type MemberStats, type OfficeTerm,
 } from "@/lib/db";
 
 export const revalidate = 3600;
@@ -14,14 +14,24 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
   // 현직 전원을 받아 클라이언트에서 거른다. PostgREST 상한이 1000행이라
   // 지방의원(약 3,900명)까지 넣으면 여기서 조용히 잘린다. 그때는 검색·필터를
   // 서버 쿼리로 내리고 페이지네이션을 붙여야 한다.
-  const [{ data: members }, { data: stats }] = await Promise.all([
+  const [{ data: members }, { data: stats }, { data: terms }] = await Promise.all([
     db.from("member").select("*").eq("is_incumbent", true).order("name"),
     db.from("member_stats").select("*").eq("is_incumbent", true),
+    // 역대 당선인까지 합치면 2,400행이 넘어 PostgREST 1000행 상한에 걸린다.
+    // 목록에는 현직만 필요하다.
+    db
+      .from("member_office_term")
+      .select("member_code, office, wins, last_vote_rate")
+      .eq("is_current", true),
   ]);
 
   if (!members?.length) return <Empty />;
 
   const statById = new Map((stats ?? []).map((s: MemberStats) => [s.code, s]));
+  // 단체장·교육감은 국회 선수가 없다. 그 직위로 몇 번 당선됐는지로 대신한다.
+  const termBy = new Map(
+    ((terms ?? []) as OfficeTerm[]).map((t) => [`${t.member_code}|${t.office}`, t]),
+  );
   const parties = [...new Set(members.map((m: Member) => lastPart(m.party)).filter(Boolean))].sort();
   const offices = [...new Set(members.map((m: Member) => m.office ?? "국회의원"))].sort();
 
@@ -128,9 +138,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     {[
                       lastPart(m.party),
                       shortDistrict(m.district),
-                      // 선수(초선·재선)는 국회 대수 기준이라 단체장에게 붙이면 오해를 준다.
-                      // 오세훈은 16대 의원 '초선' 이지만 서울시장으로는 여러 번 당선됐다.
-                      (m.office ?? "국회의원") === "국회의원" ? m.term_count : null,
+                      // 국회 선수(term_count)는 국회 대수 기준이라 단체장에게 붙이면
+                      // 오해를 준다. 오세훈은 16대 의원 '초선' 이지만 서울시장 5선이다.
+                      (m.office ?? "국회의원") === "국회의원"
+                        ? m.term_count
+                        : termLabel(termBy.get(`${m.code}|${m.office}`)?.wins),
                     ]
                       .filter(Boolean)
                       .join(" · ")}
