@@ -85,7 +85,15 @@ export async function generateMetadata(
     ? `${title}. ${facts.join(" · ")}. 공약과 의정활동 기록을 원문 출처와 함께 봅니다.`
     : `${title}. 공약과 활동 기록을 원문 출처와 함께 봅니다.`;
 
-  return { title, description, openGraph: { title, description, type: "profile" } };
+  return {
+    title,
+    description,
+    // 법안 목록 필터·페이지가 쿼리로 붙는다. canonical 이 없으면
+    // ?rep=passed&repPage=3 같은 조합이 전부 따로 색인된다.
+    alternates: { canonical: `/m/${code}` },
+    openGraph: { title, description, type: "profile", url: `/m/${code}` },
+    twitter: { card: "summary_large_image", title, description },
+  };
 }
 
 export default async function MemberPage({

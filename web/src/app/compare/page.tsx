@@ -8,6 +8,7 @@ export const revalidate = 3600;
 
 export const metadata = {
   title: "의원 비교",
+  alternates: { canonical: "/compare" },
   description: "두 사람의 의정활동과 공약을 나란히 놓고 비교합니다.",
 };
 

@@ -5,6 +5,7 @@ export const revalidate = 3600;
 
 export const metadata = {
   title: "정당·지역별 통계",
+  alternates: { canonical: "/stats" },
   description: "정당과 지역에 따라 의정활동이 어떻게 다른지 비교합니다.",
 };
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db, lastPart, partyColor, type Bill } from "@/lib/db";
+import { SITE } from "@/lib/site";
 
 export const revalidate = 3600;
 
@@ -32,7 +33,14 @@ export async function generateMetadata(
   const description = b.summary
     ? b.summary.replace(/\s+/g, " ").slice(0, 160)
     : `의안번호 ${b.bill_no} · ${b.proc_result ?? "계류 중"}. 발의자와 처리 결과를 봅니다.`;
-  return { title: b.name, description, openGraph: { title: b.name, description } };
+  return {
+    title: b.name,
+    description,
+    // 어디서 왔는지 표시하는 ?from= 이 붙는다. 같은 법안이 의원 수만큼 색인될 수 있다.
+    alternates: { canonical: `/bill/${id}` },
+    openGraph: { title: b.name, description, type: "article", url: `/bill/${id}` },
+    twitter: { card: "summary_large_image", title: b.name, description },
+  };
 }
 
 export default async function BillPage({
@@ -71,6 +79,25 @@ export default async function BillPage({
 
   return (
     <div className="space-y-5">
+      {/* 법안은 Legislation 으로 알린다. 요약은 국회 원문이라 그대로 넘긴다. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "Legislation",
+            name: b.name,
+            legislationIdentifier: b.bill_no || undefined,
+            legislationDate: b.proposed_at || undefined,
+            legislationType: "법률안",
+            legislationJurisdiction: "대한민국",
+            inLanguage: "ko",
+            abstract: b.summary ? b.summary.replace(/\s+/g, " ").slice(0, 400) : undefined,
+            author: rep.map((r) => ({ "@type": "Person", name: r.name })),
+            url: `${SITE}/bill/${id}`,
+          }),
+        }}
+      />
       <Link
         href={back ? `/m/${back.code}` : "/"}
         className="text-xs text-muted hover:underline"

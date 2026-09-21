@@ -8,6 +8,7 @@ export const revalidate = 3600;
 
 export const metadata = {
   title: "내 지역 대표",
+  alternates: { canonical: "/my" },
   description:
     "우리 동네 국회의원·시도지사·구청장·교육감을 한 화면에서. 선거공보에 없는 지난 임기 기록을 봅니다.",
 };

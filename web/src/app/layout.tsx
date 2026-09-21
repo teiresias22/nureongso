@@ -3,22 +3,63 @@ import Link from "next/link";
 import { SITE } from "@/lib/site";
 import "./globals.css";
 
+const TITLE = "누렁소검은소 — 선출직 공약·의정활동 기록";
+const DESC =
+  "국회의원·시도지사·교육감이 무슨 공약을 했고 얼마나 지켰는지, 어떤 활동을 했는지 한눈에.";
+
 export const metadata: Metadata = {
   // 없으면 og:image 가 상대 경로로 나가 카카오톡·트위터에서 썸네일이 안 뜬다.
   metadataBase: new URL(SITE),
   title: {
-    default: "누렁소검은소 — 선출직 공약·의정활동 기록",
+    default: TITLE,
     // 사람 이름으로 검색해 들어오는 서비스다. 개별 페이지 제목이 앞에 와야 한다.
     template: "%s — 누렁소검은소",
   },
-  description:
-    "국회의원·시도지사·교육감이 무슨 공약을 했고 얼마나 지켰는지, 어떤 활동을 했는지 한눈에.",
+  description: DESC,
+  // 여기 한 번 적어두면 아래 페이지들이 제목·설명만 덮어쓰고 나머지를 물려받는다.
+  // 카카오톡·네이버·X 가 모두 og: 를 읽는다.
+  openGraph: {
+    type: "website",
+    siteName: "누렁소검은소",
+    locale: "ko_KR",
+    title: TITLE,
+    description: DESC,
+    url: "/",
+  },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESC },
+  alternates: { canonical: "/" },
+  robots: {
+    index: true,
+    follow: true,
+    // 검색결과에 본문 미리보기를 길게 허용한다. 이 사이트의 값어치는 본문 수치에 있다.
+    googleBot: { index: true, follow: true, "max-snippet": -1, "max-image-preview": "large" },
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
       <body className="min-h-screen">
+        {/* 검색엔진에 사이트 이름과 내부 검색 경로를 알린다. 이름으로 찾아오는
+            서비스라 검색창이 결과에 직접 노출되면 도달이 짧아진다. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+              name: "누렁소검은소",
+              alternateName: "선출직 공약·의정활동 기록",
+              url: SITE,
+              inLanguage: "ko",
+              potentialAction: {
+                "@type": "SearchAction",
+                target: { "@type": "EntryPoint", urlTemplate: `${SITE}/?q={search_term_string}` },
+                "query-input": "required name=search_term_string",
+              },
+            }),
+          }}
+        />
         <header className="border-b border-line bg-card">
           <div className="mx-auto flex max-w-5xl items-baseline gap-3 px-4 py-4">
             <Link href="/" className="text-lg font-bold tracking-tight">

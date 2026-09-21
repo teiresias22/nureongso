@@ -2,6 +2,7 @@ import Link from "next/link";
 
 export const metadata = {
   title: "판정 기준",
+  alternates: { canonical: "/rules" },
   description: "공약 이행 여부를 어떤 근거로, 어떤 규칙으로 판정하는지 전부 공개합니다.",
 };
 
