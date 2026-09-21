@@ -47,12 +47,42 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_PREFER = ("flash-lite", "flash", "pro")
 
 
+_keys: list[str] | None = None
+_key_i = 0
+
+
+def gemini_keys() -> list[str]:
+    """GEMINI_API_KEY 는 쉼표나 공백으로 여러 개를 받는다. 하나만 넣어도 그대로 된다.
+
+    주의: 무료 등급의 일일 한도는 키가 아니라 **구글 클라우드 프로젝트** 단위다
+    (오류 코드가 GenerateRequestsPerDayPerProjectPerModel-FreeTier 다).
+    같은 프로젝트에서 키만 하나 더 발급하면 한도를 같이 쓰므로 아무 소용이 없다.
+    AI Studio 에서 다른 프로젝트를 만들거나 다른 계정으로 발급해야 한도가 따로 생긴다.
+    """
+    global _keys
+    if _keys is None:
+        _keys = [k.strip() for k in re.split(r"[,\s]+", os.getenv("GEMINI_API_KEY") or "")
+                 if k.strip()]
+        if not _keys:
+            raise LLMError("GEMINI_API_KEY 가 없습니다. https://aistudio.google.com/apikey 에서"
+                           " 발급하세요 (카드 불필요). 여러 개면 쉼표로 이어 쓰세요.")
+    return _keys
+
+
 def gemini_key() -> str:
-    k = os.getenv("GEMINI_API_KEY")
-    if not k:
-        raise LLMError("GEMINI_API_KEY 가 없습니다. https://aistudio.google.com/apikey 에서"
-                       " 발급하세요 (카드 불필요).")
-    return k
+    return gemini_keys()[_key_i]
+
+
+def gemini_rotate() -> bool:
+    """일일 한도가 걸린 키를 접고 다음 키로 넘어간다. 남은 키가 없으면 False."""
+    global _key_i, _gemini_model
+    if _key_i + 1 >= len(gemini_keys()):
+        return False
+    _key_i += 1
+    # 키마다 쓸 수 있는 모델이 다를 수 있다. 다시 고르게 한다.
+    _gemini_model = None
+    print(f"[llm] 일일 한도 소진 → {_key_i + 1}번째 키로 전환", file=sys.stderr)
+    return True
 
 
 def gemini_models() -> list[str]:
@@ -199,20 +229,28 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
     call = CALLS.get(PROVIDER)
     if not call:
         raise LLMError(f"모르는 LLM_PROVIDER: {PROVIDER} (가능: {', '.join(CALLS)})")
-    for attempt in range(retries):
+    attempt = 0
+    while True:
         try:
             return call(prompt, schema, pdf)
-        except RateLimited:
-            if attempt == retries - 1:
+        except QuotaExhausted:
+            # 일일 한도는 기다려도 그날은 안 풀린다. 남은 키가 있으면 갈아타고,
+            # 없으면 그대로 올려보내 호출한 쪽이 깨끗이 멈추게 한다.
+            # 키 전환은 재시도 횟수를 소모하지 않는다. 키 개수만큼만 일어난다.
+            if PROVIDER != "gemini" or not gemini_rotate():
                 raise
-            wait = 20 * (attempt + 1)
-            print(f"[llm] 한도 초과, {wait}초 대기", file=sys.stderr)
+        except RateLimited:
+            attempt += 1
+            if attempt >= retries:
+                raise
+            wait = 20 * attempt
+            print(f"[llm] 분당 한도 초과, {wait}초 대기", file=sys.stderr)
             time.sleep(wait)
         except httpx.TimeoutException:
-            if attempt == retries - 1:
+            attempt += 1
+            if attempt >= retries:
                 raise
             time.sleep(5)
-    raise LLMError("재시도 초과")
 
 
 def complete_json(prompt: str, schema: dict | None = None, **kw):
