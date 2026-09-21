@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import {
   db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termLabel,
-  type Bill, type Member, type MemberStats, type OfficeTerm,
+  type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm, type Rival,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 
@@ -127,6 +127,25 @@ export default async function MemberPage({
 
   if (!member) notFound();
   const m = member as Member;
+
+  // 같은 선거·같은 지역구에 나온 다른 후보들. '누구와 붙어서 이겼나' 가 득표율만큼 중요하다.
+  // election_id 와 district 를 각각 in 으로 좁힌 뒤 짝이 맞는 것만 남긴다. 둘을 짝지어
+  // 거르는 or(and(...)) 필터는 지역구 이름에 따옴표·괄호가 섞이면 깨진다.
+  const runs = (candidacies ?? []) as Candidacy[];
+  const { data: rivalRows } = runs.length
+    ? await db
+        .from("candidacy")
+        .select("id, election_id, sg_typecode, district, name, party, giho, vote_rate, elected, member_code")
+        .in("election_id", [...new Set(runs.map((c) => c.election_id))])
+        .in("district", [...new Set(runs.map((c) => c.district).filter(Boolean))] as string[])
+    : { data: [] };
+  // sg_typecode 까지 봐야 한다. 지방선거는 시도지사·교육감·교육의원이 같은 날 같은
+  // '강원도' 에서 치러져서, 선거일과 지역만 맞추면 교육감 후보가 도지사 경쟁자로 섞인다.
+  const rivalsOf = (c: Candidacy) =>
+    ((rivalRows ?? []) as Rival[])
+      .filter((r) => r.election_id === c.election_id && r.sg_typecode === c.sg_typecode
+                     && r.district === c.district && r.id !== c.id)
+      .sort((a, b) => Number(b.elected) - Number(a.elected) || (a.giho ?? "").localeCompare(b.giho ?? ""));
   const s: MemberStats = stats ?? {
     code,
     rep_count: 0, co_count: 0, rep_passed: 0, rep_pending: 0,
@@ -144,6 +163,11 @@ export default async function MemberPage({
   const showPledges = hasPledges(s);
   // 이행 판정을 아직 한 건도 안 했다. 이때 0% 를 보이면 '아무것도 안 지켰다' 로 읽힌다.
   const judged = (pledges ?? []).some((p) => p.pledge_status);
+  // 공약이 실제로 있는 선거만, 최근 순. 첫 번째가 이번 임기다.
+  const pledgeElections = [...new Set((pledges ?? []).map((p) => p.election_id as string))]
+    .filter(Boolean)
+    .sort()
+    .reverse();
 
   // 구글이 이 페이지를 '인물' 로 인식해야 이름 검색에 걸린다. 라이브러리 없이 객체 하나.
   const jsonLd = {
@@ -280,13 +304,30 @@ export default async function MemberPage({
         </section>
       )}
 
-      {PLEDGE_SOURCES.map(({ key, title, note }) => {
-        const list = (pledges ?? []).filter((p) => (p.source ?? "선거공보") === key);
+      {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
+          '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
+      {pledgeElections.map((eid) => {
+        const run = runs.find((c) => c.election_id === eid);
+        const isCurrent = eid === pledgeElections[0];
+        return PLEDGE_SOURCES.map(({ key, title, note }) => {
+        const list = (pledges ?? []).filter(
+          (p) => p.election_id === eid && (p.source ?? "선거공보") === key,
+        );
         if (!list.length) return null;
+        const when = [
+          electionYear(eid) ? `${electionYear(eid)}년` : eid,
+          run && !isCurrent ? [run.office, lastPart(run.district)].filter(Boolean).join(" ") : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
         return (
-          <Section key={key} title={title} count={list.length}>
+          <Section
+            key={`${eid}-${key}`}
+            title={`${isCurrent ? "이번 임기" : "지난 임기"} ${title}`}
+            count={list.length}
+          >
             <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
-              {note}{" "}
+              <b className="text-foreground">{when}</b> 선거 · {note}{" "}
               <Link href="/rules" className="underline underline-offset-2">
                 판정 기준
               </Link>
@@ -346,6 +387,7 @@ export default async function MemberPage({
             </ul>
           </Section>
         );
+        });
       })}
 
       {!pledges?.length && (
@@ -354,21 +396,67 @@ export default async function MemberPage({
         </Section>
       )}
 
-      <Section title="출마 이력" count={candidacies?.length ?? 0}>
-        {candidacies?.length ? (
+      <Section title="출마 이력" count={runs.length}>
+        {runs.length ? (
           <ul className="divide-y divide-line">
-            {candidacies.map((c) => (
-              <li key={c.id} className="flex justify-between gap-3 px-4 py-2 text-sm">
-                <span className="min-w-0 truncate">
-                  {[c.office, c.district, c.party].filter(Boolean).join(" · ")}
-                  <span className="ml-2 text-xs text-muted">{c.election_id}</span>
-                </span>
-                <span className={c.elected ? "font-semibold" : "text-muted"}>
-                  {c.vote_rate != null && `${c.vote_rate}% `}
-                  {c.elected ? "당선" : "낙선"}
-                </span>
-              </li>
-            ))}
+            {runs.map((c) => {
+              const rivals = rivalsOf(c);
+              return (
+                <li key={c.id} className="px-4 py-2 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="min-w-0 truncate">
+                      {[c.office, c.district, c.party].filter(Boolean).join(" · ")}
+                      <span className="ml-2 text-xs text-muted">
+                        {electionYear(c.election_id) || c.election_id}
+                      </span>
+                    </span>
+                    <span className={c.elected ? "shrink-0 font-semibold" : "shrink-0 text-muted"}>
+                      {c.vote_rate != null && `${c.vote_rate}% `}
+                      {c.elected ? "당선" : "낙선"}
+                    </span>
+                  </div>
+                  {rivals.length > 0 && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-xs text-muted">
+                        같이 나온 후보 {rivals.length}명
+                      </summary>
+                      <ul className="mt-1 space-y-0.5">
+                        {rivals.map((r) => (
+                          <li key={r.id} className="flex gap-2 text-xs text-muted">
+                            <span
+                              className="mt-1 h-2 w-2 shrink-0 rounded-full"
+                              style={{ background: partyColor(r.party) }}
+                            />
+                            <span className="min-w-0 truncate">
+                              {r.giho && <span className="mr-1">기호 {r.giho}</span>}
+                              {/* 이 서비스에 페이지가 있는 사람만 링크한다 (당선 이력이 있는 사람) */}
+                              {r.member_code ? (
+                                <Link
+                                  href={`/m/${r.member_code}`}
+                                  className="text-foreground underline underline-offset-2"
+                                >
+                                  {r.name}
+                                </Link>
+                              ) : (
+                                <b className="text-foreground">{r.name}</b>
+                              )}
+                              <span className="ml-1">{lastPart(r.party)}</span>
+                            </span>
+                            <span className="ml-auto shrink-0">
+                              {r.vote_rate != null ? `${r.vote_rate}%` : ""}
+                              {r.elected ? " 당선" : ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1 text-[11px] text-muted">
+                        낙선 후보의 득표율은 선관위 후보자 정보 API 에 없어 표시하지 못합니다.
+                      </p>
+                    </details>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="px-4 py-3 text-sm text-muted">아직 출마 이력이 없습니다.</p>

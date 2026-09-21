@@ -111,9 +111,12 @@ def parse_one(text: str, pdf: bytes | None = None) -> list[dict]:
 def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
     with conn.cursor() as cur:
         cur.execute(
+            # raw_text 가 '' 인 공보는 이미지 스캔본이라 pdfplumber 가 한 글자도 못 읽은 것이다.
+            # 예전에는 여기서 걸러버려 그런 사람은 영영 공약이 0건이었다 (35건).
+            # 지금은 PDF 를 그대로 모델에 넘겨 읽는다. null 은 아직 내려받지도 않은 것이라 제외.
             "select id, member_code, raw_text, pdf_url from pledge_doc"
             " where election_id = %s and kind = '선거공보'"
-            " and raw_text is not null and raw_text <> ''"
+            " and raw_text is not null"
             + ("" if redo else " and parsed_at is null")
             + " order by id",
             (sg_id,),
@@ -127,7 +130,8 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
     ok = fail = total = via_pdf = 0
     for i, (doc_id, mcode, text, pdf_url) in enumerate(docs, 1):
         pdf = None
-        if cid_ratio(text) > CID_LIMIT and pdf_url:
+        empty = not text.strip()
+        if (empty or cid_ratio(text) > CID_LIMIT) and pdf_url:
             try:
                 with bulletin.client() as c:
                     pdf = c.get(pdf_url).content
@@ -135,6 +139,11 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
             except Exception as e:
                 print(f"  [{i}] PDF 재다운로드 실패, 텍스트로 진행: {str(e)[:70]}",
                       file=sys.stderr)
+        # 읽을 것이 없는데 모델을 부르면 지어낸 공약이 돌아온다. 한도만 태우고 해롭다.
+        if empty and not pdf:
+            fail += 1
+            print(f"  [{i}] 텍스트도 PDF 도 없어 건너뜀 ({mcode})", file=sys.stderr)
+            continue
         try:
             items = parse_one(text, pdf)
         except llm.QuotaExhausted as e:

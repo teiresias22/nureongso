@@ -146,6 +146,27 @@ export type GroupStats = {
 
 /** 선수와 득표율. 국회의원은 열린국회정보가 term_count 를 주지만 단체장·교육감은
  *  없어서 선관위 당선 이력을 센다. */
+/** 출마 이력 한 줄. 낙선자도 들어 있다 (선관위 후보자 정보).
+ *  낙선자에게는 vote_rate 가 없다 — 후보자 API 에 득표 필드가 없기 때문이다. */
+export type Candidacy = {
+  id: number;
+  election_id: string;
+  sg_typecode: string | null;
+  office: string | null;
+  district: string | null;
+  party: string | null;
+  giho: string | null;
+  vote_rate: number | null;
+  elected: boolean;
+  member_code: string | null;
+};
+
+export type Rival = Pick<
+  Candidacy,
+  "id" | "election_id" | "sg_typecode" | "district" | "party" | "giho" | "vote_rate"
+  | "elected" | "member_code"
+> & { name: string };
+
 export type OfficeTerm = {
   member_code: string;
   office: string;

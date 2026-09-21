@@ -204,6 +204,55 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
     return total
 
 
+# --------------------------------------------------------------------------- 후보자
+
+
+def ingest_candidates(cur, office: str, latest_only: bool = True) -> int:
+    """낙선자를 포함한 전체 후보. '누구와 붙어서 이겼나' 를 보여주기 위한 것이다.
+
+    한계: 이 API 에는 득표수·득표율이 없다(실측 확인). 당선인 API 에만 dugsu/dugyul 이
+    있어서 낙선자 득표율은 여기서 채울 수 없다. 채우려면 별도로 활용신청해야 하는
+    '중앙선거관리위원회_투·개표 정보' API 가 필요하다.
+    # ponytail: 그 키가 생기면 여기에 득표 단계를 하나 더 붙이면 된다.
+
+    이미 들어와 있는 당선인 행은 건드리지 않는다(update=False). 당선인 행에는
+    득표수와 member_code 가 붙어 있는데 여기 데이터로 덮으면 그게 날아간다.
+    """
+    code = OFFICE_CODE[office]
+    sg_ids = elections_for(cur, office)
+    if latest_only:
+        sg_ids = sg_ids[:1]
+    if not sg_ids:
+        print(f"  {office}: 해당 선거가 없습니다. 먼저 `nec.py elections` 를 실행하세요.",
+              file=sys.stderr)
+        return 0
+
+    total = 0
+    for sg_id in sg_ids:
+        rows = fetch("candidate", sgId=sg_id, sgTypecode=code)
+        if not rows:
+            continue
+        cands = [(
+            d(r.get("sgId")), code, office_of(code), d(r.get("huboid")),
+            d(r.get("name")), birth_of(r.get("birthday")),
+            d(r.get("jdName")), d(r.get("sggName")), d(r.get("sdName")),
+            d(r.get("wiwName")), d(r.get("giho")),
+            d(r.get("job")), d(r.get("edu")),
+            " / ".join(x for x in [d(r.get("career1")), d(r.get("career2"))] if x),
+            False,
+        ) for r in rows]
+        upsert(
+            cur, "candidacy",
+            ["election_id", "sg_typecode", "office", "huboid", "name", "birth",
+             "party", "district", "sd_name", "wiw_name", "giho",
+             "job", "edu", "career", "elected"],
+            cands, "election_id,sg_typecode,huboid", update=False,
+        )
+        total += len(cands)
+        print(f"  {office} {sg_id}: 후보 {len(cands)}명", file=sys.stderr)
+    return total
+
+
 def sync_office(cur) -> None:
     """member 의 현재 직위·정당·지역구를 '가장 최근 당선된 선거' 기준으로 맞춘다.
 
@@ -381,7 +430,8 @@ OFFICES = ["시도지사", "교육감", "구시군의장"]  # 늘리려면 여�
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("step", choices=["elections", "winners", "pledges", "all"])
+    p.add_argument("step",
+                   choices=["elections", "winners", "candidates", "pledges", "all"])
     p.add_argument("--office", default=None, help=f"기본값: {', '.join(OFFICES)}")
     p.add_argument("--all-elections", action="store_true",
                    help="역대 선거 전부 (기본은 최근 1회)")
@@ -405,6 +455,14 @@ def main():
                     n = ingest_winners(cur, o, latest_only=not args.all_elections)
                 conn.commit()
                 print(f"[winners] {o} {n}명", file=sys.stderr)
+
+        # 당선인 뒤에 돈다. 당선인 행이 먼저 있어야 덮어쓰기 걱정 없이 낙선자만 채워진다.
+        if args.step in ("candidates", "all"):
+            for o in offices:
+                with conn.cursor() as cur:
+                    n = ingest_candidates(cur, o, latest_only=not args.all_elections)
+                conn.commit()
+                print(f"[candidates] {o} {n}명", file=sys.stderr)
 
         if args.step in ("pledges", "all"):
             for o in offices:
