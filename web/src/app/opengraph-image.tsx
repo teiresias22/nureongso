@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 import { db } from "@/lib/db";
+import { LOGO } from "@/lib/logo";
 import { koreanFont, OG_SIZE, OG_TYPE } from "@/lib/og";
 
 export const alt = "누렁소검은소 — 선출직 공약·의정활동 기록";
@@ -37,7 +38,7 @@ export default async function Image() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <div style={{ width: 12, height: 88, background: "#eab308", borderRadius: 999 }} />
+          <img src={LOGO} width={104} height={104} style={{ borderRadius: 16 }} />
           <div style={{ fontSize: 88, fontWeight: 700 }}>{title}</div>
         </div>
         <div style={{ marginTop: 20, fontSize: 40, color: "#a1a1aa" }}>{sub}</div>

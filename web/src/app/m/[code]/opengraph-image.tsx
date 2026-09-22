@@ -3,6 +3,7 @@ import {
   db, hasBills, lastPart, partyColor, pct, termLabel,
   type Member, type MemberStats, type OfficeTerm,
 } from "@/lib/db";
+import { LOGO } from "@/lib/logo";
 import { koreanFont, OG_SIZE, OG_TYPE } from "@/lib/og";
 
 export const alt = "의정활동 요약";
@@ -85,9 +86,10 @@ export default async function Image({ params }: { params: Promise<{ code: string
           ))}
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 26, color: "#71717a" }}>
-          <span>누렁소검은소</span>
-          <span>선출직이 실제로 한 일</span>
+        <div style={{ display: "flex", alignItems: "center", fontSize: 26, color: "#71717a" }}>
+          <img src={LOGO} width={44} height={44} style={{ borderRadius: 8 }} />
+          <span style={{ marginLeft: 12 }}>누렁소검은소</span>
+          <span style={{ marginLeft: "auto" }}>선출직이 실제로 한 일</span>
         </div>
       </div>
     ),

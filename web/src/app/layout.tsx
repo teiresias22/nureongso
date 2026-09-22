@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { SITE } from "@/lib/site";
 import "./globals.css";
@@ -73,7 +74,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <header className="border-b border-line bg-card">
           <div className="mx-auto flex max-w-5xl items-baseline gap-3 px-4 py-4">
-            <Link href="/" className="text-lg font-bold tracking-tight">
+            <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
+              {/* 배경이 크림색인 스케치다. 투명화하면 흰 테두리(255,255,249)와 배경
+                  (249,250,243)이 6 차이라 테두리가 먹힌다. 둥근 타일로 둔다. */}
+              <Image src="/logo.png" alt="" width={32} height={32} className="rounded-md" priority />
               누렁소검은소
             </Link>
             <span className="text-xs text-muted">선출직이 실제로 한 일</span>
