@@ -44,16 +44,16 @@ jobs:
         id: range
         run: echo "since=$(date -u -d "${{ inputs.days || '45' }} days ago" +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-      # 법제처(law.go.kr)는 해외 IP 를 막는다. GitHub 러너가 미국에 있어 접속
-      # 자체가 타임아웃한다 — 실측: 로컬에선 200/0.34초, Actions 에선 4번 재시도
-      # 모두 ConnectTimeout. 키 문제가 아니다.
+      # 법제처(law.go.kr)는 가끔 접속이 통째로 막힌다. 첫 실행에서 4번 재시도가
+      # 모두 ConnectTimeout 이었는데, 2분 뒤 같은 러너에서 437건을 9초에 받았다.
+      # 일시적 장애다.
       #
-      # 그렇다고 여기서 멈추면 입찰공고와 판정까지 통째로 건너뛴다. 조례가 한 주
-      # 밀리는 것보다 그쪽이 나쁘다. 실패해도 다음 단계를 돌리고, 요약에 적는다.
+      # 여기서 멈추면 입찰공고와 판정까지 건너뛴다. 조례가 한 주 밀리는 것보다
+      # 그쪽이 나쁘다. 실패해도 다음 단계를 돌리고, 요약에 적는다.
       #
-      # 고치는 길: data.go.kr 이 같은 자료를 중계한다(1170000/law/ordinSearchList.do).
-      # 그쪽은 Actions 에서 닿는다(nec.yml 이 매주 성공한다). 활용신청하고 ordin.py
-      # 의 주소를 바꾸면 된다.
+      # 계속 막히면 data.go.kr 중계로 옮긴다(1170000/law/ordinSearchList.do —
+      # 활용신청 전이라 403 이지만 경로는 살아 있다). 그쪽이 더 안정적이라는 증거는
+      # 아직 없다. 노후 경고가 반복해서 뜨면 그때 옮긴다.
       - name: 자치법규
         continue-on-error: true
         working-directory: collector
@@ -95,8 +95,7 @@ jobs:
               cur.execute("select count(*), max(notice_at) from bid_notice")
               n2, last2 = cur.fetchone()
               print(f"| 입찰공고 | {n2:,} | {last2} |")
-              # 자치법규가 몇 주째 안 들어오면 해외 IP 차단에 걸린 것이다. 조용히
-              # 낡아가지 않도록 요약에 눈에 띄게 적는다.
+              # 자치법규가 몇 주째 안 들어오면 조용히 낡아가는 것이다. 눈에 띄게 적는다.
               #
               # 판단은 effective_at 이 아니라 **수집 기록**으로 한다. 시행일자는
               # 앞날짜가 들어 있어(예: 20261007) 언제 봐도 최신으로 보인다.
@@ -107,9 +106,9 @@ jobs:
               from datetime import datetime, timedelta, timezone
               if not ran or ran < datetime.now(timezone.utc) - timedelta(days=14):
                   print("\n> **자치법규가 2주 넘게 안 들어왔습니다.**"
-                        " 법제처(law.go.kr)가 해외 IP 를 막습니다 —"
-                        " data.go.kr 중계(1170000/law/ordinSearchList.do)를"
-                        " 활용신청하고 ordin.py 의 주소를 바꾸세요.")
+                        " law.go.kr 접속이 계속 막히는 것일 수 있습니다."
+                        " 반복되면 data.go.kr 중계"
+                        "(1170000/law/ordinSearchList.do)로 옮기세요.")
               cur.execute("select pg_size_pretty(pg_database_size(current_database()))")
               print(f"\nDB 용량: {cur.fetchone()[0]} / 무료 한도 500MB")
               cur.execute("""select status, count(*) from pledge_status
