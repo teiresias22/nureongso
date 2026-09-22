@@ -137,10 +137,14 @@ MATCH_PROMPT = """어떤 국회의원의 '입법형 공약' 목록과, 그 의�
 def run_classify(conn, limit: int | None, redo: bool) -> None:
     """의원 1명당 1회 호출. 그 사람 공약 전부를 한 번에 분류한다."""
     with conn.cursor() as cur:
+        # 현직부터 돈다. 한도에 걸려 중간에 멈춰도 화면에 실제로 보이는 사람이 먼저 채워진다.
+        # 지난 임기 공약도 그 사람이 현직이면 member_code 가 현직이라 같이 처리된다.
         cur.execute(
-            "select member_code, count(*) from pledge"
-            + ("" if redo else " where kinds is null")
-            + " group by member_code order by member_code"
+            "select p.member_code, count(*) from pledge p"
+            " left join member m on m.code = p.member_code"
+            + ("" if redo else " where p.kinds is null")
+            + " group by p.member_code, m.is_incumbent"
+            " order by m.is_incumbent desc nulls last, p.member_code"
         )
         targets = cur.fetchall()
     if limit:
