@@ -155,17 +155,24 @@ def ingest_members(cur) -> int:
         "elect_type", "terms", "term_count", "committees", "photo_url",
         "tel", "email", "homepage", "is_incumbent",
     ]
-    # member 에는 국회의원만 있는 게 아니다. 여기서 is_incumbent 를 무조건 덮으면
-    # 국회의원 출신 단체장·교육감이 현직에서 내려간다 (현역 국회의원이 아니므로).
-    # 국회의원인 사람만 조정하고 다른 직위는 선관위 수집기(nec.py)에 맡긴다.
+    # member 에는 국회의원만 있는 게 아니다. 이 API 는 역대 국회의원을 주므로 국회의원
+    # 출신 단체장·교육감도 여기 걸린다. 그 사람들의 값을 덮으면 지금 직위가 아니라
+    # 의원 시절로 되돌아간다 — 오세훈 서울시장이 '한나라당 · 강남구을' 이 된다.
+    # 이건 매일 도는 수집이라 손으로 고쳐도 다음 날 아침이면 제자리다.
+    #
+    # 그래서 사람 자체를 가리키는 값만 덮고, '지금 무슨 자리에 있나' 에 달린 값은
+    # 국회의원인 사람에게만 덮는다. 다른 직위는 선관위 수집기(nec.py)가 맡는다.
+    IDENTITY = {"name", "name_hanja", "birth", "sex"}
     placeholders = ",".join(["%s"] * len(cols))
-    sets = ",".join(f"{c}=excluded.{c}" for c in cols
-                    if c not in ("code", "is_incumbent"))
+    sets = ",".join(
+        f"{c}=excluded.{c}" if c in IDENTITY else
+        f"{c}=case when coalesce(member.office,'국회의원') = '국회의원'"
+        f"         then excluded.{c} else member.{c} end"
+        for c in cols if c != "code"
+    )
     cur.executemany(
         f"insert into member ({','.join(cols)}) values ({placeholders})"
-        f" on conflict (code) do update set {sets},"
-        "   is_incumbent = case when coalesce(member.office,'국회의원') = '국회의원'"
-        "                       then excluded.is_incumbent else member.is_incumbent end",
+        f" on conflict (code) do update set {sets}",
         rows,
     )
 
@@ -379,8 +386,25 @@ def main():
         if args.step in ("refresh", "all"):
             with conn.cursor() as cur:
                 cur.execute("refresh materialized view concurrently member_stats")
+                # 매일 도는 수집이 단체장·교육감의 정당·지역구를 의원 시절로 되돌린
+                # 적이 있다. 조용히 틀리면 아무도 모르니 매번 세어서 찍는다.
+                cur.execute("""
+                    with latest as (
+                      select distinct on (member_code) member_code, office, party, district
+                      from candidacy
+                      where elected and member_code is not null and office is not null
+                      order by member_code, election_id desc)
+                    select count(*) from member m join latest l on l.member_code = m.code
+                    where m.is_incumbent and l.office <> '국회의원'
+                      and (m.party is distinct from l.party
+                           or m.district is distinct from l.district)
+                """)
+                stale = cur.fetchone()[0]
             conn.commit()
             print("[refresh] member_stats 갱신", file=sys.stderr)
+            if stale:
+                print(f"[refresh] 경고: 현직 {stale}명의 정당·지역구가 당선 기록과"
+                      " 다릅니다. `nec.py winners` 를 돌리세요.", file=sys.stderr)
 
     # 성공한 단계는 이미 커밋됐다. 그래도 조용히 넘어가면 안 된다 — 워크플로가
     # 초록불이면 며칠째 안 들어오는 데이터를 아무도 눈치채지 못한다.
