@@ -1,5 +1,8 @@
 import { ImageResponse } from "next/og";
-import { db, hasBills, lastPart, partyColor, pct, type Member, type MemberStats } from "@/lib/db";
+import {
+  db, hasBills, lastPart, partyColor, pct, termLabel,
+  type Member, type MemberStats, type OfficeTerm,
+} from "@/lib/db";
 import { koreanFont, OG_SIZE, OG_TYPE } from "@/lib/og";
 
 export const alt = "의정활동 요약";
@@ -8,19 +11,22 @@ export const contentType = OG_TYPE;
 
 export default async function Image({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
-  const [{ data: member }, { data: stats }] = await Promise.all([
+  const [{ data: member }, { data: stats }, { data: terms }] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
+    db.from("member_office_term").select("*").eq("member_code", code),
   ]);
 
   const m = member as Member | null;
   const s = stats as MemberStats | null;
+  // 단체장·교육감은 국회 선수가 없다. 그 직위로 몇 번 당선됐는지로 대신한다.
+  const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m?.office);
   const name = m?.name ?? "";
   const sub = m
     // 선수(term_count)는 국회 대수 기준이다. 오세훈 서울시장 카드에 16대 의원
     // 시절의 '초선' 이 붙어 5선 시장이 초선으로 보였다.
     ? [m.office, lastPart(m.party), lastPart(m.district),
-       (m.office ?? "국회의원") === "국회의원" ? m.term_count : null]
+       (m.office ?? "국회의원") === "국회의원" ? m.term_count : termLabel(term?.wins)]
         .filter(Boolean).join(" · ")
     : "";
 
@@ -33,11 +39,14 @@ export default async function Image({ params }: { params: Promise<{ code: string
           ? ["표결 참여", `${pct(s.vote_total - s.vote_absent, s.vote_total)}%`]
           : ["대표발의 가결", `${s.rep_passed.toLocaleString()}건`],
       ]
-    : [
+    : // 법안 기록이 없는 단체장·교육감. 공약 말고는 '법률로 재는 공약 0건 / 발의
+      // 0건' 이 나가서 한 일이 아무것도 없는 사람처럼 보였다. 그 자리에 있는 값을
+      // 넣는다 — 당선 횟수와 득표율은 '지난 임기' 를 가리키는 수치다.
+      ([
         ["공약", `${s?.pledge_count.toLocaleString() ?? 0}건`],
-        ["법률로 재는 공약", `${s?.pledge_law ?? 0}건`],
-        ["발의", `${s?.pledge_law_filed ?? 0}건`],
-      ];
+        term?.wins ? ["당선", `${term.wins}회`] : null,
+        term?.last_vote_rate != null ? ["득표율", `${term.last_vote_rate}%`] : null,
+      ].filter(Boolean) as [string, string][]);
 
   const title = "누렁소검은소 선출직이 실제로 한 일 기준일";
   const all = name + sub + facts.flat().join("") + title + "0123456789";

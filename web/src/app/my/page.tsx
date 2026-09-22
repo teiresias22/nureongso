@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Photo } from "../page";
 import {
-  attendRate, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
-  type Member, type MemberStats,
+  attendRate, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
+  type CardStats, type Member,
 } from "@/lib/db";
 
 export const revalidate = 3600;
@@ -44,12 +44,12 @@ export default async function MyPage({
   // 셋 다 현직만이라 550행 안쪽이다. PostgREST 1000행 상한에 닿지 않는다.
   const [{ data: areas }, { data: members }, { data: stats }] = await Promise.all([
     db.from("member_area").select("member_code, office, sd_name, wiw_name"),
-    db.from("member").select("*").eq("is_incumbent", true),
-    db.from("member_stats").select("*").eq("is_incumbent", true),
+    db.from("member").select(CARD_COLS).eq("is_incumbent", true),
+    db.from("member_stats").select(CARD_STAT_COLS).eq("is_incumbent", true),
   ]);
 
   const areaBy = new Map(((areas ?? []) as Area[]).map((a) => [a.member_code, a]));
-  const statBy = new Map((stats ?? []).map((s: MemberStats) => [s.code, s]));
+  const statBy = new Map((stats ?? []).map((s: CardStats) => [s.code, s]));
 
   // 시도 → 시군구 목록. 한 select 안에 optgroup 으로 넣어 시도를 따로 고르지 않게 한다.
   const byRegion = new Map<string, Set<string>>();
@@ -148,7 +148,7 @@ export default async function MyPage({
   );
 }
 
-function Card({ m, s }: { m: Member; s?: MemberStats }) {
+function Card({ m, s }: { m: Member; s?: CardStats }) {
   return (
     <Link
       href={`/m/${m.code}`}

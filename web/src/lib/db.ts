@@ -12,13 +12,27 @@ export type Member = {
   party: string | null;
   district: string | null;
   elect_type: string | null;
-  terms: string | null;
   term_count: string | null;
-  committees: string | null;
   photo_url: string | null;
-  homepage: string | null;
-  is_incumbent: boolean;
+  // 목록 화면은 이 칸들을 안 받는다(CARD_COLS). 있을 때만 있는 값이라 선택으로 둔다.
+  terms?: string | null;
+  committees?: string | null;
+  homepage?: string | null;
+  is_incumbent?: boolean;
 };
+
+/** 목록 카드가 실제로 쓰는 칸. 558행을 받는 화면에서 `select *` 를 하면 위원회
+ *  이름 같은 긴 글이 통째로 따라와 쿼리가 349ms 에서 154ms 로 벌어진다(실측).
+ *  화면에 안 쓰는 값은 받지 않는다. */
+export const CARD_COLS =
+  "code,name,party,district,office,elect_type,term_count,photo_url";
+export const CARD_STAT_COLS =
+  "code,rep_count,co_count,vote_total,vote_absent,pledge_count,pledge_done";
+/** CARD_STAT_COLS 로 받은 행. 나머지 칸은 안 받았으니 타입에도 없다 —
+ *  있다고 해두면 undefined 가 화면에 조용히 흘러나간다. */
+export type CardStats = Pick<MemberStats,
+  "code" | "rep_count" | "co_count" | "vote_total" | "vote_absent"
+  | "pledge_count" | "pledge_done">;
 
 /** 전부 SQL 에서 집계된 값. 클라이언트에서 행을 세면 PostgREST 의 1000행 상한에 걸린다. */
 export type MemberStats = {
@@ -158,7 +172,8 @@ export type GroupStats = {
 /** 선수와 득표율. 국회의원은 열린국회정보가 term_count 를 주지만 단체장·교육감은
  *  없어서 선관위 당선 이력을 센다. */
 /** 출마 이력 한 줄. 낙선자도 들어 있다 (선관위 후보자 정보).
- *  낙선자에게는 vote_rate 가 없다 — 후보자 API 에 득표 필드가 없기 때문이다. */
+ *  득표수·득표율은 선관위 개표 정보에서 채운다. 등록 후 사퇴한 후보와 비례대표는
+ *  개표에 줄이 없어 비어 있다. */
 export type Candidacy = {
   id: number;
   election_id: string;
