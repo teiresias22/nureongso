@@ -5,12 +5,15 @@
     python nec.py elections                  # 역대 선거 목록 (192건: 선거 x 선거종류)
     python nec.py winners --office 시도지사    # 당선인 + 출마이력
     python nec.py winners --all              # 지원 직위 전부
+    python nec.py candidates --office 시도지사  # 낙선자까지 전체 후보
+    python nec.py ballots --office 시도지사     # 개표 결과로 득표수·득표율 채우기
     python nec.py pledges --office 교육감      # 공약 (공약 API 지원 직위만)
     python nec.py all
 
 환경변수: DATABASE_URL, DATA_GO_KR_KEY
-    키 발급: https://www.data.go.kr 로그인 > 아래 4개 API 각각 '활용신청'
+    키 발급: https://www.data.go.kr 로그인 > 아래 5개 API 각각 '활용신청'
       중앙선거관리위원회_선거 코드 정보 / 당선인 정보 / 후보자 정보 / 선거공약 정보
+      / 투·개표 정보
     자동승인이라 신청 즉시 쓸 수 있다. 인코딩 키든 디코딩 키든 그대로 넣으면 된다.
 
 국회의원은 열린국회정보(ingest.py)가 의정활동까지 주므로 여기서는 출마 이력만 쓴다.
@@ -42,6 +45,7 @@ OPS = {
     "winner": f"{BASE}/WinnerInfoInqireService2/getWinnerInfoInqire",
     "candidate": f"{BASE}/PofelcddInfoInqireService/getPofelcddRegistSttusInfoInqire",
     "pledge": f"{BASE}/ElecPrmsInfoInqireService/getCnddtElecPrmsInfoInqire",
+    "ballot": f"{BASE}/VoteXmntckInfoInqireService2/getXmntckSttusInfoInqire",
 }
 
 # data.nec.go.kr LOD 전수 대조로 확인한 선거종류코드.
@@ -77,7 +81,7 @@ def fetch(op: str, **params) -> list[dict]:
     """페이지를 돌며 전체 row 를 모은다. 데이터 없음(INFO-200 류)은 빈 리스트."""
     if not KEY:
         raise RuntimeError(
-            "DATA_GO_KR_KEY 가 필요합니다. https://www.data.go.kr 에서 선관위 API 4종을"
+            "DATA_GO_KR_KEY 가 필요합니다. https://www.data.go.kr 에서 선관위 API 5종을"
             " 활용신청(자동승인)하고 일반 인증키(Decoding)를 .env 에 넣으세요."
         )
     url = OPS[op]
@@ -179,12 +183,18 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
             continue
         cands = []
         for r in rows:
+            # 당선자의 득표수 0 은 '0표를 받았다' 가 아니라 '셀 개표가 없었다' 는 뜻이다.
+            # 무투표당선(단독 출마)과 비례대표(정당 명부로 당선)가 여기 해당한다.
+            # 그대로 두면 화면에 '득표율 0%' 로 나가 거짓말이 된다. 모르는 건 비운다.
+            votes, rate = num(r.get("dugsu")), num(r.get("dugyul"))
+            if not votes:
+                votes = rate = None
             cands.append((
                 d(r.get("sgId")), code, office_of(code), d(r.get("huboid")),
                 d(r.get("name")), birth_of(r.get("birthday")),
                 d(r.get("jdName")), d(r.get("sggName")), d(r.get("sdName")),
                 d(r.get("wiwName")), d(r.get("giho")),
-                num(r.get("dugsu")), num(r.get("dugyul")),
+                votes, rate,
                 d(r.get("job")), d(r.get("edu")),
                 " / ".join(x for x in [d(r.get("career1")), d(r.get("career2"))] if x),
                 True,
@@ -213,10 +223,8 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
 def ingest_candidates(cur, office: str, latest_only: bool = True) -> int:
     """낙선자를 포함한 전체 후보. '누구와 붙어서 이겼나' 를 보여주기 위한 것이다.
 
-    한계: 이 API 에는 득표수·득표율이 없다(실측 확인). 당선인 API 에만 dugsu/dugyul 이
-    있어서 낙선자 득표율은 여기서 채울 수 없다. 채우려면 별도로 활용신청해야 하는
-    '중앙선거관리위원회_투·개표 정보' API 가 필요하다.
-    # ponytail: 그 키가 생기면 여기에 득표 단계를 하나 더 붙이면 된다.
+    이 API 에는 득표수·득표율이 없다(실측 확인). 그건 ingest_ballots 가 개표 정보
+    API 에서 따로 채운다. 그래서 이 단계 뒤에 ballots 를 돌려야 한다.
 
     이미 들어와 있는 당선인 행은 건드리지 않는다(update=False). 당선인 행에는
     득표수와 member_code 가 붙어 있는데 여기 데이터로 덮으면 그게 날아간다.
@@ -253,6 +261,70 @@ def ingest_candidates(cur, office: str, latest_only: bool = True) -> int:
         )
         total += len(cands)
         print(f"  {office} {sg_id}: 후보 {len(cands)}명", file=sys.stderr)
+    return total
+
+
+# --------------------------------------------------------------------------- 개표
+
+
+def ingest_ballots(cur, office: str, latest_only: bool = True) -> int:
+    """개표 결과로 낙선자의 득표수·득표율을 채운다.
+
+    후보자 API 에는 득표 항목이 아예 없고 당선인 API 에만 있다. 그래서 '누구와 붙어
+    얼마 차로 이겼나' 가 당선자 숫자 하나만 뜨고 나머지는 빈칸이었다.
+
+    응답은 한 지역구가 한 행이고 후보 50명이 hbj01..50 / dugsu01..50 으로 옆으로
+    누워 있다. 그걸 세로로 편다.
+
+    득표율은 저장된 값이 아니라 득표수 ÷ 유효투표수다. 당선인 API 의 dugyul 과
+    소수 둘째 자리까지 같은 것을 확인했다 (곽상언 44713/87809 = 50.92).
+
+    행 고르기: 한 지역구가 wiwName 별로 쪼개져 여러 번 나오고 맨 위에 '합계' 행이
+    있다. 합계만 쓴다. 전국 롤업은 sdName 까지 '합계' 라 그걸로 걸러낸다 — 안 걸면
+    종로구 득표가 두 번 들어간다.
+    """
+    code = OFFICE_CODE[office]
+    # 선거 목록을 election 이 아니라 candidacy 에서 뽑는다. 붙일 후보가 없는 선거를
+    # 부르면 응답 수백 건을 받아 한 행도 못 쓰고 버린다 (국회의원은 1992년부터 20회다).
+    cur.execute(
+        "select distinct election_id from candidacy where sg_typecode = %s"
+        " order by election_id desc", (code,)
+    )
+    sg_ids = [r[0] for r in cur.fetchall()]
+    if latest_only:
+        sg_ids = sg_ids[:1]
+
+    total = 0
+    for sg_id in sg_ids:
+        rows = fetch("ballot", sgId=sg_id, sgTypecode=code)
+        vals = []
+        for r in rows:
+            if d(r.get("wiwName")) != "합계" or d(r.get("sdName")) == "합계":
+                continue
+            valid = num(r.get("yutusu")) or 0
+            for i in range(1, 51):
+                name = d(r.get(f"hbj{i:02d}"))
+                if not name:
+                    continue
+                votes = num(r.get(f"dugsu{i:02d}"))
+                if votes is None:
+                    continue
+                vals.append((
+                    votes, round(votes / valid * 100, 2) if valid else None,
+                    sg_id, code, d(r.get("sdName")), d(r.get("sggName")), name,
+                ))
+        if not vals:
+            continue
+        # 이름은 한 지역구 안에서 유일하다. 시도까지 봐야 하는 건 '남구' 처럼 이름이
+        # 겹치는 기초자치단체 때문이다.
+        cur.executemany(
+            "update candidacy set votes = %s, vote_rate = %s"
+            " where election_id = %s and sg_typecode = %s"
+            "   and sd_name = %s and district = %s and name = %s",
+            vals,
+        )
+        total += len(vals)
+        print(f"  {office} {sg_id}: 득표 {len(vals)}건", file=sys.stderr)
     return total
 
 
@@ -490,7 +562,8 @@ OFFICES = ["시도지사", "교육감", "구시군의장"]  # 늘리려면 여�
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("step",
-                   choices=["elections", "winners", "candidates", "pledges", "all"])
+                   choices=["elections", "winners", "candidates", "ballots",
+                            "pledges", "all"])
     p.add_argument("--office", default=None, help=f"기본값: {', '.join(OFFICES)}")
     p.add_argument("--all-elections", action="store_true",
                    help="역대 선거 전부 (기본은 최근 1회)")
@@ -522,6 +595,14 @@ def main():
                     n = ingest_candidates(cur, o, latest_only=not args.all_elections)
                 conn.commit()
                 print(f"[candidates] {o} {n}명", file=sys.stderr)
+
+        # 후보 뒤에 돈다. 낙선자 행이 있어야 득표를 붙일 데가 있다.
+        if args.step in ("ballots", "all"):
+            for o in offices:
+                with conn.cursor() as cur:
+                    n = ingest_ballots(cur, o, latest_only=not args.all_elections)
+                conn.commit()
+                print(f"[ballots] {o} {n}건", file=sys.stderr)
 
         if args.step in ("pledges", "all"):
             for o in offices:

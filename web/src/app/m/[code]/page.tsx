@@ -420,7 +420,12 @@ export default async function MemberPage({
                     </span>
                     <span className={c.elected ? "shrink-0 font-semibold" : "shrink-0 text-muted"}>
                       {c.vote_rate != null && `${c.vote_rate}% `}
-                      {c.elected ? "당선" : "낙선"}
+                      {/* 당선인데 득표율이 없는 건 두 경우뿐이다. 비례대표는 정당 명부로
+                          뽑혀 개인 득표가 아예 없고, 단독 출마는 개표를 하지 않는다.
+                          '0%' 로 보이면 거짓말이므로 이유를 적는다. */}
+                      {c.elected && c.vote_rate == null
+                        ? c.district === "비례대표" ? "명부 당선" : "무투표당선"
+                        : c.elected ? "당선" : "낙선"}
                     </span>
                   </div>
                   {rivals.length > 0 && (
@@ -458,7 +463,8 @@ export default async function MemberPage({
                         ))}
                       </ul>
                       <p className="mt-1 text-[11px] text-muted">
-                        낙선 후보의 득표율은 선관위 후보자 정보 API 에 없어 표시하지 못합니다.
+                        득표율은 선관위 개표 정보의 득표수 ÷ 유효투표수입니다. 등록 후
+                        사퇴한 후보는 개표에 집계되지 않아 비어 있습니다.
                       </p>
                     </details>
                   )}
