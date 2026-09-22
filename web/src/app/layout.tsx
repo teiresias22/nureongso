@@ -11,10 +11,11 @@ const NAV = [
   { href: "/compare", label: "비교" },
 ];
 
-/** 푸터에는 읽는 문서 둘만. 무엇을 근거로 판정했는지(rules)와 왜 만들었는지(about)다. */
+/** 푸터에는 읽는 문서 둘만. 왜 만들었는지(about)가 먼저고, 무엇을 근거로
+ *  판정했는지(rules)가 다음이다 — 처음 온 사람이 읽는 순서다. */
 const FOOTER_NAV = [
-  { href: "/rules", label: "판정 기준" },
   { href: "/about", label: "프로젝트 소개" },
+  { href: "/rules", label: "판정 기준" },
 ];
 
 const TITLE = "누렁소검은소 — 선출직 공약·의정활동 기록";

@@ -119,6 +119,7 @@ export default async function MemberPage({
     { data: coBills, count: coTotal },
     { data: candidacies },
     { data: terms },
+    { data: docLinks },
     { data: pledges },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
@@ -127,6 +128,9 @@ export default async function MemberPage({
     bills(code, "co", coFilter, coPage),
     db.from("candidacy").select("*").eq("member_code", code).order("election_id", { ascending: false }),
     db.from("member_office_term").select("*").eq("member_code", code),
+    // 선거공보 원문 PDF. 공약은 이 PDF 를 AI 가 읽어 정리한 것이라, 정리가 미덥지
+    // 않으면 원문으로 갈 수 있어야 한다. 사람당 많아야 서너 줄이다.
+    db.from("pledge_doc_link").select("election_id, kind, pdf_url").eq("member_code", code),
     db
       .from("pledge")
       .select(
@@ -177,6 +181,11 @@ export default async function MemberPage({
     : { data: [] };
   const ordinBy = new Map(
     (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
+  );
+  // 선거·출처마다 공보 PDF 가 하나씩이다. 공약마다 같은 주소를 붙이면 한 사람에게
+  // 수십 번 반복되므로 구획 머리글에 한 번만 건다.
+  const pdfBy = new Map(
+    (docLinks ?? []).map((d) => [`${d.election_id}|${d.kind}`, d.pdf_url as string]),
   );
 
   const s: MemberStats = stats ?? {
@@ -455,6 +464,8 @@ export default async function MemberPage({
           (p) => p.election_id === eid && (p.source ?? "선거공보") === key,
         );
         if (!list.length) return null;
+        // 대표공약은 선관위 API 로 받은 것이라 PDF 가 없다. 선거공보만 원문이 있다.
+        const pdf = pdfBy.get(`${eid}|${key}`);
         const when = [
           electionYear(eid) ? `${electionYear(eid)}년` : eid,
           run && !isCurrent ? [run.office, lastPart(run.district)].filter(Boolean).join(" ") : "",
@@ -475,6 +486,19 @@ export default async function MemberPage({
           >
             <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
               <b className="text-foreground">{when}</b> 선거 · {note}{" "}
+              {pdf && (
+                <>
+                  <a
+                    href={pdf}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-foreground underline underline-offset-2"
+                  >
+                    선거공보 원문(PDF)
+                  </a>
+                  {" · "}
+                </>
+              )}
               <Link href="/rules" className="underline underline-offset-2">
                 판정 기준
               </Link>

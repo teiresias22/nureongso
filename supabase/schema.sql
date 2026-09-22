@@ -190,6 +190,20 @@ create index if not exists pledge_evidence_pledge_idx on pledge_evidence (pledge
 create unique index if not exists pledge_evidence_key
   on pledge_evidence (pledge_id, kind, ref_id);
 
+-- 선거공보 원문 PDF 주소만 밖으로 낸다.
+--
+-- pledge_doc 자체는 내부 테이블이다(RLS 켜고 정책 없음). raw_text 에 공보 PDF 를
+-- 통째로 뽑은 글이 들어 있어서, 테이블을 열면 anon 이 그걸 다 긁어갈 수 있다.
+-- 공보 자체는 공개 자료지만 우리 대역폭으로 퍼줄 이유는 없다.
+--
+-- 그래서 security_invoker 를 켜지 않는다. 뷰 소유자 권한으로 돌아 RLS 를 지나가고,
+-- 내보내는 칸은 아래 다섯 개뿐이다. 다른 뷰(bill_sponsor_member 등)가 invoker 인 것은
+-- 그쪽 원본 테이블에 public_read 정책이 있기 때문이고, 여기는 그게 없다.
+create or replace view pledge_doc_link as
+select id, member_code, election_id, kind, pdf_url
+from pledge_doc where pdf_url is not null;
+grant select on pledge_doc_link to anon, authenticated;
+
 -- 자치법규(조례·규칙). 조례제도형 공약의 근거다 — 법안이 입법형의 근거인 것과 같다.
 -- 전국 것을 통째로 받되 취임일 이후만 받는다. 전 기간을 받으면 40만 행이지만
 -- 임기 중 제·개정만 그 사람의 실적이고, 그건 4년에 20만 행 남짓이다.
