@@ -14,6 +14,22 @@ import { CompareButton, ShareButton } from "./actions";
 export const revalidate = 3600;
 
 const PAGE = 50;
+const DISTRICT_BID_PAGE = 30;
+
+/** 제22대 국회 임기 시작(2024-05-30) + 1년. 이 날 전에 나온 공고는 전임 임기에
+ *  준비된 것일 수 있다 — 공공 공사는 예산 편성부터 발주까지 보통 1년이 넘는다.
+ *  버리지 않고 표시만 한다. 판단은 보는 사람 몫이다. */
+const MP_TERM_EARLY_UNTIL = "2025-05-30";
+
+type DistrictBid = {
+  id: string;
+  name: string;
+  org: string | null;
+  budget: number | null;
+  notice_at: string | null;
+  region: string | null;
+  url: string | null;
+};
 
 /** 처리 상태 필터. proc_result 는 '원안가결/수정가결/폐기/대안반영폐기...' 처럼
  *  값이 여러 가지라 접두 매칭이 아니라 의미 단위로 묶는다. */
@@ -214,6 +230,7 @@ export default async function MemberPage({
     ? await db.from("bid_notice").select("id, name, budget, notice_at, url").in("id", bidIds)
     : { data: [] };
   const bidBy = new Map((bidRows ?? []).map((b) => [b.id as string, b as BidNotice]));
+
   // 선거·출처마다 공보 PDF 가 하나씩이다. 공약마다 같은 주소를 붙이면 한 사람에게
   // 수십 번 반복되므로 구획 머리글에 한 번만 건다.
   const pdfBy = new Map(
@@ -232,6 +249,17 @@ export default async function MemberPage({
   // terms·term_count·committees·elect_type 는 국회 전용 필드다. 국회의원 출신
   // 단체장에게 그대로 보이면 지금 그 직위의 정보로 오해된다.
   const isMP = (m.office ?? "국회의원") === "국회의원";
+  // 지역구에서 임기 중 발주된 공공 공사. 공약과는 잇지 않는다 — 한 시군구를 여럿이
+  // 나눠 갖는 의원이 253명 중 168명이라 누구 덕인지 가릴 수가 없다. 사실만 보인다.
+  const isDistrictMP = isMP && m.elect_type !== "비례대표";
+  const { data: districtBids, count: districtBidTotal } = isDistrictMP
+    ? await db
+        .from("member_district_bid")
+        .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
+        .eq("member_code", code)
+        .order("budget", { ascending: false })
+        .limit(DISTRICT_BID_PAGE)
+    : { data: [], count: 0 };
   // 국회의원은 열린국회정보의 선수를, 나머지는 선관위 당선 횟수를 쓴다.
   const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m.office);
   const showPledges = hasPledges(s);
@@ -658,6 +686,59 @@ export default async function MemberPage({
             />
           </Section>
         </>
+      )}
+
+      {isDistrictMP && !!districtBids?.length && (
+        <Section title="지역구에서 발주된 공공 공사" count={districtBidTotal ?? 0} fold>
+          <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
+            <b className="text-foreground">이 의원이 해낸 일이라는 뜻이 아닙니다.</b>{" "}
+            국회의원에게는 예산 편성권도 발주 권한도 없습니다. 같은 지역에 시장·군수·
+            구청장이 따로 있고, 한 시군구를 여러 의원이 나눠 맡기도 합니다. 지역구
+            안에서 임기 중 무엇이 발주됐는지를 사실 그대로만 적습니다. 공약과 연결하지
+            않으며 이행 판정에도 쓰지 않습니다. 지방자치단체가 발주한 1억 원 이상
+            공사만 담았습니다.
+          </p>
+          <ul className="divide-y divide-line">
+            {(districtBids as DistrictBid[]).map((b) => {
+              // 임기 시작 1년 안에 나온 공고는 전임 임기에 준비된 것일 수 있다.
+              // 공공 공사는 예산 편성부터 발주까지 보통 1년 넘게 걸린다.
+              const early =
+                !!b.notice_at && b.notice_at < MP_TERM_EARLY_UNTIL;
+              return (
+                <li key={b.id} className="px-4 py-2 text-sm">
+                  <a
+                    href={b.url ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:underline"
+                  >
+                    {b.name}
+                  </a>
+                  <span className="mt-0.5 block text-xs text-muted">
+                    {[
+                      b.notice_at,
+                      b.budget ? `${Math.round(b.budget / 100000000)}억` : null,
+                      b.org,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    {early && (
+                      <span className="ml-1 rounded border border-line px-1 py-0.5 text-[10px]">
+                        임기 초 발주 — 전임 임기에 준비된 것일 수 있습니다
+                      </span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {(districtBidTotal ?? 0) > DISTRICT_BID_PAGE && (
+            <p className="border-t border-line px-4 py-2 text-xs text-muted">
+              금액이 큰 {DISTRICT_BID_PAGE}건만 보입니다 (전체{" "}
+              {(districtBidTotal ?? 0).toLocaleString()}건).
+            </p>
+          )}
+        </Section>
       )}
     </div>
   );

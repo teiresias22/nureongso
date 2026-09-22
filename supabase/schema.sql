@@ -244,6 +244,36 @@ create table if not exists bid_notice (
 create index if not exists bid_notice_org_idx on bid_notice (org);
 create index if not exists bid_notice_name_trgm on bid_notice using gin (name gin_trgm_ops);
 
+-- 국회의원 지역구 → 공사현장 지역. bid.py link 가 채운다.
+--
+-- 지역구는 시군구보다 작거나(강남구갑/을/병) 여러 시군구를 묶는다(춘천시철원군
+-- 화천군양구군). 공사현장은 시군구까지만 나오므로 시군구 단위로 잇는다.
+--
+-- **이 표로는 귀속을 말할 수 없다.** 한 시군구를 둘 이상이 나눠 갖는 의원이
+-- 253명 중 168명(66%)이다. 수원시 공사 하나가 수원 의원 5명에게 똑같이 붙는다.
+-- 그래서 이행 판정에는 쓰지 않고 '그 지역에서 무엇이 발주됐나' 만 보여준다.
+create table if not exists member_sigungu (
+  member_code text not null references member(code) on delete cascade,
+  region      text not null,
+  primary key (member_code, region)
+);
+
+-- 지역구별 발주 공사. 화면은 이 뷰를 member_code 로만 읽는다.
+--
+-- 같은 공사가 여러 번 공고된다. 차수가 올라가는 변경공고(000/001/002)와, 유찰 뒤
+-- 번호까지 새로 받는 재공고가 있다. 27,384행 중 3,731행(14%)이 이렇게 겹친다 —
+-- 화면에 그대로 내면 백석국민체육센터가 두 줄로 보인다. 기관·공고명·금액이 같으면
+-- 한 공사로 보고 **처음 공고된 날**만 남긴다.
+create or replace view member_district_bid
+with (security_invoker = true) as
+select s.member_code, b.id, b.name, b.org, b.budget, b.notice_at, b.region, b.url
+from member_sigungu s
+join (
+  select distinct on (org, name, budget) *
+  from bid_notice order by org, name, budget, notice_at
+) b on b.region = s.region;
+grant select on member_district_bid to anon, authenticated;
+
 -- 수집 로그
 create table if not exists ingest_run (
   id         bigserial primary key,
@@ -446,11 +476,12 @@ alter table election enable row level security;
 alter table sg_type enable row level security;
 alter table ordinance enable row level security;
 alter table bid_notice enable row level security;
+alter table member_sigungu enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

@@ -32,7 +32,7 @@ import psycopg
 from urllib.parse import unquote
 
 from ingest import d, upsert
-from judge import ordin_org
+from judge import SIDO_ALIAS, ordin_org
 
 URL = ("https://apis.data.go.kr/1230000/ad/BidPublicInfoService"
        "/getBidPblancListInfoCnstwk")
@@ -55,11 +55,19 @@ TERM_START = "20260701"
 MIN_BUDGET = 100_000_000
 
 
+# 한 건짜리 공사 예산의 상식 밖 상한. 원본이 깨진 값을 준다 — 실측: 하동군
+# '지례천(화촌지구) 일반하천 정비사업' 의 bdgtAmt 가 12240000012240000011 (20자리)
+# 로 왔다. 같은 숫자가 두 번 이어붙은 꼴이고, 같은 행의 추정가격은 1.1억이다.
+# 그대로 넣으면 bigint 범위를 넘겨 수집이 통째로 멈춘다.
+SANE_MAX = 10**13          # 10조
+
+
 def num(v) -> int | None:
     try:
-        return int(v)
+        n = int(v)
     except (TypeError, ValueError):
         return None
+    return n if 0 <= n <= SANE_MAX else None
 
 
 def tracked_orgs(cur) -> list[str]:
@@ -96,6 +104,79 @@ def owner_of(name: str | None, orgs: list[str]) -> str | None:
         if name == org or name.startswith(org + " "):
             return org
     return None
+
+
+def split_district(district: str, vocab: list[str]) -> list[str]:
+    """국회의원 지역구를 시군구로 쪼갠다.
+    '춘천시철원군화천군양구군갑' → ['춘천시','철원군','화천군','양구군']
+
+    **긴 이름부터** 먹는다. '강남구갑' 에서 '남구' 를 먼저 집으면 '강' 이 남아 깨진다.
+    맞는 게 없는 글자(갑·을·병)는 한 자씩 버린다.
+    """
+    out: list[str] = []
+    s = district
+    while s:
+        for v in vocab:                      # 긴 것 우선으로 정렬돼 들어온다
+            if s.startswith(v):
+                out.append(v)
+                s = s[len(v):]
+                break
+        else:
+            s = s[1:]
+    return out
+
+
+def run_link(conn) -> int:
+    """지역구 → 공사현장 지역(bid_notice.region) 대응표를 만든다.
+
+    국회의원 지역구는 시군구보다 작거나(강남구갑/을/병) 여러 시군구를 묶는다
+    (춘천시철원군화천군양구군). 공사현장은 시군구까지만 나오므로 시군구 단위로
+    잇는다. 한 시군구를 여럿이 나눠 갖는 의원이 253명 중 168명이라, 이 표는
+    '누가 해냈나' 가 아니라 '그 지역에서 무엇이 발주됐나' 에만 쓸 수 있다.
+    """
+    with conn.cursor() as cur:
+        # 어휘는 두 곳에서 모은다. 구시군의장 선거구만 쓰면 제주(행정시)·세종처럼
+        # 기초단체장 선거가 없는 곳이 빈다. 실제로 맞출 대상인 region 에서도 받는다.
+        vocab: dict[str, set[str]] = {}
+        cur.execute("select sd_name, district from candidacy"
+                    " where office = '구시군의장' and district is not null group by 1,2")
+        for sd, dist in cur.fetchall():
+            vocab.setdefault(sd, set()).add(dist)
+        cur.execute("select split_part(region,' ',1), substr(region, strpos(region,' ')+1)"
+                    " from bid_notice where region like '%% %%' group by 1,2")
+        for sd, dist in cur.fetchall():
+            if sd and dist:
+                vocab.setdefault(sd, set()).add(dist)
+        by_sd = {k: sorted(v, key=len, reverse=True) for k, v in vocab.items()}
+
+        # 사람마다 '자기의' 최근 당선을 본다. 전체 max(election_id) 를 쓰면 2026
+        # 재보궐(당선자 14명)만 걸려 20줄로 끝난다(실측).
+        cur.execute(
+            "select distinct on (m.code) m.code, c.sd_name, c.district"
+            " from member m join candidacy c"
+            "   on c.member_code = m.code and c.elected and c.office = '국회의원'"
+            " where m.is_incumbent and m.office = '국회의원'"
+            "   and c.district <> '비례대표'"
+            " order by m.code, c.election_id desc")
+        rows, miss = [], 0
+        for mcode, sd, dist in cur.fetchall():
+            # 선관위 기록은 선거 당시 시도명이라 통합·개칭이 안 반영돼 있다.
+            # '광주광역시 광산구' 로 두면 '전남광주통합특별시 광산구' 인 공사와 안 맞는다.
+            sd = SIDO_ALIAS.get(sd, sd)
+            parts = split_district(dist or "", by_sd.get(sd, []))
+            if not parts:
+                # 세종은 기초단체가 없다. 시도 자체가 공사현장 지역으로 찍힌다.
+                rows.append((mcode, sd))
+                miss += 1
+                continue
+            rows.extend((mcode, f"{sd} {q}") for q in parts)
+        cur.execute("delete from member_sigungu")
+        upsert(cur, "member_sigungu", ["member_code", "region"], rows,
+               "member_code,region")
+    conn.commit()
+    print(f"[bid] 지역구-공사현장 대응 {len(rows)}줄"
+          f"{f' (시군구가 없어 시도로 잡은 곳 {miss})' if miss else ''}", file=sys.stderr)
+    return len(rows)
 
 
 def months(since: str, until: str):
@@ -148,7 +229,9 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
                     break
                 batch = []
                 for r in rows:
-                    amt = num(r.get("bdgtAmt")) or 0
+                    # 예산금액이 깨졌으면 추정가격으로 대신한다. 부가세가 빠져 조금
+                    # 작지만 없는 것보다 낫고, 1억 하한을 가르는 데는 충분하다.
+                    amt = num(r.get("bdgtAmt")) or num(r.get("presmptPrce")) or 0
                     if amt < floor:
                         continue
                     # 공고기관과 수요기관이 다를 수 있다(도가 공고하고 시가 쓴다).
@@ -188,7 +271,7 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("step", choices=["fetch"])
+    p.add_argument("step", choices=["fetch", "link", "all"])
     p.add_argument("--since", default=TERM_START)
     p.add_argument("--until", default=dt.date.today().strftime("%Y%m%d"))
     p.add_argument("--min", type=int, default=MIN_BUDGET)
@@ -200,7 +283,10 @@ def main():
     if not KEY:
         sys.exit("DATA_GO_KR_KEY 가 없습니다.")
     with psycopg.connect(dsn) as conn:
-        run_fetch(conn, a.since, a.until, a.min)
+        if a.step in ("fetch", "all"):
+            run_fetch(conn, a.since, a.until, a.min)
+        if a.step in ("link", "all"):
+            run_link(conn)
 
 
 if __name__ == "__main__":
