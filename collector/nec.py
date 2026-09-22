@@ -347,6 +347,25 @@ def register_members(cur, sg_id: str, code: str, current: bool = True) -> None:
             "select code from member where name = %s and birth = %s limit 1", (name, birth)
         )
         hit = cur.fetchone()
+        if not hit and district and district != "비례대표":
+            # 생년이 소스마다 다른 사람이 있다. 열린국회정보와 선관위가 맹성규·정동영·
+            # 정성호를 각각 다른 날로 준다 (음력/양력 차이로 보인다). 그러면 이름+생년이
+            # 빗나가 한 사람이 두 행으로 갈리고, 의정활동과 선거공보가 서로 다른 행에
+            # 붙어 양쪽 다 반쪽이 된다.
+            #
+            # 지역구까지 같은 동명이인은 사실상 없으므로 후보가 **정확히 한 명일 때만**
+            # 같은 사람으로 본다. 여러 명이면 그냥 새 행을 만든다 — 남남을 한 사람으로
+            # 합치는 쪽이 안 합치는 쪽보다 훨씬 나쁘다 ('남구' 구청장은 6명이다).
+            #
+            # 비례대표는 지역구 자리에 '비례대표' 라는 같은 글자가 들어가 누구나 서로
+            # 맞아버린다. 실제로 이영애·이종성·최영희는 대수가 다른 동명이인이다.
+            cur.execute(
+                "select code from member where name = %s and office = %s"
+                " and district like %s limit 2",
+                (name, office, f"%{district}"),
+            )
+            rows = cur.fetchall()
+            hit = rows[0] if len(rows) == 1 else None
         mcode = hit[0] if hit else f"nec-{huboid}"
         # 이미 있는 사람의 값은 덮지 않는다. 열린국회정보 쪽이 더 자세하다
         # (예: 지역구가 '서울 종로구' vs 선관위 '종로구'). 빈 칸만 채운다.
