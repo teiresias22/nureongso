@@ -92,28 +92,49 @@ export default async function MyPage({
         </p>
       </header>
 
+      {/* 두 단계로 고른다. 한 select 에 optgroup 으로 229개를 넣으면 모바일 휠에서
+          자기 시군구까지 한참 굴려야 한다. 시도를 고르고 한 번 보내면 그 시도의
+          시군구만 남는다 — GET 폼 두 번이라 스크립트가 필요 없다. */}
       <form className="flex flex-wrap gap-2">
         <select
           name="area"
-          defaultValue={area}
-          className="min-w-52 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm"
+          defaultValue={sd ? `${sd}|` : ""}
+          className="min-w-40 rounded-md border border-line bg-card px-3 py-2 text-sm"
         >
-          <option value="">지역을 고르세요</option>
-          {regions.map(([name, wiws]) => (
-            <optgroup key={name} label={name}>
-              <option value={`${name}|`}>{name} 전체</option>
-              {[...wiws].sort((a, b) => a.localeCompare(b, "ko")).map((w) => (
-                <option key={w} value={`${name}|${w}`}>
+          <option value="">시·도 선택</option>
+          {regions.map(([name]) => (
+            <option key={name} value={`${name}|`}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <button className="rounded-md border border-line px-3 py-2 text-sm">
+          {sd ? "시·도 바꾸기" : "다음"}
+        </button>
+      </form>
+
+      {sd && (
+        <form className="flex flex-wrap gap-2">
+          <input type="hidden" name="sd" value={sd} />
+          <select
+            name="area"
+            defaultValue={area}
+            className="min-w-52 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm"
+          >
+            <option value={`${sd}|`}>{sd} 전체</option>
+            {[...(byRegion.get(sd) ?? [])]
+              .sort((x, y) => x.localeCompare(y, "ko"))
+              .map((w) => (
+                <option key={w} value={`${sd}|${w}`}>
                   {w}
                 </option>
               ))}
-            </optgroup>
-          ))}
-        </select>
-        <button className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background">
-          찾기
-        </button>
-      </form>
+          </select>
+          <button className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background">
+            찾기
+          </button>
+        </form>
+      )}
 
       {!sd ? (
         <p className="rounded-lg border border-line bg-card p-6 text-sm text-muted">

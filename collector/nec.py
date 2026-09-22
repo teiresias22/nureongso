@@ -261,7 +261,28 @@ def ingest_candidates(cur, office: str, latest_only: bool = True) -> int:
         )
         total += len(cands)
         print(f"  {office} {sg_id}: 후보 {len(cands)}명", file=sys.stderr)
+    n = link_candidacy(cur)
+    if n:
+        print(f"  낙선자 {n}명을 기존 인물과 연결", file=sys.stderr)
     return total
+
+
+def link_candidacy(cur) -> int:
+    """낙선 기록을 이미 있는 인물과 잇는다.
+
+    register_members 는 당선인 수집(winners) 때 도는데, 그때는 낙선자 행이 아직
+    없다. 그래서 낙선 기록에는 member_code 가 안 붙어 있었다 (실측: 11,682명 중
+    438명만). 화면에서는 경쟁자 이름을 눌러 그 사람 페이지로 갈 수 있어야 하는데,
+    박정하 의원처럼 지금 현직인 사람도 2020년 낙선 행이 안 붙어 링크가 죽었다.
+
+    없는 사람을 새로 만들지는 않는다. 한 번 낙선하고 만 사람까지 인물로 올리면
+    빈 페이지가 1만 장 생긴다. 이미 페이지가 있는 사람만 잇는다.
+    """
+    cur.execute(
+        "update candidacy c set member_code = m.code from member m"
+        " where c.member_code is null and c.name = m.name and c.birth = m.birth"
+    )
+    return cur.rowcount
 
 
 # --------------------------------------------------------------------------- 개표

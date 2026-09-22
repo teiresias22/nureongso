@@ -8,6 +8,7 @@ import {
   type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm, type Rival,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
+import { ShareButton } from "./share";
 
 export const revalidate = 3600;
 
@@ -195,13 +196,19 @@ export default async function MemberPage({
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-2">
         <Link href="/" className="text-xs text-muted hover:underline">
           ← 전체 목록
         </Link>
-        <Link href={`/compare?a=${code}`} className="text-xs text-muted hover:underline">
-          다른 사람과 비교 →
-        </Link>
+        <div className="ml-auto flex gap-1.5">
+          <ShareButton title={`${m.name} · ${m.office ?? "국회의원"}`} />
+          <Link
+            href={`/compare?a=${code}`}
+            className="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-muted hover:text-foreground"
+          >
+            비교에 추가
+          </Link>
+        </div>
       </div>
 
       <header className="flex gap-4 rounded-lg border border-line bg-card p-4">
@@ -376,9 +383,21 @@ export default async function MemberPage({
                               )}
                               <span className="ml-1">{lastPart(r.party)}</span>
                             </span>
-                            <span className="ml-auto shrink-0">
-                              {r.vote_rate != null ? `${r.vote_rate}%` : ""}
-                              {r.elected ? " 당선" : ""}
+                            <span className="ml-auto flex shrink-0 gap-2">
+                              <span>
+                                {r.vote_rate != null ? `${r.vote_rate}%` : ""}
+                                {r.elected ? " 당선" : ""}
+                              </span>
+                              {/* 같은 선거구에서 맞붙은 사람이 비교 상대로 가장
+                                  자연스럽다. 드롭다운에서 558명 중 찾을 필요가 없다. */}
+                              {r.member_code && (
+                                <Link
+                                  href={`/compare?a=${code}&b=${r.member_code}`}
+                                  className="underline underline-offset-2 hover:text-foreground"
+                                >
+                                  비교
+                                </Link>
+                              )}
                             </span>
                           </li>
                         ))}

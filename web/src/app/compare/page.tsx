@@ -97,7 +97,9 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
 
       {!both ? (
         <p className="rounded-lg border border-line bg-card p-6 text-sm text-muted">
-          두 사람을 고르면 비교표가 나옵니다.
+          {picked[0] || picked[1]
+            ? `${(picked[0] ?? picked[1])!.name} 님을 담았습니다. 한 명 더 고르면 비교표가 나옵니다.`
+            : "두 사람을 고르면 비교표가 나옵니다."}
         </p>
       ) : (
         <>

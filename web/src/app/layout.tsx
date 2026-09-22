@@ -4,6 +4,13 @@ import Link from "next/link";
 import { SITE } from "@/lib/site";
 import "./globals.css";
 
+/** 헤더에는 찾아보는 길만 둔다. '판정 기준' 은 읽고 나서 보는 문서라 푸터로 옮겼다. */
+const NAV = [
+  { href: "/my", label: "내 지역" },
+  { href: "/stats", label: "통계" },
+  { href: "/compare", label: "비교" },
+];
+
 const TITLE = "누렁소검은소 — 선출직 공약·의정활동 기록";
 const DESC =
   "국회의원·시도지사·교육감이 무슨 공약을 했고 얼마나 지켰는지, 어떤 활동을 했는지 한눈에.";
@@ -13,8 +20,10 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE),
   title: {
     default: TITLE,
-    // 사람 이름으로 검색해 들어오는 서비스다. 개별 페이지 제목이 앞에 와야 한다.
-    template: "%s — 누렁소검은소",
+    // 브랜드를 앞에 둔다. 탭이 좁아지면 뒤가 잘리므로, 상세 페이지에 들어가도
+    // 탭에는 '누렁소검은소' 가 남는다. 검색 결과에는 뒤의 이름이 그대로 나온다 —
+    // 이름으로 검색해 들어오는 서비스라 그 부분을 없애면 안 된다.
+    template: "누렁소검은소 — %s",
   },
   description: DESC,
   // 여기 한 번 적어두면 아래 페이지들이 제목·설명만 덮어쓰고 나머지를 물려받는다.
@@ -73,37 +82,45 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         <header className="border-b border-line bg-card">
-          <div className="mx-auto flex max-w-5xl items-baseline gap-3 px-4 py-4">
+          {/* items-center. 로고가 이미지라 items-baseline 이면 글자 기준선에 맞추려고
+              이미지가 위로 떠서 한 줄이 어긋나 보인다. */}
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
             <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
               {/* 배경이 크림색인 스케치다. 투명화하면 흰 테두리(255,255,249)와 배경
                   (249,250,243)이 6 차이라 테두리가 먹힌다. 둥근 타일로 둔다. */}
               <Image src="/logo.png" alt="" width={32} height={32} className="rounded-md" priority />
               누렁소검은소
             </Link>
-            <span className="text-xs text-muted">선출직이 실제로 한 일</span>
-            <nav className="ml-auto flex gap-3 text-xs text-muted">
-              <Link href="/my" className="hover:text-foreground">
-                내 지역
-              </Link>
-              <Link href="/stats" className="hover:text-foreground">
-                통계
-              </Link>
-              <Link href="/compare" className="hover:text-foreground">
-                비교
-              </Link>
-              <Link href="/rules" className="hover:text-foreground">
-                판정 기준
-              </Link>
+            <span className="hidden text-xs text-muted sm:inline">선출직이 실제로 한 일</span>
+            {/* 글씨만 있으면 본문과 구별이 안 돼 누를 수 있는 줄 모른다. 테두리를 준다. */}
+            <nav className="ml-auto flex gap-1.5 text-xs">
+              {NAV.map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="rounded-md border border-line px-2.5 py-1.5 text-muted transition hover:border-muted hover:text-foreground"
+                >
+                  {label}
+                </Link>
+              ))}
             </nav>
           </div>
         </header>
         <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
-        <footer className="mx-auto max-w-5xl px-4 py-10 text-xs text-muted">
-          출처: 열린국회정보 Open API, 중앙선거관리위원회 공공데이터. 수치는 수집 시점 기준이며
-          집계 방식은 서비스가 정한 것입니다.{" "}
-          <Link href="/rules" className="underline underline-offset-2">
-            판정 기준 보기
-          </Link>
+        <footer className="mt-10 border-t border-line">
+          <div className="mx-auto max-w-5xl space-y-3 px-4 py-8 text-xs text-muted">
+            <nav className="flex flex-wrap gap-x-4 gap-y-2">
+              {[...NAV, { href: "/rules", label: "판정 기준" }].map(({ href, label }) => (
+                <Link key={href} href={href} className="hover:text-foreground">
+                  {label}
+                </Link>
+              ))}
+            </nav>
+            <p>
+              출처: 열린국회정보 Open API, 중앙선거관리위원회 공공데이터. 수치는 수집 시점
+              기준이며 집계 방식은 서비스가 정한 것입니다.
+            </p>
+          </div>
         </footer>
       </body>
     </html>
