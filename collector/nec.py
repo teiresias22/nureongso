@@ -201,6 +201,9 @@ def ingest_winners(cur, office: str, latest_only: bool = False) -> int:
         total += len(cands)
         print(f"  {office} {sg_id}: {len(cands)}명", file=sys.stderr)
     sync_office(cur)
+    n = sync_incumbent(cur)
+    if n:
+        print(f"  임기 끝난 {n}명 현직 해제", file=sys.stderr)
     return total
 
 
@@ -285,6 +288,36 @@ def sync_office(cur) -> None:
     """)
 
 
+def sync_incumbent(cur) -> int:
+    """임기가 끝난 사람의 현직 표시를 내린다.
+
+    register_members 의 is_incumbent 는 올리기만 하고 내리지 않는다 (한 사람이 여러
+    선거에 걸쳐 있어서, 한 선거만 보고 내리면 멀쩡한 현직이 내려간다). 그래서 새
+    선거가 들어오면 지난 임기 단체장이 현직으로 남는다 — 2022년 구청장 55명이 2026년
+    당선자 227명과 함께 현직으로 떠 있었다.
+
+    판단 기준은 '그 직위의 가장 최근 선거에서 당선됐는가' 하나다. 재보궐도 election
+    테이블에 있으므로 자동으로 최신이 된다.
+
+    국회의원은 건드리지 않는다. 열린국회정보 현역 API 가 사퇴·제명까지 반영해서 훨씬
+    정확하고, 비례대표는 candidacy 에 아예 없어서 여기 기준으로는 전원 탈락한다.
+    """
+    cur.execute("""
+        with newest as (
+          select office, max(sg_id) as sg_id from election
+          where office <> '기타' group by office
+        )
+        update member m set is_incumbent = false
+        from newest n
+        where m.is_incumbent and m.office = n.office and m.office <> '국회의원'
+          and not exists (
+            select 1 from candidacy c
+            where c.member_code = m.code and c.election_id = n.sg_id and c.elected
+          )
+    """)
+    return cur.rowcount
+
+
 def register_members(cur, sg_id: str, code: str, current: bool = True) -> None:
     """당선인을 member 로 올리고 candidacy 에 연결한다.
 
@@ -296,14 +329,20 @@ def register_members(cur, sg_id: str, code: str, current: bool = True) -> None:
 
     current=False 는 지난 선거의 당선인이라 현직으로 올리면 안 된다는 뜻이다.
     이미 현직인 사람을 내리지는 않는다 (다른 선거에서 현직일 수 있다).
+    내리는 일은 sync_incumbent 가 맡는다.
+
+    낙선자도 member 로 올린다. 경쟁자 목록에서 이름을 눌러 그 사람 페이지로 갈 수
+    있어야 하기 때문이다. 다만 **현직 표시는 당선자에게만** 붙인다. 여기서 elected
+    를 안 보면 낙선자가 전부 현직이 된다 (실제로 2026 지방선거 후보가 들어오면서
+    구시군의장 현직이 227명에서 584명으로 불어났었다).
     """
     cur.execute(
-        "select huboid, name, birth, party, district, office from candidacy"
+        "select huboid, name, birth, party, district, office, elected from candidacy"
         " where election_id = %s and sg_typecode = %s and huboid is not null",
         (sg_id, code),
     )
     elect_type = "비례대표" if code in PROPORTIONAL else "지역구"
-    for huboid, name, birth, party, district, office in cur.fetchall():
+    for huboid, name, birth, party, district, office, elected in cur.fetchall():
         cur.execute(
             "select code from member where name = %s and birth = %s limit 1", (name, birth)
         )
@@ -319,7 +358,8 @@ def register_members(cur, sg_id: str, code: str, current: bool = True) -> None:
             "   district     = coalesce(member.district, excluded.district),"
             "   elect_type   = coalesce(member.elect_type, excluded.elect_type),"
             "   is_incumbent = member.is_incumbent or excluded.is_incumbent",
-            (mcode, name, birth, party, district, office, elect_type, current),
+            (mcode, name, birth, party, district, office, elect_type,
+             current and bool(elected)),
         )
         cur.execute(
             "update candidacy set member_code = %s where election_id = %s"
