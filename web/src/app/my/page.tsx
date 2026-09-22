@@ -189,7 +189,10 @@ function Card({ m, s }: { m: Member; s?: CardStats }) {
           {[lastPart(m.party), shortDistrict(m.district)].filter(Boolean).join(" · ")}
         </p>
         <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted">
-          {hasBills(s) ? (
+          {/* 국회의원 탭은 발의·표결로 정렬하고, 단체장·교육감 탭은 공약·득표율·
+              당선으로 정렬한다. 카드도 그 값을 보여야 왜 이 순서인지 보인다.
+              단체장의 국회 기록은 상세 페이지에서 '국회의원 시절' 로 보여준다. */}
+          {(m.office ?? "국회의원") === "국회의원" && hasBills(s) ? (
             <>
               <span>
                 대표발의 <b className="text-foreground">{s!.rep_count}</b>

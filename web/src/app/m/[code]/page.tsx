@@ -269,6 +269,17 @@ export default async function MemberPage({
         </div>
       </header>
 
+      {/* 단체장에게 붙은 발의·표결은 지금 직위의 일이 아니라 국회의원 시절 기록이다.
+          안 적으면 '부산시장 전재수 · 본회의 표결 참여 46%' 가 시장 일로 읽힌다.
+          숨기지는 않는다 — 단체장 임기는 잴 데이터가 없고, 그 사람의 가장 최근
+          측정 가능한 임기가 국회의원 임기다. 그게 이 서비스가 묻는 '지난 임기' 다. */}
+      {!isMP && showBills && (
+        <p className="rounded-lg border border-line bg-card px-4 py-2 text-xs text-muted">
+          아래 발의·표결은 <b className="text-foreground">국회의원 시절</b> 기록입니다
+          {m.terms && ` (${m.terms})`}. {m.office ?? "현직"}으로서 한 일은 공약으로 봅니다.
+        </p>
+      )}
+
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {showPledges && (
           <>
