@@ -57,15 +57,18 @@ def fetch(service: str, max_rows: int | None = None, **params) -> list[dict]:
     with httpx.Client(timeout=60, headers={"User-Agent": "nureongso/0.1"}) as c:
         while True:
             q = {"Type": "json", "pIndex": page, "pSize": PAGE, "KEY": KEY, **params}
-            for attempt in range(3):
+            # 국회 서버가 간헐적으로 TCP 연결 자체를 안 받는다(connect timeout).
+            # 하루 한 번 도는 작업이라 몇 분 더 기다리는 편이 하루를 건너뛰는 것보다 낫다.
+            for attempt in range(5):
                 try:
                     data = c.get(f"{BASE}/{name}", params=q).json()
                     break
                 except Exception as e:  # 네트워크/JSON 오류만 재시도
-                    if attempt == 2:
+                    if attempt == 4:
                         raise
-                    print(f"  retry {attempt + 1}: {e}", file=sys.stderr)
-                    time.sleep(2 * (attempt + 1))
+                    wait = 5 * 2**attempt  # 5, 10, 20, 40초
+                    print(f"  retry {attempt + 1} ({wait}초 뒤): {e}", file=sys.stderr)
+                    time.sleep(wait)
 
             if "RESULT" in data:  # 에러 또는 데이터 없음
                 code = data["RESULT"]["CODE"]
@@ -342,6 +345,7 @@ def main():
 
     steps = list(STEPS) if args.step == "all" else ([] if args.step == "refresh" else [args.step])
 
+    failed: list[str] = []
     with psycopg.connect(dsn, autocommit=False) as conn:
         for name in steps:
             with conn.cursor() as cur:
@@ -365,13 +369,23 @@ def main():
                     cur.execute("update ingest_run set finished_at=now(), error=%s where id=%s",
                                 (str(e)[:2000], run_id))
                 conn.commit()
-                raise
+                # 한 단계가 막혔다고 나머지를 버리지 않는다. 국회 API 가 간헐적으로
+                # 연결을 안 받는데, 첫 단계인 members 에서 걸리면 법안·표결·요약까지
+                # 하루치를 통째로 건너뛰었다. 단계끼리는 서로 의존하지 않는다.
+                # 실패는 ingest_run 에 남고 맨 끝에서 0 이 아닌 코드로 끝난다.
+                print(f"[{name}] 실패: {str(e)[:200]}", file=sys.stderr)
+                failed.append(name)
 
         if args.step in ("refresh", "all"):
             with conn.cursor() as cur:
                 cur.execute("refresh materialized view concurrently member_stats")
             conn.commit()
             print("[refresh] member_stats 갱신", file=sys.stderr)
+
+    # 성공한 단계는 이미 커밋됐다. 그래도 조용히 넘어가면 안 된다 — 워크플로가
+    # 초록불이면 며칠째 안 들어오는 데이터를 아무도 눈치채지 못한다.
+    if failed:
+        sys.exit(f"실패한 단계: {', '.join(failed)}")
 
 
 if __name__ == "__main__":
