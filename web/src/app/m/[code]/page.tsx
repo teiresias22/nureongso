@@ -202,7 +202,8 @@ export default async function MemberPage({
         </Link>
         <div className="ml-auto flex gap-1.5">
           <ShareButton title={`${m.name} · ${m.office ?? "국회의원"}`} />
-          <CompareButton code={code} name={m.name} />
+          {/* 비교는 국회의원끼리만 한다. 단체장·교육감은 견줄 숫자가 공약 건수뿐이다. */}
+          {isMP && <CompareButton code={code} name={m.name} />}
         </div>
       </div>
 
@@ -385,7 +386,7 @@ export default async function MemberPage({
                               </span>
                               {/* 같은 선거구에서 맞붙은 사람이 비교 상대로 가장
                                   자연스럽다. 드롭다운에서 558명 중 찾을 필요가 없다. */}
-                              {r.member_code && (
+                              {r.member_code && isMP && c.sg_typecode === "2" && (
                                 <Link
                                   href={`/compare?a=${code}&b=${r.member_code}`}
                                   className="underline underline-offset-2 hover:text-foreground"

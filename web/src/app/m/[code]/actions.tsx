@@ -31,7 +31,7 @@ export function CompareButton({ code, name }: Picked) {
   useEffect(() => setList(read()), []);
 
   // 서버 렌더와 첫 그리기를 맞춘다. 저장소를 읽기 전에 '빼기' 를 보이면 깜빡인다.
-  if (!list) return <span className={`${BTN} invisible`}>비교에 추가</span>;
+  if (!list) return <span className={`${BTN} invisible`}>비교함에 담기</span>;
 
   const has = list.some((x) => x.code === code);
   const save = (next: Picked[]) => {

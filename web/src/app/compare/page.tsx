@@ -40,11 +40,13 @@ const ROWS: {
 export default async function ComparePage({ searchParams }: { searchParams: Promise<SP> }) {
   const { a, b } = await searchParams;
 
-  // 선택 목록은 현직만. 558명이라 한 번에 받아도 PostgREST 상한(1000) 안이다.
+  // 국회의원만 고를 수 있다. 단체장·교육감은 발의도 표결도 없어서 비교표가
+  // 공약 건수 한 줄로 쪼그라든다. 그 한 줄로 두 사람을 견주는 건 뜻이 없다.
   const { data: all } = await db
     .from("member")
     .select("code, name, office, party, district")
     .eq("is_incumbent", true)
+    .eq("office", "국회의원")
     .order("name");
 
   const codes = [a, b].filter(Boolean) as string[];
@@ -58,6 +60,9 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
   const byCode = new Map((members ?? []).map((m) => [m.code, m as Member]));
   const statBy = new Map((stats ?? []).map((s) => [s.code, s as MemberStats]));
   const picked = [a, b].map((c) => (c ? byCode.get(c) : undefined));
+  // 주소로 직접 들어온 단체장·교육감. 고를 수 없게 해놨어도 링크는 올 수 있다.
+  // byCode 로는 못 거른다 — 그건 code 로만 읽어와서 직위를 안 봤다.
+  const wrong = picked.some((m) => m && (m.office ?? "국회의원") !== "국회의원");
   const both = picked[0] && picked[1];
 
   return (
@@ -69,8 +74,8 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
       <header>
         <h1 className="text-xl font-bold">의원 비교</h1>
         <p className="mt-1 text-sm text-muted">
-          두 사람을 나란히 놓고 봅니다. 숫자가 크다고 더 일을 잘한 것은 아닙니다. 지역구
-          사정과 임기가 다르면 비교가 어긋날 수 있습니다.
+          국회의원 두 사람을 나란히 놓고 봅니다. 숫자가 크다고 더 일을 잘한 것은
+          아닙니다. 지역구 사정과 임기가 다르면 비교가 어긋날 수 있습니다.
         </p>
       </header>
 
@@ -95,7 +100,12 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
         </button>
       </form>
 
-      {!both ? (
+      {wrong ? (
+        <p className="rounded-lg border border-line bg-card p-6 text-sm text-muted">
+          국회의원끼리만 비교합니다. 단체장·교육감은 발의도 표결도 없어 견줄 숫자가
+          공약 건수뿐이라, 나란히 놓으면 오히려 오해를 만듭니다.
+        </p>
+      ) : !both ? (
         <p className="rounded-lg border border-line bg-card p-6 text-sm text-muted">
           {picked[0] || picked[1]
             ? `${(picked[0] ?? picked[1])!.name} 님을 담았습니다. 한 명 더 고르면 비교표가 나옵니다.`
@@ -144,22 +154,27 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
                   const win = nums[0] === nums[1] ? -1 : nums[0] > nums[1] ? 0 : 1;
                   return (
                     <tr key={row.label} className="border-b border-line/60 last:border-0">
+                      {/* 항목 이름이 먼저다. 값·값·이름 순이면 무엇을 재는 숫자인지가
+                          맨 나중에 나와 눈이 오른쪽까지 갔다가 되돌아와야 한다. */}
+                      <th
+                        scope="row"
+                        className="w-[28%] px-4 py-3 text-left text-[11px] font-normal text-muted"
+                      >
+                        {row.label}
+                        {row.note && <span className="block opacity-70">{row.note}</span>}
+                      </th>
                       {[0, 1].map((i) => (
                         <td
                           key={i}
-                          className={`w-[38%] px-4 py-3 tabular-nums ${
-                            i === 0 ? "text-right" : "text-left"
-                          } ${win === i ? "font-bold" : "text-muted"}`}
+                          className={`px-4 py-3 text-right tabular-nums ${
+                            win === i ? "font-bold" : "text-muted"
+                          }`}
                         >
                           {vals[i]
                             ? (row.fmt ?? ((n) => String(n)))(nums[i], vals[i]!)
                             : "—"}
                         </td>
                       ))}
-                      <td className="px-2 py-3 text-center text-[11px] text-muted">
-                        {row.label}
-                        {row.note && <span className="block opacity-70">{row.note}</span>}
-                      </td>
                     </tr>
                   );
                 })}
