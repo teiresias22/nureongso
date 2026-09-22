@@ -176,6 +176,7 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
                 CLASSIFY_PROMPT.replace("{items}", listing), CLASSIFY_SCHEMA)
         except llm.QuotaExhausted as e:
             print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  키별 성공: {llm.key_usage()}", file=sys.stderr)
             print(f"  {len(targets) - i + 1}명이 남았습니다. 한도 회복 후 같은 명령을"
                   " 다시 실행하면 남은 것만 처리합니다.", file=sys.stderr)
             break
@@ -255,6 +256,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
                 ), MATCH_SCHEMA)
         except llm.QuotaExhausted as e:
             print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  키별 성공: {llm.key_usage()}", file=sys.stderr)
             print(f"  {len(targets) - i + 1}명이 남았습니다.", file=sys.stderr)
             break
         except llm.LLMError as e:
@@ -456,6 +458,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
                 ), ORDIN_SCHEMA)
         except llm.QuotaExhausted as e:
             print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  키별 성공: {llm.key_usage()}", file=sys.stderr)
             print(f"  {len(targets) - i + 1}명이 남았습니다.", file=sys.stderr)
             break
         except llm.LLMError as e:

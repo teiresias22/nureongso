@@ -49,6 +49,10 @@ GEMINI_PREFER = ("flash-lite", "flash", "pro")
 
 _keys: list[str] | None = None
 _key_i = 0
+# 키마다 실제로 성공한 호출 수. 한도가 찼을 때 '전환이 안 된 것' 과 '두 키가 같은
+# 프로젝트라 한도를 같이 쓴 것' 을 구별하려면 이 숫자가 있어야 한다. 로그만 보면
+# 둘 다 똑같이 '전환 → 곧바로 한도 소진' 으로 보인다.
+_key_used: dict[int, int] = {}
 
 
 def gemini_keys() -> list[str]:
@@ -81,7 +85,8 @@ def gemini_rotate() -> bool:
     _key_i += 1
     # 키마다 쓸 수 있는 모델이 다를 수 있다. 다시 고르게 한다.
     _gemini_model = None
-    print(f"[llm] 일일 한도 소진 → {_key_i + 1}번째 키로 전환", file=sys.stderr)
+    print(f"[llm] 일일 한도 소진 → {_key_i + 1}번째 키로 전환"
+          f" (직전 키로 {_key_used.get(_key_i - 1, 0)}건 성공)", file=sys.stderr)
     return True
 
 
@@ -141,6 +146,7 @@ def gemini_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> s
         raise _quota_error(r)
     if r.status_code >= 400:
         raise LLMError(f"{r.status_code}: {_flat(r.text)}")
+    _key_used[_key_i] = _key_used.get(_key_i, 0) + 1
     data = r.json()
     cands = data.get("candidates") or []
     if not cands:
@@ -251,6 +257,13 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
             if attempt >= retries:
                 raise
             time.sleep(5)
+
+
+def key_usage() -> str:
+    """'1번 키 412건 · 2번 키 0건' 형태. 2번이 0 이면 같은 프로젝트라 한도를 공유한
+    것이다 — 무료 등급 한도는 키가 아니라 프로젝트 단위다(gemini_keys 주석 참고)."""
+    return " · ".join(f"{i + 1}번 키 {_key_used.get(i, 0)}건"
+                      for i in range(len(gemini_keys())))
 
 
 def complete_json(prompt: str, schema: dict | None = None, **kw):
