@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
   db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termLabel,
@@ -109,6 +110,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
 
       <p className="text-xs text-muted">현직 {rows.length}명</p>
 
+      {/* prefetch 를 끈다. 카드가 558개라 스크롤하면 Next 가 보이는 링크마다 RSC
+          페이로드를 미리 받는다. 요청 수백 건이 사진과 대역폭을 두고 다툰다. */}
       <ul className="grid gap-2 sm:grid-cols-2">
         {rows.map((m) => {
           const s = statById.get(m.code);
@@ -116,6 +119,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
             <li key={m.code}>
               <Link
                 href={`/m/${m.code}`}
+                prefetch={false}
                 className="flex gap-3 rounded-lg border border-line bg-card p-3 transition hover:border-muted"
               >
                 <span
@@ -199,17 +203,17 @@ function ElectBadge({ type }: { type?: string | null }) {
   );
 }
 
-/** 사진이 없거나 못 불러오면 이름이 뒤에서 드러난다. 클라이언트 스크립트 없이 처리한다.
- *  국회 사진 서버는 브라우저 UA 를 요구하므로 서버에서 미리 받아두지 않고 그대로 link 한다. */
-function Photo({ src, name }: { src?: string | null; name: string }) {
+/** 사진이 없거나 못 불러오면 이름이 뒤에서 드러난다. 클라이언트 스크립트 없이 처리한다. */
+export function Photo({ src, name }: { src?: string | null; name: string }) {
   return (
     <span className="relative grid h-12 w-10 shrink-0 place-items-center overflow-hidden rounded bg-line text-xs text-muted">
       {name.slice(-2)}
       {src && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <Image
           src={src}
           alt=""
+          width={40}
+          height={48}
           loading="lazy"
           className="absolute inset-0 h-full w-full object-cover"
         />

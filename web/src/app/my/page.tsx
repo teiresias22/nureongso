@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Photo } from "../page";
 import {
   db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type Member, type MemberStats,
@@ -151,17 +152,11 @@ function Card({ m, s }: { m: Member; s?: MemberStats }) {
   return (
     <Link
       href={`/m/${m.code}`}
+      prefetch={false}
       className="flex h-full gap-3 rounded-lg border border-line bg-card p-3 transition hover:border-muted"
     >
       <span className="w-1 shrink-0 rounded-full" style={{ background: partyColor(m.party) }} />
-      {m.photo_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={m.photo_url} alt="" loading="lazy" className="h-12 w-10 shrink-0 rounded object-cover" />
-      ) : (
-        <span className="grid h-12 w-10 shrink-0 place-items-center rounded bg-line text-xs text-muted">
-          {m.name.slice(-2)}
-        </span>
-      )}
+      <Photo src={m.photo_url} name={m.name} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="whitespace-nowrap font-semibold">{m.name}</span>

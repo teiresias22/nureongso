@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -206,8 +207,14 @@ export default async function MemberPage({
       <header className="flex gap-4 rounded-lg border border-line bg-card p-4">
         <span className="w-1.5 rounded-full" style={{ background: partyColor(m.party) }} />
         {m.photo_url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={m.photo_url} alt="" className="h-24 w-20 rounded object-cover" />
+          <Image
+            src={m.photo_url}
+            alt=""
+            width={80}
+            height={96}
+            priority
+            className="h-24 w-20 rounded object-cover"
+          />
         )}
         <div className="min-w-0">
           <div className="flex items-center gap-2">
