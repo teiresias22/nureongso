@@ -4,11 +4,17 @@ import Link from "next/link";
 import { SITE } from "@/lib/site";
 import "./globals.css";
 
-/** 헤더에는 찾아보는 길만 둔다. '판정 기준' 은 읽고 나서 보는 문서라 푸터로 옮겼다. */
+/** 헤더에는 찾아보는 길만 둔다. */
 const NAV = [
   { href: "/my", label: "내 지역" },
   { href: "/stats", label: "통계" },
   { href: "/compare", label: "비교" },
+];
+
+/** 푸터에는 읽는 문서 둘만. 무엇을 근거로 판정했는지(rules)와 왜 만들었는지(about)다. */
+const FOOTER_NAV = [
+  { href: "/rules", label: "판정 기준" },
+  { href: "/about", label: "프로젝트 소개" },
 ];
 
 const TITLE = "누렁소검은소 — 선출직 공약·의정활동 기록";
@@ -109,16 +115,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
         <footer className="mt-10 border-t border-line">
           <div className="mx-auto max-w-5xl space-y-3 px-4 py-8 text-xs text-muted">
+            {/* 찾아보는 길(내 지역·통계·비교)은 헤더에 있다. 여기 두면 같은 링크가
+                두 번 나와 정작 읽어야 할 두 문서가 묻힌다. */}
             <nav className="flex flex-wrap gap-x-4 gap-y-2">
-              {[...NAV, { href: "/rules", label: "판정 기준" }].map(({ href, label }) => (
+              {FOOTER_NAV.map(({ href, label }) => (
                 <Link key={href} href={href} className="hover:text-foreground">
                   {label}
                 </Link>
               ))}
             </nav>
             <p>
-              출처: 열린국회정보 Open API, 중앙선거관리위원회 공공데이터. 수치는 수집 시점
-              기준이며 집계 방식은 서비스가 정한 것입니다.
+              출처: 열린국회정보 Open API, 중앙선거관리위원회 공공데이터, 법제처
+              국가법령정보. 수치는 수집 시점 기준이며 집계 방식은 서비스가 정한 것입니다.
             </p>
           </div>
         </footer>
