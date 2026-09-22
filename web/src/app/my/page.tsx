@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Photo } from "../page";
+import { AreaPicker } from "./picker";
 import {
   attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type CardStats, type Member,
@@ -54,7 +55,7 @@ export default async function MyPage({
   const areaBy = new Map(((areas ?? []) as Area[]).map((a) => [a.member_code, a]));
   const statBy = new Map((stats ?? []).map((s: CardStats) => [s.code, s]));
 
-  // 시도 → 시군구 목록. 한 select 안에 optgroup 으로 넣어 시도를 따로 고르지 않게 한다.
+  // 시도 → 시군구 목록. 통째로 클라이언트에 넘겨 시도를 고르는 즉시 채운다.
   const byRegion = new Map<string, Set<string>>();
   for (const a of (areas ?? []) as Area[]) {
     // '전국' 은 비례대표다. 지역으로 찾는 화면에 넣을 자리가 없다.
@@ -63,11 +64,14 @@ export default async function MyPage({
     if (!byRegion.has(k)) byRegion.set(k, new Set());
     if (a.wiw_name) byRegion.get(k)!.add(a.wiw_name);
   }
-  const regions = [...byRegion].sort(([a], [b]) => a.localeCompare(b, "ko"));
+  const regions = Object.fromEntries(
+    [...byRegion]
+      .sort(([a], [b]) => a.localeCompare(b, "ko"))
+      .map(([k, v]) => [k, [...v].sort((x, y) => x.localeCompare(y, "ko"))]),
+  );
 
-  // 시도를 바꾸고 그대로 보내면 앞 시도의 시군구가 따라온다. 그러면 결과가 0명이다.
-  const wiws = [...(byRegion.get(sd) ?? [])].sort((x, y) => x.localeCompare(y, "ko"));
-  if (!wiws.includes(wiw)) wiw = "";
+  // 주소를 손으로 고쳐 들어올 수 있다. 그 시도에 없는 시군구면 시도 전체로 둔다.
+  if (!regions[sd]?.includes(wiw)) wiw = "";
 
   const picked = sd
     ? (members ?? []).filter((m: Member) => {
@@ -100,39 +104,8 @@ export default async function MyPage({
       </header>
 
       {/* 두 단계를 한 줄에 나란히 둔다. 한 select 에 229개를 넣으면 모바일 휠에서
-          자기 시군구까지 한참 굴려야 해서 시도를 먼저 좁힌다. 시군구 목록은 보낸
-          뒤에야 바뀌지만(스크립트 없이 GET 폼 하나), 시도만 고르고 보내도 그
-          시도 전체가 나오므로 한 번에 끝난다. */}
-      <form className="flex flex-wrap items-center gap-2">
-        <select
-          name="sd"
-          defaultValue={sd}
-          className="min-w-40 rounded-md border border-line bg-card px-3 py-2 text-sm"
-        >
-          <option value="">시·도 선택</option>
-          {regions.map(([name]) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-        <select
-          name="wiw"
-          defaultValue={wiw}
-          disabled={!sd}
-          className="min-w-44 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm disabled:opacity-50"
-        >
-          <option value="">{sd ? `${sd} 전체` : "시·군·구 선택"}</option>
-          {wiws.map((w) => (
-            <option key={w} value={w}>
-              {w}
-            </option>
-          ))}
-        </select>
-        <button className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background">
-          찾기
-        </button>
-      </form>
+          자기 시군구까지 한참 굴려야 해서 시도를 먼저 좁힌다. */}
+      <AreaPicker byRegion={regions} sd={sd} wiw={wiw} />
 
       {!sd ? (
         <p className="rounded-lg border border-line bg-card p-6 text-sm text-muted">
