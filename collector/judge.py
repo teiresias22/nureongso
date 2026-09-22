@@ -513,9 +513,19 @@ with ev as (
          count(*) filter (where e.kind = 'bill')  as law_n,
          count(*) filter (where e.kind = 'ordin') as ordin_n
   from pledge_evidence e
+  join pledge p0 on p0.id = e.pledge_id
+  -- 약속보다 먼저 낸 법안은 그 약속의 이행이 아니다. 실측으로 4건이 이랬다 —
+  -- 국회의원이던 사람이 2026 지방선거에 나와 낸 공약에 2024~25년 법안이 붙었다.
   left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
+                  and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
   where e.kind in ('bill', 'ordin')
+    and (e.kind <> 'bill' or b.bill_id is not null)
   group by e.pledge_id
+),
+-- 그 사람의 가장 최근 당선. 이 선거의 공약만 판정한다.
+cur_el as (
+  select member_code, max(election_id) as election_id
+  from candidacy where elected group by member_code
 ),
 base as (
   select p.id as pledge_id, p.kinds, ev.conf,
@@ -538,10 +548,12 @@ base as (
          exists (select 1 from ingest_run r
                   where r.source = 'match:' || p.member_code) as law_checked,
          exists (select 1 from ingest_run r
-                  where r.source = 'ordin:' || p.member_code) as ordin_checked
+                  where r.source = 'ordin:' || p.member_code) as ordin_checked,
+         (p.election_id = ce.election_id) as current_term
   from pledge p
   left join ev on ev.pledge_id = p.id
   left join member m on m.code = p.member_code
+  left join cur_el ce on ce.member_code = p.member_code
   where p.kinds is not null
 ),
 flag as (
@@ -558,6 +570,11 @@ judged as (
   select pledge_id,
     case
       when cardinality(measurable) = 0    then '판단불가'
+      -- 지난 임기 공약은 판정하지 않는다. 지금 DB 에 든 법안이 제22대 것뿐이라
+      -- (2024-05-30~) 그 이전 임기의 약속은 지킨 근거도, 안 지킨 근거도 없다.
+      -- 억지로 재면 2020년 공약이 2025년 법안으로 '진행' 이 되거나, 21대 법안이
+      -- 아예 없는데 '미착수' 로 단정된다. 실측으로 552건이 이랬다.
+      when not coalesce(current_term, true) then '판단불가'
       when achieved and cardinality(unmeasurable) = 0 then '완료'
       when achieved                       then '진행'
       when law_n > 0                      then '진행'
@@ -568,6 +585,7 @@ judged as (
     case
       when cardinality(measurable) = 0
            then 'no_measure:' || array_to_string(kinds, '+')
+      when not coalesce(current_term, true) then 'past_term'
       when achieved and cardinality(unmeasurable) > 0
            then 'partial:' || array_to_string(unmeasurable, '+')
       when ordin_n > 0                    then 'ordin_enacted'

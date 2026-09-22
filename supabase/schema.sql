@@ -276,15 +276,29 @@ left join (
   from vote group by member_code
 ) v on v.member_code = m.code
 left join (
+  -- 법안 관련 수치는 note 문자열이 아니라 근거(pledge_evidence)에서 직접 센다.
+  -- note 로 세면 판정 규칙을 고칠 때마다 조용히 틀어진다. 실제로 그랬다 — 유형이
+  -- 섞인 공약이 'partial:...' 로 바뀌면서 'law_passed' 만 보던 집계에서 빠졌다.
   select pl.member_code,
     count(*)                                        as pledge_count,
     count(*) filter (where st.status = '완료')       as pledge_done,
     count(*) filter (where st.pledge_id is not null) as pledge_judged,
     count(*) filter (where '입법' = any(pl.kinds))   as pledge_law,
-    count(*) filter (where '입법' = any(pl.kinds)
-                       and st.note in ('law_filed','law_passed'))  as pledge_law_filed,
-    count(*) filter (where st.note = 'law_passed')  as pledge_law_passed
-  from pledge pl left join pledge_status st on st.pledge_id = pl.id
+    count(*) filter (where '입법' = any(pl.kinds) and ev.n > 0)      as pledge_law_filed,
+    count(*) filter (where '입법' = any(pl.kinds) and ev.passed)     as pledge_law_passed
+  from pledge pl
+  left join pledge_status st on st.pledge_id = pl.id
+  left join (
+    -- judge.py 의 decide 와 같은 조건이어야 한다. 약속보다 먼저 낸 법안은 세지 않는다.
+    -- 여기만 빠뜨리면 화면 숫자와 판정이 어긋난다.
+    select e.pledge_id, count(*) as n,
+           bool_or(b.proc_result like '%가결%') as passed
+    from pledge_evidence e
+    join pledge p0 on p0.id = e.pledge_id
+    join bill b on b.bill_id = e.ref_id
+                and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
+    where e.kind = 'bill' group by e.pledge_id
+  ) ev on ev.pledge_id = pl.id
   group by pl.member_code
 ) p on p.member_code = m.code;
 create unique index if not exists member_stats_code_idx on member_stats (code);
