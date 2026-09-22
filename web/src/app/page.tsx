@@ -38,7 +38,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
   // 현직 전원을 받아 클라이언트에서 거른다. PostgREST 상한이 1000행이라
   // 지방의원(약 3,900명)까지 넣으면 여기서 조용히 잘린다. 그때는 검색·필터를
   // 서버 쿼리로 내리고 페이지네이션을 붙여야 한다.
-  const [{ data: members }, { data: stats }, { data: terms }] = await Promise.all([
+  const [{ data: members }, { data: stats }, { data: terms }, { data: vacant }] =
+    await Promise.all([
     db.from("member").select(CARD_COLS).eq("is_incumbent", true).order("name"),
     db.from("member_stats").select(CARD_STAT_COLS).eq("is_incumbent", true),
     // 역대 당선인까지 합치면 2,400행이 넘어 PostgREST 1000행 상한에 걸린다.
@@ -47,10 +48,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
       .from("member_office_term")
       .select("member_code, office, wins, last_vote_rate")
       .eq("is_current", true),
+    // 정원과 현직 수가 다른 이유를 화면에 적기 위한 것. 선관위 당선 기록과 국회
+    // 현역 명부를 대조해 비어 있는 지역구를 센다 (뷰 vacant_seat).
+    db.from("vacant_seat").select("sd_name, district, last_name"),
   ]);
 
   if (!members?.length) return <Empty />;
 
+  const vacancies = (vacant ?? []) as { sd_name: string; district: string; last_name: string }[];
   const statById = new Map((stats ?? []).map((s: CardStats) => [s.code, s]));
   // 단체장·교육감은 국회 선수가 없다. 그 직위로 몇 번 당선됐는지로 대신한다.
   const termBy = new Map(
@@ -177,7 +182,21 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         </button>
       </form>
 
-      <p className="text-xs text-muted">현직 {rows.length}명</p>
+      <p className="text-xs text-muted">
+        현직 {rows.length}명
+        {/* 22대 정원은 300명인데 현역 명부는 299명이다. 이유를 안 적으면 읽는
+            사람이 '1명이 어디 갔지' 에서 막힌다. 국회의원 탭에서만 보인다 —
+            단체장·교육감은 현역 명부를 주는 API 가 없어 공석을 알 수 없다. */}
+        {!!vacancies.length && (office === "국회의원" || !office) && (
+          <>
+            {" · "}
+            <span>
+              공석 {vacancies.length}곳 (
+              {vacancies.map((v) => shortDistrict(`${v.sd_name} ${v.district}`)).join(", ")})
+            </span>
+          </>
+        )}
+      </p>
 
       {/* prefetch 를 끈다. 카드가 558개라 스크롤하면 Next 가 보이는 링크마다 RSC
           페이로드를 미리 받는다. 요청 수백 건이 사진과 대역폭을 두고 다툰다. */}

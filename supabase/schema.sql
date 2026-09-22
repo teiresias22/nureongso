@@ -396,3 +396,43 @@ end $$;
 -- 되살리려면: collector/budget.py 가 그대로 있고, 아래 DDL 을 되살리면 된다.
 -- git log 에서 "지방재정365 세부사업별 세출현황 수집기" 커밋을 보면 전체가 있다.
 -- 용량이 모자라면 budget.py --min 100000000 (1억 이상만; 사업 수 43%, 금액 97%).
+
+-- 비어 있는 국회의원 지역구. 선관위 당선 기록과 국회 현역 명부를 대조해 센다.
+--
+-- 왜 필요한가: 22대 정원은 300명인데 현역 API 는 299명을 준다. 화면에 299 만
+-- 나오면 읽는 사람이 '1명이 어디 갔지' 에서 막힌다 (실측: 권성동 의원이 2026-06-18
+-- 표결을 끝으로 명부에서 빠졌고, 강릉시는 2026-06-03 재보궐 대상이 아니었다).
+--
+-- 정원 300 을 코드에 박지 않는다. 선거법이 바뀌면 틀어진다. 대신 최근 총선의
+-- 지역구 수를 세어 모집단으로 쓴다.
+--
+-- 국회의원만 본다. 단체장·교육감은 현역 명부를 주는 API 가 없어서, 임기 중
+-- 사퇴·구속으로 자리가 비어도 우리 쪽에서는 알 방법이 없다.
+-- 비례대표도 뺀다. 승계 순번으로 채워져 '빈 지역구' 라는 개념이 없다.
+create or replace view vacant_seat
+with (security_invoker = true) as
+with gen as (
+  -- 가장 최근 '총선'. 재보궐에는 비례대표 선거(7)가 없다는 점으로 가른다.
+  -- 최신 선거를 그냥 쓰면 재보궐(14곳)이 잡혀 모집단이 통째로 틀어진다.
+  select max(election_id) as id from candidacy where sg_typecode = '7' and elected
+), seat as (
+  select c.sd_name, c.district from candidacy c cross join gen
+  where c.sg_typecode = '2' and c.elected and c.election_id = gen.id
+), holder as (
+  -- 선거구마다 가장 최근 당선자. 그 뒤의 재보궐 당선자가 있으면 그 사람이다.
+  select distinct on (s.sd_name, s.district)
+         s.sd_name, s.district, c.name, c.party, c.election_id, c.member_code
+  from seat s
+  cross join gen
+  join candidacy c on c.sg_typecode = '2' and c.elected
+       and c.sd_name = s.sd_name and c.district = s.district
+       and c.election_id >= gen.id
+  order by s.sd_name, s.district, c.election_id desc
+)
+select h.sd_name, h.district, h.name as last_name, h.party as last_party,
+       h.election_id as last_election
+from holder h
+left join member m on m.code = h.member_code
+where not coalesce(m.is_incumbent, false) or m.office is distinct from '국회의원';
+
+grant select on vacant_seat to anon, authenticated;
