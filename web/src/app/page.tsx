@@ -46,6 +46,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
     const sa = statById.get(a.code);
     const sb = statById.get(b.code);
     if (sort === "co") return (sb?.co_count ?? 0) - (sa?.co_count ?? 0);
+    if (sort === "vote") {
+      // 표결이 0건인 사람(단체장·교육감)은 pct 가 0 이라 자연히 뒤로 간다.
+      // 비율이 같으면 표결 수가 많은 쪽을 위에 둔다. 임기 중 보궐로 들어와
+      // 14건만 치른 사람이 1,847건을 다 치른 사람을 제치면 읽는 사람이 속는다.
+      const ra = pct(sa ? sa.vote_total - sa.vote_absent : 0, sa?.vote_total ?? 0);
+      const rb = pct(sb ? sb.vote_total - sb.vote_absent : 0, sb?.vote_total ?? 0);
+      return rb - ra || (sb?.vote_total ?? 0) - (sa?.vote_total ?? 0);
+    }
     if (sort === "name") return a.name.localeCompare(b.name, "ko");
     return (sb?.rep_count ?? 0) - (sa?.rep_count ?? 0);
   });
@@ -101,6 +109,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         >
           <option value="rep">대표발의 많은 순</option>
           <option value="co">공동발의 많은 순</option>
+          <option value="vote">표결참여 높은 순</option>
           <option value="name">이름순</option>
         </select>
         <button className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background">
