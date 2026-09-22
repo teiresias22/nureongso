@@ -386,3 +386,37 @@ begin
     execute format('create policy public_read on %I for select using (true)', t);
   end loop;
 end $$;
+
+-- 지방재정365 세부사업별 세출현황. 예산사업형 공약에 '돈이 붙었나' 를 대기 위한 것.
+--
+-- 한 회계연도가 47만 행이라 연도를 늘릴 때마다 용량을 확인해야 한다 (Supabase 무료
+-- 500MB). 그래서 필요한 칸만 남겼다 — 부문·정렬순서·행정자치단체코드는 안 쓴다.
+--
+-- 금액 필드가 셋인 이유: 편성액(planned)은 당초 편성, 예산현액(budget)은 이월·추경까지
+-- 반영된 현재 액수, 지출액(spent)은 실제로 쓴 돈이다. 집행률의 분모는 budget 이다.
+create table if not exists budget_biz (
+  fyr       smallint not null,          -- 회계연도
+  laf_cd    text not null,              -- 자치단체코드
+  dept_cd   text not null,              -- 부서코드
+  dbiz_cd   text not null,              -- 세부사업코드
+  acnt_cd   text not null,              -- 회계구분코드
+  laf_name  text,                       -- 자치단체명 (예: 전남완도군)
+  dbiz_nm   text not null,              -- 세부사업명 — 공약과 대는 대상
+  fld_nm    text,                       -- 분야 (사회복지, 문화및관광 ...)
+  planned   bigint,                     -- 편성액
+  budget    bigint,                     -- 예산현액
+  spent     bigint,                     -- 지출액
+  natl      bigint,                     -- 국비
+  prov      bigint,                     -- 시도비
+  local     bigint,                     -- 시군구비
+  as_of     date,                       -- 집행일자 (이 숫자의 기준일)
+  primary key (fyr, laf_cd, dept_cd, dbiz_cd, acnt_cd)
+);
+create index if not exists budget_biz_laf_idx on budget_biz (fyr, laf_cd);
+-- 공약 문구와 사업명을 대려면 부분일치가 필요하다. 동등비교로는 '노인 일자리 확대' 와
+-- '노인일자리및사회활동지원' 이 안 만난다.
+create extension if not exists pg_trgm;
+create index if not exists budget_biz_nm_trgm on budget_biz using gin (dbiz_nm gin_trgm_ops);
+
+alter table budget_biz enable row level security;
+create policy public_read on budget_biz for select using (true);
