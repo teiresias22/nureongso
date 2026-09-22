@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
+  db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText,
   type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
   type BidNotice, type Ordinance, type Rival,
@@ -340,6 +340,14 @@ export default async function MemberPage({
               .filter(Boolean)
               .join(" · ")}
           </p>
+          {/* 같은 구에 갑·을·병이 있으면 유권자는 자기가 어느 선거구인지 모른다.
+              공직선거법 [별표 1] 구역표를 그대로 적는다. 구 전체가 한 선거구인
+              곳은 나눌 게 없어 값이 없다. */}
+          {isDistrictMP && districtArea(m.district) && (
+            <p className="mt-1 text-xs text-muted">
+              <span className="text-muted/70">선거구역</span> {districtArea(m.district)}
+            </p>
+          )}
           {isMP && m.committees && (
             <p className="mt-1 text-xs text-muted">{m.committees}</p>
           )}

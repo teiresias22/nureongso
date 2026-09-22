@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Photo } from "../page";
 import { AreaPicker } from "./picker";
 import {
-  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
+  attendRate, districtArea, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type CardStats, type Member,
 } from "@/lib/db";
 
@@ -141,6 +141,7 @@ export default async function MyPage({
 }
 
 function Card({ m, s }: { m: Member; s?: CardStats }) {
+  const area = (m.office ?? "국회의원") === "국회의원" ? districtArea(m.district) : "";
   return (
     <Link
       href={`/m/${m.code}`}
@@ -159,6 +160,9 @@ function Card({ m, s }: { m: Member; s?: CardStats }) {
         <p className="mt-0.5 truncate text-xs text-muted">
           {[lastPart(m.party), shortDistrict(m.district)].filter(Boolean).join(" · ")}
         </p>
+        {/* 한 구에 갑·을·병이 나란히 뜨는 화면이라, 자기 동이 어디인지 여기서
+            갈라줘야 한다. 구 전체가 한 선거구인 곳은 값이 없다. */}
+        {area && <p className="mt-0.5 text-[11px] leading-snug text-muted/80">{area}</p>}
         <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted">
           {/* 국회의원 탭은 발의·표결로 정렬하고, 단체장·교육감 탭은 공약·득표율·
               당선으로 정렬한다. 카드도 그 값을 보여야 왜 이 순서인지 보인다.

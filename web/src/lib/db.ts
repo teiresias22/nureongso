@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
+import DISTRICT_AREA from "./districts.json";
+
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
@@ -151,6 +153,13 @@ export function partyColor(party?: string | null) {
 export function lastPart(v?: string | null) {
   return v ? v.split("/").pop()!.trim() : "";
 }
+
+/** 지역구가 어느 동으로 이뤄지는지. 유권자는 자기가 강남구에 산다는 건 알아도
+ *  갑·을·병이 어디서 갈리는지는 모른다. 출처는 공직선거법 [별표 1] 선거구구역표.
+ *  '종로구 일원' 처럼 구 전체가 한 선거구인 곳은 나눌 게 없어 빠져 있다.
+ *  갱신: collector/districts.py (선거구 재획정 때만). */
+export const districtArea = (district?: string | null): string =>
+  (DISTRICT_AREA as Record<string, string>)[lastPart(district)] ?? "";
 
 /** 시도 이름을 통용 약칭으로. '전남광주통합특별시 서구갑' 같은 긴 지역구를 줄인다. */
 const SIDO_SHORT: Record<string, string> = {
