@@ -26,14 +26,14 @@ const BILL_FILTERS = [
  *  선거공보는 후보가 낸 전체 공약이다. */
 const PLEDGE_SOURCES = [
   {
-    key: "선거공보",
-    title: "공약 (선거공보)",
-    note: "후보가 유권자에게 배포한 선거공보에서 뽑은 공약입니다. AI 가 PDF 원문을 읽어 정리했습니다.",
-  },
-  {
     key: "공약서",
     title: "대표공약 (선거공약서)",
     note: "후보가 선거관리위원회에 제출한 선거공약서의 대표 공약입니다. 공직선거법상 게재 수가 제한돼 지방선거는 5개, 대통령선거는 10개까지만 실립니다.",
+  },
+  {
+    key: "선거공보",
+    title: "공약 (선거공보)",
+    note: "후보가 유권자에게 배포한 선거공보에서 뽑은 공약입니다. AI 가 PDF 원문을 읽어 정리했습니다.",
   },
 ] as const;
 
@@ -323,106 +323,18 @@ export default async function MemberPage({
         </section>
       )}
 
-      {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
-          '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
-      {pledgeElections.map((eid) => {
-        const run = runs.find((c) => c.election_id === eid);
-        const isCurrent = eid === pledgeElections[0];
-        return PLEDGE_SOURCES.map(({ key, title, note }) => {
-        const list = (pledges ?? []).filter(
-          (p) => p.election_id === eid && (p.source ?? "선거공보") === key,
-        );
-        if (!list.length) return null;
-        const when = [
-          electionYear(eid) ? `${electionYear(eid)}년` : eid,
-          run && !isCurrent ? [run.office, lastPart(run.district)].filter(Boolean).join(" ") : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
-        return (
-          <Section
-            key={`${eid}-${key}`}
-            title={`${isCurrent ? "이번 임기" : "지난 임기"} ${title}`}
-            count={list.length}
-          >
-            <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
-              <b className="text-foreground">{when}</b> 선거 · {note}{" "}
-              <Link href="/rules" className="underline underline-offset-2">
-                판정 기준
-              </Link>
-            </p>
-            <ul className="divide-y divide-line">
-            {list.map((p) => {
-              const st = p.pledge_status as unknown as
-                { status: string; decided_by: string; note: string | null } | null;
-              const ev = (p.pledge_evidence ?? []) as unknown as {
-                kind: string; ref_id: string; summary: string | null; score: number | null;
-              }[];
-              return (
-                <li key={p.id} className="flex gap-3 px-4 py-3 text-sm">
-                  {st ? (
-                    <StatusBadge status={st.status} auto={st.decided_by !== "reviewer"} />
-                  ) : (
-                    <span className="mt-0.5 shrink-0 text-[11px] text-muted">미판정</span>
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-[11px] text-muted">
-                      {[p.category, ...(p.kinds ?? []).map((k: string) => KIND_LABEL[k] ?? k)]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                    <p className="font-medium">{p.title}</p>
-                    {st?.note && (
-                      <p className="mt-0.5 text-xs text-muted">{noteText(st.note)}</p>
-                    )}
-                    {ev.length > 0 && (
-                      <ul className="mt-1.5 space-y-1">
-                        {ev.map((e) => (
-                          <li key={e.ref_id} className="text-xs">
-                            <Link
-                              href={`/bill/${e.ref_id}`}
-                              className="text-foreground underline underline-offset-2"
-                            >
-                              근거 법안
-                            </Link>
-                            {e.summary && <span className="ml-1 text-muted">{e.summary}</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {p.body && (
-                      // 공약 본문은 목표·이행방법·재원조달까지 담긴 긴 원문이라 접어 둔다.
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-xs text-muted">
-                          공약 원문 보기
-                        </summary>
-                        <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{p.body}</p>
-                      </details>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-            </ul>
-          </Section>
-        );
-        });
-      })}
-
-      {!pledges?.length && (
-        <Section title="공약" count={0}>
-          <p className="px-4 py-3 text-sm text-muted">아직 공약 데이터가 없습니다.</p>
-        </Section>
-      )}
-
       <Section title="출마 이력" count={runs.length}>
         {runs.length ? (
           <ul className="divide-y divide-line">
             {runs.map((c) => {
               const rivals = rivalsOf(c);
               return (
-                <li key={c.id} className="px-4 py-2 text-sm">
-                  <div className="flex justify-between gap-3">
+                <li key={c.id}>
+                 <Fold
+                  open={rivals.length > 0}
+                  hint={`후보 ${rivals.length}명`}
+                  head={
+                  <span className="flex justify-between gap-3 px-4 py-2 text-sm">
                     <span className="min-w-0 truncate">
                       {[c.office, c.district, c.party].filter(Boolean).join(" · ")}
                       <span className="ml-2 text-xs text-muted">
@@ -438,13 +350,11 @@ export default async function MemberPage({
                         ? c.district === "비례대표" ? "명부 당선" : "무투표당선"
                         : c.elected ? "당선" : "낙선"}
                     </span>
-                  </div>
-                  {rivals.length > 0 && (
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-xs text-muted">
-                        같이 나온 후보 {rivals.length}명
-                      </summary>
-                      <ul className="mt-1 space-y-0.5">
+                  </span>
+                  }
+                 >
+                    <div className="px-4 pb-2">
+                      <ul className="space-y-0.5">
                         {rivals.map((r) => (
                           <li key={r.id} className="flex gap-2 text-xs text-muted">
                             <span
@@ -477,8 +387,8 @@ export default async function MemberPage({
                         득표율은 선관위 개표 정보의 득표수 ÷ 유효투표수입니다. 등록 후
                         사퇴한 후보는 개표에 집계되지 않아 비어 있습니다.
                       </p>
-                    </details>
-                  )}
+                    </div>
+                 </Fold>
                 </li>
               );
             })}
@@ -487,6 +397,103 @@ export default async function MemberPage({
           <p className="px-4 py-3 text-sm text-muted">아직 출마 이력이 없습니다.</p>
         )}
       </Section>
+
+      {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
+          '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
+      {pledgeElections.map((eid) => {
+        const run = runs.find((c) => c.election_id === eid);
+        const isCurrent = eid === pledgeElections[0];
+        return PLEDGE_SOURCES.map(({ key, title, note }) => {
+        const list = (pledges ?? []).filter(
+          (p) => p.election_id === eid && (p.source ?? "선거공보") === key,
+        );
+        if (!list.length) return null;
+        const when = [
+          electionYear(eid) ? `${electionYear(eid)}년` : eid,
+          run && !isCurrent ? [run.office, lastPart(run.district)].filter(Boolean).join(" ") : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        return (
+          <Section
+            key={`${eid}-${key}`}
+            // 지난 임기가 여럿인 사람이 있다. 전재수는 2020·2016 선거가 둘 다
+            // 있어서 '지난 임기 공약' 이 두 개로 나온다. 접혀 있으면 안내문의
+            // 연도가 안 보이므로 제목에 붙여 구별한다.
+            title={`${isCurrent ? "이번 임기" : `지난 임기(${electionYear(eid)})`} ${title}`}
+            count={list.length}
+            // 펼쳐 두는 건 '이번 임기 대표공약' 하나다. 수십 건짜리 선거공보 공약과
+            // 지난 임기까지 다 펼치면 화면이 공약 목록으로만 채워진다.
+            fold={!(isCurrent && key === "공약서")}
+          >
+            <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
+              <b className="text-foreground">{when}</b> 선거 · {note}{" "}
+              <Link href="/rules" className="underline underline-offset-2">
+                판정 기준
+              </Link>
+            </p>
+            <ul className="divide-y divide-line">
+            {list.map((p) => {
+              const st = p.pledge_status as unknown as
+                { status: string; decided_by: string; note: string | null } | null;
+              const ev = (p.pledge_evidence ?? []) as unknown as {
+                kind: string; ref_id: string; summary: string | null; score: number | null;
+              }[];
+              return (
+                <li key={p.id}>
+                  <Fold
+                    open={!!p.body || ev.length > 0}
+                    hint="원문"
+                    head={
+                      <span className="flex gap-3 px-4 py-3 text-sm">
+                        {st ? (
+                          <StatusBadge status={st.status} auto={st.decided_by !== "reviewer"} />
+                        ) : (
+                          <span className="mt-0.5 shrink-0 text-[11px] text-muted">미판정</span>
+                        )}
+                        <span className="min-w-0">
+                          <span className="block text-[11px] text-muted">
+                            {[p.category, ...(p.kinds ?? []).map((k: string) => KIND_LABEL[k] ?? k)]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                          <span className="block font-medium">{p.title}</span>
+                          {st?.note && (
+                            <span className="mt-0.5 block text-xs text-muted">{noteText(st.note)}</span>
+                          )}
+                        </span>
+                      </span>
+                    }
+                  >
+                    <div className="space-y-1.5 px-4 pb-3 pl-[4.25rem] text-xs">
+                      {ev.map((e) => (
+                        <div key={e.ref_id}>
+                          <Link
+                            href={`/bill/${e.ref_id}`}
+                            className="text-foreground underline underline-offset-2"
+                          >
+                            근거 법안
+                          </Link>
+                          {e.summary && <span className="ml-1 text-muted">{e.summary}</span>}
+                        </div>
+                      ))}
+                      {p.body && <p className="whitespace-pre-wrap text-muted">{p.body}</p>}
+                    </div>
+                  </Fold>
+                </li>
+              );
+            })}
+            </ul>
+          </Section>
+        );
+        });
+      })}
+
+      {!pledges?.length && (
+        <Section title="공약" count={0}>
+          <p className="px-4 py-3 text-sm text-muted">아직 공약 데이터가 없습니다.</p>
+        </Section>
+      )}
 
       {showBills && (
         <>
@@ -541,14 +548,56 @@ function Stat({ label, value, unit, sub }:
   );
 }
 
-function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+/** fold 를 주면 접힌 상태로 시작한다. 제목줄 전체가 누르는 자리다.
+ *  details/summary 라 스크립트가 필요 없고, 검색엔진은 접힌 내용도 읽는다. */
+function Section({
+  title, count, children, fold,
+}: { title: string; count: number; children: React.ReactNode; fold?: boolean }) {
+  const head = (
+    <>
+      {title} <span className="font-normal text-muted">{count}</span>
+    </>
+  );
+  if (!fold) {
+    return (
+      <section className="overflow-hidden rounded-lg border border-line bg-card">
+        <h2 className="border-b border-line px-4 py-2 text-sm font-semibold">{head}</h2>
+        {children}
+      </section>
+    );
+  }
   return (
-    <section className="overflow-hidden rounded-lg border border-line bg-card">
-      <h2 className="border-b border-line px-4 py-2 text-sm font-semibold">
-        {title} <span className="font-normal text-muted">{count}</span>
-      </h2>
+    <details className="group overflow-hidden rounded-lg border border-line bg-card">
+      <summary className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-semibold marker:content-none hover:bg-background/40 group-open:border-b group-open:border-line [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0">{head}</span>
+        <span className="ml-auto shrink-0 text-xs font-normal text-muted group-open:hidden">펼치기</span>
+        <span className="ml-auto hidden shrink-0 text-xs font-normal text-muted group-open:inline">접기</span>
+      </summary>
       {children}
-    </section>
+    </details>
+  );
+}
+
+/** 카드 한 장을 접는다. 열 것이 없으면 그냥 감싸기만 한다.
+ *
+ *  summary 가 카드 본문을 통째로 감싸므로 어디를 눌러도 열린다. 예전에는 '공약 원문
+ *  보기' 라는 11px 글씨만 누를 수 있어 손가락으로는 맞히기 어려웠다.
+ *
+ *  summary 안에 <p>·<ul> 같은 블록 태그를 넣으면 브라우저가 summary 를 닫아버려
+ *  레이아웃이 깨진다. 그래서 접히는 머리 부분은 span + block 클래스로만 쓴다. */
+function Fold({
+  open: canOpen, hint, head, children,
+}: { open: boolean; hint: string; head: React.ReactNode; children: React.ReactNode }) {
+  if (!canOpen) return <>{head}</>;
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer items-start marker:content-none hover:bg-background/40 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 flex-1">{head}</span>
+        <span className="shrink-0 py-2 pr-3 text-[11px] text-muted group-open:hidden">+{hint}</span>
+        <span className="hidden shrink-0 py-2 pr-3 text-[11px] text-muted group-open:inline">접기</span>
+      </summary>
+      {children}
+    </details>
   );
 }
 

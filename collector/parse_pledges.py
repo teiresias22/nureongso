@@ -9,6 +9,7 @@
     python parse_pledges.py --sg 20240410 --limit 3     # 먼저 소량으로 품질 확인
     python parse_pledges.py --sg 20240410               # 전체
     python parse_pledges.py --sg 20240410 --redo        # 이미 한 것도 다시
+    python parse_pledges.py --sg 20240410 --empty       # 공약 0건으로 남은 것만 다시
 
 환경변수: DATABASE_URL + llm.py 가 쓰는 것 (기본 GEMINI_API_KEY)
 """
@@ -108,7 +109,7 @@ def parse_one(text: str, pdf: bytes | None = None) -> list[dict]:
     return clean
 
 
-def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
+def run(conn, sg_id: str, limit: int | None, redo: bool, empty: bool = False) -> None:
     with conn.cursor() as cur:
         cur.execute(
             # raw_text 가 '' 인 공보는 이미지 스캔본이라 pdfplumber 가 한 글자도 못 읽은 것이다.
@@ -117,7 +118,12 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
             "select id, member_code, raw_text, pdf_url from pledge_doc"
             " where election_id = %s and kind = '선거공보'"
             " and raw_text is not null"
-            + ("" if redo else " and parsed_at is null")
+            + ("" if redo or empty else " and parsed_at is null")
+            # 한 번 돌렸는데 공약이 0건인 것만 다시. --redo 는 그 선거 전체를
+            # 다시 돌려 한도를 통째로 태운다. 실패분은 보통 이미지 스캔본이라
+            # PDF 직접 읽기 경로를 다시 태워보는 값이 있다.
+            + (" and not exists (select 1 from pledge p where p.doc_id = pledge_doc.id)"
+               if empty else "")
             + " order by id",
             (sg_id,),
         )
@@ -130,8 +136,8 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
     ok = fail = total = via_pdf = 0
     for i, (doc_id, mcode, text, pdf_url) in enumerate(docs, 1):
         pdf = None
-        empty = not text.strip()
-        if (empty or cid_ratio(text) > CID_LIMIT) and pdf_url:
+        blank = not text.strip()
+        if (blank or cid_ratio(text) > CID_LIMIT) and pdf_url:
             try:
                 with bulletin.client() as c:
                     pdf = c.get(pdf_url).content
@@ -140,7 +146,7 @@ def run(conn, sg_id: str, limit: int | None, redo: bool) -> None:
                 print(f"  [{i}] PDF 재다운로드 실패, 텍스트로 진행: {str(e)[:70]}",
                       file=sys.stderr)
         # 읽을 것이 없는데 모델을 부르면 지어낸 공약이 돌아온다. 한도만 태우고 해롭다.
-        if empty and not pdf:
+        if blank and not pdf:
             fail += 1
             print(f"  [{i}] 텍스트도 PDF 도 없어 건너뜀 ({mcode})", file=sys.stderr)
             continue
@@ -185,6 +191,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--sg", required=True)
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--empty", action="store_true",
+                   help="공약이 0건으로 남은 공보만 다시 (실패분 재시도)")
     p.add_argument("--redo", action="store_true")
     a = p.parse_args()
 
@@ -192,7 +200,7 @@ def main():
     if not dsn:
         sys.exit("DATABASE_URL 이 없습니다.")
     with psycopg.connect(dsn) as conn:
-        run(conn, a.sg, a.limit, a.redo)
+        run(conn, a.sg, a.limit, a.redo, a.empty)
 
 
 if __name__ == "__main__":
