@@ -41,7 +41,7 @@ export function AreaPicker({
         value={wiw}
         onChange={(e) => setWiw(e.target.value)}
         disabled={!sd}
-        className="min-w-44 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm disabled:opacity-50"
+        className="min-w-40 rounded-md border border-line bg-card px-3 py-2 text-sm disabled:opacity-50"
       >
         <option value="">{sd ? `${sd} 전체` : "시·군·구 선택"}</option>
         {wiws.map((w) => (
