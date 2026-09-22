@@ -78,6 +78,17 @@ export const hasBills = (s?: Pick<MemberStats, "rep_count" | "co_count" | "vote_
 
 export const hasPledges = (s?: Pick<MemberStats, "pledge_count">) => !!s && s.pledge_count > 0;
 
+/** 본회의 표결 참여율. 표결 기록이 아예 없으면 null 이다 — 0% 가 아니다.
+ *
+ *  임기 중 재보궐·승계로 들어온 의원은 국회 표결 API 의 명부에 아예 없다. 실측:
+ *  한 법안의 표결 명부가 개원 때 300명에서 283명까지 줄기만 하고, 새로 들어온
+ *  사람은 추가되지 않는다. 그래서 이 값은 채울 수가 없다.
+ *
+ *  그걸 0% 로 보이면 '한 번도 본회의에 안 나왔다' 로 읽힌다. 실제로 그 사람들은
+ *  법안 발의는 수십~수백 건씩 하고 있다. 모르는 건 모른다고 적는다. */
+export const attendRate = (s?: Pick<MemberStats, "vote_total" | "vote_absent">) =>
+  s && s.vote_total > 0 ? pct(s.vote_total - s.vote_absent, s.vote_total) : null;
+
 export type Bill = {
   bill_id: string;
   bill_no: string | null;

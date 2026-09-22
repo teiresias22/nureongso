@@ -29,7 +29,9 @@ export default async function Image({ params }: { params: Promise<{ code: string
     ? [
         ["대표발의", `${s.rep_count.toLocaleString()}건`],
         ["공동발의", `${s.co_count.toLocaleString()}건`],
-        ["표결 참여", `${pct(s.vote_total - s.vote_absent, s.vote_total)}%`],
+        s.vote_total > 0
+          ? ["표결 참여", `${pct(s.vote_total - s.vote_absent, s.vote_total)}%`]
+          : ["대표발의 가결", `${s.rep_passed.toLocaleString()}건`],
       ]
     : [
         ["공약", `${s?.pledge_count.toLocaleString() ?? 0}건`],

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  db, hasBills, lastPart, partyColor, pct,
+  attendRate, db, hasBills, lastPart, partyColor, pct,
   type Member, type MemberStats,
 } from "@/lib/db";
 
@@ -27,8 +27,10 @@ const ROWS: {
     note: "남의 법안에 이름을 올린 것" },
   { label: "대표발의 가결", get: (s) => s.rep_passed,
     fmt: (n, s) => `${n}건 (${pct(n, s.rep_count)}%)` },
-  { label: "본회의 표결 참여", get: (s) => (s.vote_total ? (s.vote_total - s.vote_absent) / s.vote_total : 0),
-    fmt: (_, s) => `${pct(s.vote_total - s.vote_absent, s.vote_total)}%` },
+  // 표결 기록이 없는 사람(임기 중 들어온 의원)을 0% 로 두면 비교에서 꼴찌로 진다.
+  { label: "본회의 표결 참여",
+    get: (s) => attendRate(s) ?? -1,
+    fmt: (_, s) => (attendRate(s) == null ? "기록 없음" : `${attendRate(s)}%`) },
   { label: "공약", get: (s) => s.pledge_count, fmt: (n) => `${n.toLocaleString()}건` },
   { label: "법률로 재는 공약", get: (s) => s.pledge_law,
     fmt: (n, s) => (n ? `${n}건 중 발의 ${s.pledge_law_filed} · 통과 ${s.pledge_law_passed}` : "—"),

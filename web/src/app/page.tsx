@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
-  db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termLabel,
+  attendRate, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termLabel,
   type Member, type MemberStats, type OfficeTerm,
 } from "@/lib/db";
 
@@ -175,7 +175,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                         <span>
                           표결참여{" "}
                           <b className="text-foreground">
-                            {pct((s?.vote_total ?? 0) - (s?.vote_absent ?? 0), s?.vote_total ?? 0)}%
+                            {attendRate(s) == null ? "기록 없음" : `${attendRate(s)}%`}
                           </b>
                         </span>
                       </>

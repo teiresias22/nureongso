@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Photo } from "../page";
 import {
-  db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
+  attendRate, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type Member, type MemberStats,
 } from "@/lib/db";
 
@@ -175,7 +175,9 @@ function Card({ m, s }: { m: Member; s?: MemberStats }) {
               </span>
               <span>
                 표결참여{" "}
-                <b className="text-foreground">{pct(s!.vote_total - s!.vote_absent, s!.vote_total)}%</b>
+                <b className="text-foreground">
+                  {attendRate(s) == null ? "기록 없음" : `${attendRate(s)}%`}
+                </b>
               </span>
             </>
           ) : hasPledges(s) ? (

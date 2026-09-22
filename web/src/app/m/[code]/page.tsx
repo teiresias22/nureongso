@@ -294,12 +294,16 @@ export default async function MemberPage({
               unit="%"
               sub={`가결 ${s.rep_passed} · 계류 ${s.rep_pending}`}
             />
-            <Stat
-              label="본회의 표결 참여"
-              value={pct(attended, s.vote_total)}
-              unit="%"
-              sub={`${attended}/${s.vote_total}회`}
-            />
+            {/* 표결 기록이 없으면 칸을 비운다. 0% 로 두면 '한 번도 안 나왔다' 로
+                읽히는데, 임기 중 들어온 의원은 국회 표결 API 명부에 아예 없다. */}
+            {s.vote_total > 0 && (
+              <Stat
+                label="본회의 표결 참여"
+                value={pct(attended, s.vote_total)}
+                unit="%"
+                sub={`${attended}/${s.vote_total}회`}
+              />
+            )}
           </>
         )}
       </section>
