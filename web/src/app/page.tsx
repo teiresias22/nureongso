@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
-  attendRate, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termLabel,
+  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termLabel,
   type CardStats, type Member, type OfficeTerm,
 } from "@/lib/db";
 
@@ -223,7 +223,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     {(m.office ?? "국회의원") === "국회의원" && (
                       <ElectBadge type={m.elect_type} />
                     )}
-                    <span className="ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted">
+                    <span className={`ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium ${officeBadge(m.office)}`}>
                       {m.office ?? "국회의원"}
                     </span>
                   </div>

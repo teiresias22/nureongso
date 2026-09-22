@@ -114,6 +114,17 @@ export type Bill = {
   detail_link: string | null;
 };
 
+/** 직위 배지 색. 목록에 네 직위가 섞여 있어 글씨만으로는 한눈에 안 갈린다.
+ *  정당색은 카드 왼쪽 막대가 이미 쓰고 있으므로 여기는 옅은 배경으로만 구분한다. */
+export const OFFICE_BADGE: Record<string, string> = {
+  국회의원: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  시도지사: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  구시군의장: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  교육감: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+};
+export const officeBadge = (office?: string | null) =>
+  OFFICE_BADGE[office ?? "국회의원"] ?? "border-line text-muted";
+
 export const PARTY_COLORS: Record<string, string> = {
   더불어민주당: "#152484",
   국민의힘: "#E61E2B",

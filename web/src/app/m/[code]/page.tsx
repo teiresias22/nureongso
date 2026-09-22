@@ -8,7 +8,7 @@ import {
   type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm, type Rival,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
-import { ShareButton } from "./share";
+import { CompareButton, ShareButton } from "./actions";
 
 export const revalidate = 3600;
 
@@ -202,12 +202,7 @@ export default async function MemberPage({
         </Link>
         <div className="ml-auto flex gap-1.5">
           <ShareButton title={`${m.name} · ${m.office ?? "국회의원"}`} />
-          <Link
-            href={`/compare?a=${code}`}
-            className="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-muted hover:text-foreground"
-          >
-            비교에 추가
-          </Link>
+          <CompareButton code={code} name={m.name} />
         </div>
       </div>
 

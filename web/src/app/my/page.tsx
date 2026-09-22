@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Photo } from "../page";
 import {
-  attendRate, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
+  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type CardStats, type Member,
 } from "@/lib/db";
 
@@ -181,7 +181,7 @@ function Card({ m, s }: { m: Member; s?: CardStats }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="whitespace-nowrap font-semibold">{m.name}</span>
-          <span className="ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted">
+          <span className={`ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium ${officeBadge(m.office)}`}>
             {m.office ?? "국회의원"}
           </span>
         </div>
