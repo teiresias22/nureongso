@@ -5,7 +5,8 @@ import { notFound } from "next/navigation";
 import {
   db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText,
-  type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm, type Rival,
+  type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
+  type Ordinance, type Rival,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -160,6 +161,24 @@ export default async function MemberPage({
       .filter((r) => r.election_id === c.election_id && r.sg_typecode === c.sg_typecode
                      && r.sd_name === c.sd_name && r.district === c.district && r.id !== c.id)
       .sort((a, b) => Number(b.elected) - Number(a.elected) || (a.giho ?? "").localeCompare(b.giho ?? ""));
+  // 근거로 붙은 조례의 이름과 원문 주소. 법안은 우리 안에 /bill/[id] 페이지가 있지만
+  // 조례는 없으므로 국가법령정보센터 원문으로 직접 보낸다.
+  const ordinIds = [
+    ...new Set(
+      (pledges ?? []).flatMap((p) =>
+        ((p.pledge_evidence ?? []) as unknown as { kind: string; ref_id: string }[])
+          .filter((e) => e.kind === "ordin")
+          .map((e) => e.ref_id),
+      ),
+    ),
+  ];
+  const { data: ordinRows } = ordinIds.length
+    ? await db.from("ordinance").select("id, name, rr_kind, effective_at, url").in("id", ordinIds)
+    : { data: [] };
+  const ordinBy = new Map(
+    (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
+  );
+
   const s: MemberStats = stats ?? {
     code,
     rep_count: 0, co_count: 0, rep_passed: 0, rep_pending: 0,
@@ -494,17 +513,32 @@ export default async function MemberPage({
                     }
                   >
                     <div className="space-y-1.5 px-4 pb-3 pl-[4.25rem] text-xs">
-                      {ev.map((e) => (
-                        <div key={e.ref_id}>
-                          <Link
-                            href={`/bill/${e.ref_id}`}
-                            className="text-foreground underline underline-offset-2"
-                          >
-                            근거 법안
-                          </Link>
-                          {e.summary && <span className="ml-1 text-muted">{e.summary}</span>}
-                        </div>
-                      ))}
+                      {ev.map((e) => {
+                        const o = e.kind === "ordin" ? ordinBy.get(e.ref_id) : undefined;
+                        return (
+                          <div key={`${e.kind}:${e.ref_id}`}>
+                            {o ? (
+                              <a
+                                href={o.url ?? "#"}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground underline underline-offset-2"
+                              >
+                                근거 조례 · {o.name}
+                                {o.rr_kind && ` (${o.rr_kind})`}
+                              </a>
+                            ) : (
+                              <Link
+                                href={`/bill/${e.ref_id}`}
+                                className="text-foreground underline underline-offset-2"
+                              >
+                                근거 법안
+                              </Link>
+                            )}
+                            {e.summary && <span className="ml-1 text-muted">{e.summary}</span>}
+                          </div>
+                        );
+                      })}
                       {p.body && <p className="whitespace-pre-wrap text-muted">{p.body}</p>}
                     </div>
                   </Fold>

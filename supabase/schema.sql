@@ -180,7 +180,7 @@ create table if not exists pledge_status (
 create table if not exists pledge_evidence (
   id         bigserial primary key,
   pledge_id  bigint references pledge(id) on delete cascade,
-  kind       text not null check (kind in ('bill','news','budget','manual')),
+  kind       text not null check (kind in ('bill','ordin','news','budget','manual')),
   ref_id     text,
   url        text,
   summary    text,
@@ -189,6 +189,24 @@ create table if not exists pledge_evidence (
 create index if not exists pledge_evidence_pledge_idx on pledge_evidence (pledge_id);
 create unique index if not exists pledge_evidence_key
   on pledge_evidence (pledge_id, kind, ref_id);
+
+-- 자치법규(조례·규칙). 조례제도형 공약의 근거다 — 법안이 입법형의 근거인 것과 같다.
+-- 전국 것을 통째로 받되 취임일 이후만 받는다. 전 기간을 받으면 40만 행이지만
+-- 임기 중 제·개정만 그 사람의 실적이고, 그건 4년에 20만 행 남짓이다.
+create table if not exists ordinance (
+  id            text primary key,       -- 자치법규일련번호 (본문 주소의 키)
+  ordin_id      text,                   -- 자치법규ID (개정돼도 유지되는 식별자)
+  name          text not null,
+  org           text,                   -- 지자체기관명 '서울특별시 강남구'
+  kind          text,                   -- 조례 / 규칙
+  rr_kind       text,                   -- 제정 / 일부개정 / 전부개정 / 폐지
+  effective_at  text,                   -- YYYYMMDD
+  announced_at  text,
+  url           text
+);
+create index if not exists ordinance_org_idx on ordinance (org);
+-- 공약 제목과 조례명을 유사도로 맞춘다. 이름이 짧고 문어체라 법안보다 잘 맞는다.
+create index if not exists ordinance_name_trgm on ordinance using gin (name gin_trgm_ops);
 
 -- 수집 로그
 create table if not exists ingest_run (
@@ -376,11 +394,12 @@ alter table pledge_status enable row level security;
 alter table pledge_evidence enable row level security;
 alter table election enable row level security;
 alter table sg_type enable row level security;
+alter table ordinance enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

@@ -70,18 +70,23 @@ export const KIND_LABEL: Record<string, string> = {
 export const NOTE_LABEL: Record<string, string> = {
   law_passed: "발의한 법안이 통과됐습니다",
   law_filed: "관련 법안을 발의했습니다",
-  law_none_2y: "임기 2년이 지났지만 관련 법안이 없습니다",
-  law_none_early: "관련 법안이 아직 없습니다 (임기 2년 미만)",
-  not_checked: "아직 법안을 대조하지 않았습니다",
+  ordin_enacted: "관련 조례가 제·개정됐습니다",
+  none_2y: "임기 2년이 지났지만 관련 기록이 없습니다",
+  none_early: "관련 기록이 아직 없습니다 (임기 2년 미만)",
+  not_checked: "아직 공식 기록과 대조하지 않았습니다",
 };
 
+/** judge.py 의 note 를 사람이 읽는 말로. 접두사가 붙는 두 가지는 따로 푼다. */
 export const noteText = (note?: string | null) => {
   if (!note) return "";
-  if (note.startsWith("no_measure:")) {
-    // judge.py 는 유형을 '+' 로 이어 붙인다. 예: no_measure:예산사업+조례제도
-    const kinds = note.slice(11).split("+").map((k) => KIND_LABEL[k] ?? k).join(", ");
-    return `법안으로는 확인할 수 없는 유형입니다 (${kinds})`;
-  }
+  // judge.py 는 유형을 '+' 로 이어 붙인다. 예: no_measure:예산사업+조례제도
+  const kinds = (s: string) => s.split("+").map((k) => KIND_LABEL[k] ?? k).join(", ");
+  if (note.startsWith("no_measure:"))
+    return `아직 확인할 수단이 없는 유형입니다 (${kinds(note.slice(11))})`;
+  // 잴 수 있는 쪽은 이뤄졌지만 못 재는 유형이 남아 있는 공약. 이걸 '완료' 로 적으면
+  // 법 개정만 통과된 공약이 복지관까지 지어진 것처럼 읽힌다.
+  if (note.startsWith("partial:"))
+    return `확인된 부분은 이뤄졌지만 나머지는 확인할 수단이 없습니다 (${kinds(note.slice(8))})`;
   return NOTE_LABEL[note] ?? note;
 };
 
@@ -239,3 +244,13 @@ export const termText = (
 
 /** 선거ID(YYYYMMDD) → '2026' */
 export const electionYear = (id?: string | null) => (id ? id.slice(0, 4) : "");
+
+/** 자치법규(조례·규칙). 조례제도형 공약의 근거다.
+ *  본문은 우리가 갖고 있지 않으므로 url 로 국가법령정보센터에 보낸다. */
+export type Ordinance = {
+  id: string;
+  name: string;
+  rr_kind: string | null;
+  effective_at: string | null;
+  url: string | null;
+};

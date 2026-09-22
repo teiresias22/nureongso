@@ -3,12 +3,18 @@
 
 이행 여부는 어느 기관도 공식 제공하지 않는다. 그래서 '사실' 과 '해석' 을 분리한다.
 
-  classify  공약마다 무엇으로 이행을 확인할 수 있는지 유형을 붙인다 (LLM)
-  match     입법형 공약을 본인 대표발의 법안과 대조해 근거를 붙인다 (LLM)
-  decide    근거를 보고 규칙표대로 판정한다 (LLM 없음, 몇 번 돌려도 같은 결과)
+  classify     공약마다 무엇으로 이행을 확인할 수 있는지 유형을 붙인다 (LLM)
+  match        입법형 공약을 본인 대표발의 법안과 대조해 근거를 붙인다 (LLM)
+  match_ordin  조례제도형 공약을 그 지자체 자치법규와 대조한다 (LLM, 단체장·교육감)
+  decide       근거를 보고 규칙표대로 판정한다 (LLM 없음, 몇 번 돌려도 같은 결과)
 
-실측: 국회의원 공약의 10%만 입법형이고 60%는 지역 사업이다. 사업형은 이번 단계에서
-측정하지 않고 '측정 수단 없음' 으로 남긴다. 억지로 판정하는 쪽이 더 해롭다.
+LLM 은 '이 공약과 이 기록이 같은 일인가' 만 판단한다. '이행됐다' 는 말은 decide 의
+규칙표가 하고, 그건 SQL 이라 몇 번을 돌려도 같은 답이 나온다.
+
+실측: 국회의원 공약의 10%만 입법형이고 60%는 지역 사업이다. 사업형은 아직 측정
+수단이 없어 '측정 수단 없음' 으로 남긴다. 억지로 판정하는 쪽이 더 해롭다.
+
+match_ordin 은 ordin.py 로 자치법규를 먼저 받아 둬야 한다.
 
 사용:
     python judge.py classify --limit 5    # 먼저 소량으로 품질 확인
@@ -31,8 +37,9 @@ import llm
 # 공약을 무엇으로 잴 수 있는가. 이 다섯 가지 외에는 받지 않는다.
 KINDS = ["입법", "예산사업", "조례제도", "선언", "기타"]
 
-# 22대 국회 임기 시작. '아직 안 했다' 와 '이제 시작했다' 를 가르는 기준일.
-TERM_START = "2024-05-30"
+# 임기 시작일. '아직 안 했다' 와 '이제 시작했다' 를 가르는 기준일이라 직위별로 다르다.
+MP_TERM_START = "2024-05-30"      # 제22대 국회 개원
+HEAD_TERM_START = "2026-07-01"    # 제9회 지방선거 당선자 취임
 GRACE_YEARS = 2
 
 CLASSIFY_SCHEMA = {
@@ -281,49 +288,294 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
     print(f"[match] 의원 {done}명, 공약-법안 연결 {linked}건", file=sys.stderr)
 
 
+# --------------------------------------------------------------------------- match_ordin
+
+ORDIN_PROMPT = """어떤 지방자치단체장(또는 교육감)의 '조례·제도형 공약' 목록과, 그 지자체가
+**취임 이후 제정·개정한 자치법규** 후보 목록이다. 각 공약을 이행한 것으로 보이는
+자치법규를 찾아 연결하라.
+
+규칙:
+- 반드시 아래 목록에 있는 ordin_id 만 쓴다. 없는 id 를 지어내지 마라.
+- 공약과 조례가 **같은 대상에게 같은 일을 하는 것**일 때만 연결한다. 분야가 같다는
+  이유로 연결하지 마라. (공약 '청년 월세 지원' ↔ 조례 '청년 기본 조례' 는 다르다)
+- 이름이 비슷하다고 붙이지 마라. 후보는 글자 유사도로 뽑은 것이라 무관한 게 섞여 있다.
+- 맞는 조례가 없으면 그 공약은 빼라. **없는 것을 억지로 붙이는 쪽이 빠뜨리는 쪽보다
+  훨씬 해롭다.** 대부분의 공약은 맞는 조례가 없는 것이 정상이다.
+- confidence 는 0~1. 조례명만으로 판단하므로 확신이 없으면 낮게 준다.
+- why 는 왜 연결했는지 한 줄 (40자 이내).
+
+공약:
+{pledges}
+
+자치법규 후보:
+{ordins}"""
+
+ORDIN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "matches": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pledge_id": {"type": "integer"},
+                    "ordin_id": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "why": {"type": "string"},
+                },
+                "required": ["pledge_id", "ordin_id", "confidence"],
+            },
+        }
+    },
+    "required": ["matches"],
+}
+
+# 후보를 뽑는 문턱과 개수.
+#
+# similarity() 가 아니라 word_similarity() 를 쓴다. 조례명은 '김해시 민생지원금 지원
+# 조례' 처럼 지자체명과 '조례' 가 붙어 있고 공약 제목은 '전 시민 대상 민생지원금 지급'
+# 이라 문자열 전체를 비교하면 겹치는 부분이 묻힌다. 실측으로 후보가 잡힌 공약이
+# similarity 로는 884건 중 32건뿐인데 word_similarity 로는 234건이다.
+#
+# 문턱이 낮아 무관한 것이 잔뜩 섞여 온다 ('평등하고 존중받는 도시 조성' ↔ '생활임금'
+# 이 0.80 으로 나온다). 걸러내는 건 LLM 의 몫이고, 여기는 놓치지 않는 것만 한다.
+ORDIN_SIM = 0.3
+ORDIN_TOP = 40
+# 조례명에서 지자체 접두사와 '조례/규칙' 꼬리를 뗀 알맹이. 이걸로 비교해야 맞는다.
+ORDIN_CORE = (r"regexp_replace(regexp_replace(o.name, '^'||o.org||'\s*', ''),"
+              r" '\s*(조례|규칙)(\s*시행규칙)?$', '')")
+
+
+# 선관위 시도명 → 법제처 지자체기관명. 선관위 기록은 선거 당시 이름으로 남아 있어서
+# 통합·개칭이 반영되지 않는다. 지금은 전남·광주 통합 하나뿐이지만, 강원도가
+# 강원특별자치도가 됐듯 또 생긴다. 못 찾은 지자체는 조용히 버리지 말고 경고한다.
+SIDO_ALIAS = {
+    "광주광역시": "전남광주통합특별시",
+    "전라남도": "전남광주통합특별시",
+}
+
+
+def ordin_org(office: str, sd_name: str, district: str) -> str:
+    """이 사람의 조례를 찾을 '지자체기관명'.
+
+    구시군의장은 시도 + 시군구 다 있어야 한다 — '남구' 는 네 곳이다. 그 시군구 이름은
+    member_area 의 wiw_name 이 아니라 candidacy.district 를 쓴다. wiw_name 은 선거관리
+    위원회가 맡은 구역이라 '고양시덕양구' 처럼 조례를 만들 수 없는 행정구가 들어온다
+    (실측: 243곳 중 43곳이 이래서 안 맞았다).
+
+    교육감의 조례는 지자체가 아니라 교육청이 만든다 ('서울특별시교육청 ○○ 조례').
+    """
+    sido = SIDO_ALIAS.get(sd_name, sd_name)
+    if office == "구시군의장":
+        return f"{sido} {district}"
+    if office == "교육감":
+        return f"{sido}교육청"
+    return sido
+
+
+def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
+    """조례제도형 공약 ↔ 그 지자체가 취임 후 제·개정한 자치법규.
+
+    국회의원은 대상이 아니다. 의원은 조례를 만들 수 없다 — 의원의 조례제도형 공약
+    554건은 애초에 잴 수단이 없는 것이고, 그걸 남의 지자체 조례로 채우면 거짓이 된다.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select p.member_code, a.office, a.sd_name,
+                   (select c.district from candidacy c
+                     where c.member_code = p.member_code and c.elected
+                       and c.office = a.office
+                     order by c.election_id desc limit 1) as district,
+                   count(*)
+            from pledge p
+            join member_area a on a.member_code = p.member_code
+            where '조례제도' = any(p.kinds)
+              and a.office <> '국회의원'
+              %s
+            group by 1, 2, 3, 4 order by 5 desc
+            """ % ("" if redo else
+                   "and not exists (select 1 from ingest_run r"
+                   " where r.source = 'ordin:' || p.member_code)")
+        )
+        rows = cur.fetchall()
+        cur.execute("select distinct org from ordinance")
+        known = {o for (o,) in cur.fetchall()}
+
+    targets, missing = [], []
+    for mcode, office, sd, district, n in rows:
+        org = ordin_org(office, sd, district or "")
+        (targets if org in known else missing).append((mcode, org, n))
+    if missing:
+        # 조례가 한 건도 없는 지자체는 실제로 있을 수 있다(취임 직후). 그래도 이름이
+        # 틀려서 못 찾는 것과 구별이 안 되므로 반드시 눈에 보이게 적는다.
+        print(f"  ! 자치법규에서 못 찾은 지자체 {len(missing)}곳:"
+              f" {', '.join(o for _, o, _ in missing[:8])}"
+              f"{' …' if len(missing) > 8 else ''}", file=sys.stderr)
+    if limit:
+        targets = targets[:limit]
+    print(f"  대상 {len(targets)}명", file=sys.stderr)
+
+    done = linked = 0
+    for i, (mcode, org, n) in enumerate(targets, 1):
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id, title, coalesce(body,'') from pledge"
+                " where member_code = %s and '조례제도' = any(kinds) order by id", (mcode,))
+            pledges = cur.fetchall()
+            # 그 지자체 것만, 공약 제목과 글자가 겹치는 순으로. 조례 전체를 넘기면
+            # 한 지자체에 수백 건이라 프롬프트가 감당이 안 된다.
+            cur.execute(
+                "select o.id, o.name, o.rr_kind, o.effective_at,"
+                "       max(word_similarity(" + ORDIN_CORE + ","
+                "           p.title || ' ' || coalesce(p.body,''))) as sim"
+                " from ordinance o, pledge p"
+                " where o.org = %s and p.member_code = %s"
+                "   and '조례제도' = any(p.kinds)"
+                "   and word_similarity(" + ORDIN_CORE + ","
+                "       p.title || ' ' || coalesce(p.body,'')) > %s"
+                " group by o.id, o.name, o.rr_kind, o.effective_at"
+                " order by sim desc limit %s",
+                (org, mcode, ORDIN_SIM, ORDIN_TOP))
+            ordins = cur.fetchall()
+        if not pledges or not ordins:
+            # 후보가 없으면 '안 돌린 것' 이 아니라 '돌렸는데 없는 것' 이다. 기록을
+            # 남겨야 판정에서 '미착수' 로 갈 수 있다.
+            with conn.cursor() as cur:
+                cur.execute("insert into ingest_run (source, finished_at, rows)"
+                            " values ('ordin:' || %s, now(), 0)", (mcode,))
+            conn.commit()
+            continue
+
+        try:
+            out = llm.complete_json(
+                ORDIN_PROMPT.format(
+                    pledges="\n".join(f"{p}. {t} / {b[:150]}" for p, t, b in pledges),
+                    ordins="\n".join(f"{oid} | {nm} | {rr} | {ef}"
+                                     for oid, nm, rr, ef, _ in ordins),
+                ), ORDIN_SCHEMA)
+        except llm.QuotaExhausted as e:
+            print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  {len(targets) - i + 1}명이 남았습니다.", file=sys.stderr)
+            break
+        except llm.LLMError as e:
+            print(f"  [{i}/{len(targets)}] {mcode} 실패: {str(e)[:120]}", file=sys.stderr)
+            continue
+
+        pids = {p for p, _, _ in pledges}
+        oids = {o for o, _, _, _, _ in ordins}
+        rows = [
+            (m["pledge_id"], "ordin", m["ordin_id"],
+             float(m.get("confidence") or 0), (m.get("why") or "")[:300])
+            for m in out.get("matches", [])
+            if m.get("pledge_id") in pids and m.get("ordin_id") in oids
+        ]
+        with conn.cursor() as cur:
+            cur.executemany(
+                "insert into pledge_evidence (pledge_id, kind, ref_id, score, summary)"
+                " values (%s,%s,%s,%s,%s)"
+                " on conflict (pledge_id, kind, ref_id) do update set"
+                "   score = excluded.score, summary = excluded.summary", rows)
+            cur.execute(
+                "insert into ingest_run (source, finished_at, rows)"
+                " values ('ordin:' || %s, now(), %s)", (mcode, len(rows)))
+        conn.commit()
+        done += 1
+        linked += len(rows)
+        if i % 20 == 0 or i == len(targets):
+            print(f"  [{i}/{len(targets)}] {done}명 근거 {linked}건", file=sys.stderr)
+
+    print(f"[match_ordin] {done}명, 공약-조례 연결 {linked}건", file=sys.stderr)
+
+
 # --------------------------------------------------------------------------- decide
 
 # 판정 규칙. 서비스에 그대로 공개한다. 사람 판단이 아니라 표를 따르므로 재현 가능하다.
+#
+# 잴 수 있는 유형은 둘뿐이다:
+#   입법      — 본인 대표발의 법안 (누구나)
+#   조례제도  — 그 지자체가 취임 후 제·개정한 자치법규 (단체장·교육감만.
+#               국회의원은 조례를 만들 수 없으므로 의원의 조례제도형은 계속 판단불가다)
+# 예산사업·선언·기타는 아직 수단이 없다.
+#
+# 한 공약에 유형이 섞여 있고 잴 수 없는 쪽이 남아 있으면 '완료' 라고 하지 않는다.
+# '노인복지 확대 — 노인복지법 개정, 복지관 건립' 에서 법 개정이 통과됐다고 복지관이
+# 지어진 건 아니다. 이런 건 '진행' 까지만 간다.
 DECIDE_SQL = """
 with ev as (
   select e.pledge_id,
          max(e.score) as conf,
          -- psycopg 는 주석까지 훑어 퍼센트 기호를 파라미터로 본다. 리터럴은 두 번 써야 한다.
-         bool_or(b.proc_result like '%%가결%%') as passed,
-         count(*) as n
+         bool_or(e.kind = 'bill' and b.proc_result like '%%가결%%') as law_passed,
+         count(*) filter (where e.kind = 'bill')  as law_n,
+         count(*) filter (where e.kind = 'ordin') as ordin_n
   from pledge_evidence e
-  join bill b on b.bill_id = e.ref_id
-  where e.kind = 'bill'
+  left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
+  where e.kind in ('bill', 'ordin')
   group by e.pledge_id
 ),
+base as (
+  select p.id as pledge_id, p.kinds, ev.conf,
+         coalesce(ev.law_passed, false) as law_passed,
+         coalesce(ev.law_n, 0)   as law_n,
+         coalesce(ev.ordin_n, 0) as ordin_n,
+         coalesce(m.office, '국회의원') as office,
+         -- 임기 시작일. 국회의원과 단체장은 선거도 취임도 다른 날이다.
+         case when coalesce(m.office,'국회의원') = '국회의원'
+              then %(mp_start)s::date else %(head_start)s::date end as term_start,
+         -- 잴 수 있는 유형 / 잴 수 없는 유형
+         array(select k from unnest(p.kinds) k
+                where k = '입법'
+                   or (k = '조례제도' and coalesce(m.office,'국회의원') <> '국회의원')
+              ) as measurable,
+         array(select k from unnest(p.kinds) k
+                where k <> '입법'
+                  and not (k = '조례제도' and coalesce(m.office,'국회의원') <> '국회의원')
+              ) as unmeasurable,
+         exists (select 1 from ingest_run r
+                  where r.source = 'match:' || p.member_code) as law_checked,
+         exists (select 1 from ingest_run r
+                  where r.source = 'ordin:' || p.member_code) as ordin_checked
+  from pledge p
+  left join ev on ev.pledge_id = p.id
+  left join member m on m.code = p.member_code
+  where p.kinds is not null
+),
+flag as (
+  select b.*,
+    -- 이 공약에 필요한 대조를 다 돌렸는가. 안 돌렸으면 '없다' 고 말할 수 없다.
+    (not ('입법' = any(b.measurable)) or b.law_checked)
+    and (not ('조례제도' = any(b.measurable)) or b.ordin_checked) as checked,
+    -- 잴 수 있는 쪽에서 실제로 이뤄진 증거가 나왔는가
+    (b.law_passed or b.ordin_n > 0) as achieved,
+    b.term_start + (%(grace)s || ' years')::interval < now() as past_grace
+  from base b
+),
 judged as (
-  select p.id as pledge_id,
+  select pledge_id,
     case
-      when not ('입법' = any(p.kinds)) then '판단불가'
-      when ev.passed             then '완료'
-      when ev.n > 0              then '진행'
-      -- 법안을 찾아보지도 않았으면 '없다' 고 말할 수 없다. 매칭을 돌린 의원만 판정한다.
-      when not matched.ok        then '판단불가'
-      when %(start)s::date + (%(grace)s || ' years')::interval < now() then '미착수'
+      when cardinality(measurable) = 0    then '판단불가'
+      when achieved and cardinality(unmeasurable) = 0 then '완료'
+      when achieved                       then '진행'
+      when law_n > 0                      then '진행'
+      when not checked                    then '판단불가'
+      when past_grace                     then '미착수'
       else '판단불가'
     end as status,
     case
-      when not ('입법' = any(p.kinds))
-                                 then 'no_measure:' || array_to_string(p.kinds, '+')
-      when ev.passed             then 'law_passed'
-      when ev.n > 0              then 'law_filed'
-      when not matched.ok        then 'not_checked'
-      when %(start)s::date + (%(grace)s || ' years')::interval < now() then 'law_none_2y'
-      else 'law_none_early'
+      when cardinality(measurable) = 0
+           then 'no_measure:' || array_to_string(kinds, '+')
+      when achieved and cardinality(unmeasurable) > 0
+           then 'partial:' || array_to_string(unmeasurable, '+')
+      when ordin_n > 0                    then 'ordin_enacted'
+      when law_passed                     then 'law_passed'
+      when law_n > 0                      then 'law_filed'
+      when not checked                    then 'not_checked'
+      when past_grace                     then 'none_2y'
+      else 'none_early'
     end as note,
-    ev.conf
-  from pledge p
-  left join ev on ev.pledge_id = p.id
-  cross join lateral (
-    select exists (select 1 from ingest_run r
-                    where r.source = 'match:' || p.member_code) as ok
-  ) matched
-  where p.kinds is not null
+    conf
+  from flag
 )
 insert into pledge_status (pledge_id, status, confidence, decided_by, note, updated_at)
 select pledge_id, status, conf, 'auto', note, now() from judged
@@ -337,7 +589,9 @@ where pledge_status.decided_by = 'auto'
 
 def run_decide(conn) -> None:
     with conn.cursor() as cur:
-        cur.execute(DECIDE_SQL, {"start": TERM_START, "grace": GRACE_YEARS})
+        cur.execute(DECIDE_SQL, {"mp_start": MP_TERM_START,
+                                 "head_start": HEAD_TERM_START,
+                                 "grace": GRACE_YEARS})
         n = cur.rowcount
         cur.execute("refresh materialized view concurrently member_stats")
     conn.commit()
@@ -351,7 +605,8 @@ def run_decide(conn) -> None:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("step", choices=["classify", "match", "decide", "all"])
+    p.add_argument(
+        "step", choices=["classify", "match", "match_ordin", "decide", "all"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--redo", action="store_true")
     a = p.parse_args()
@@ -364,6 +619,8 @@ def main():
             run_classify(conn, a.limit, a.redo)
         if a.step in ("match", "all"):
             run_match(conn, a.limit, a.redo)
+        if a.step in ("match_ordin", "all"):
+            run_match_ordin(conn, a.limit, a.redo)
         if a.step in ("decide", "all"):
             run_decide(conn)
 
