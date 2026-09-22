@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
-  partyColor, pct, shortDistrict, termLabel,
+  partyColor, pct, shortDistrict, termText,
   type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm, type Rival,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
@@ -243,13 +243,11 @@ export default async function MemberPage({
               m.office,
               lastPart(m.party),
               lastPart(m.district),
-              // 국회 선수는 국회의원일 때만. 단체장에게 붙으면 그 직위의 선수로 오해된다.
-              isMP
-                ? m.term_count && m.terms
-                  ? `${m.term_count} (${m.terms})`
-                  : m.term_count
-                : // 단체장·교육감은 국회 선수가 없다. 그 직위로 몇 번 당선됐는지를 센다.
-                  termLabel(term?.wins),
+              // 국회의원은 국회 선수와 대수를, 단체장·교육감은 '그 직위 선수 ·
+              // 국회 N선' 을 적는다. 어느 쪽이든 하나만 적으면 반쪽이 된다.
+              isMP && m.term_count && m.terms
+                ? `${m.term_count} (${m.terms})`
+                : termText(m.office, term?.wins, m.term_count),
             ]
               .filter(Boolean)
               .join(" · ")}

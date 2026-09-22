@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
-  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termLabel,
+  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termText,
   type CardStats, type Member, type OfficeTerm,
 } from "@/lib/db";
 
@@ -231,11 +231,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                     {[
                       lastPart(m.party),
                       shortDistrict(m.district),
-                      // 국회 선수(term_count)는 국회 대수 기준이라 단체장에게 붙이면
-                      // 오해를 준다. 오세훈은 16대 의원 '초선' 이지만 서울시장 5선이다.
-                      (m.office ?? "국회의원") === "국회의원"
-                        ? m.term_count
-                        : termLabel(termBy.get(`${m.code}|${m.office}`)?.wins),
+                      // 단체장은 '그 직위 선수 · 국회 N선' 을 같이 적는다. 하나만
+                      // 적으면 오세훈(시장 5선·국회 초선)이든 추미애(도지사 초선·
+                      // 국회 6선)든 한쪽이 통째로 사라진다.
+                      termText(m.office, termBy.get(`${m.code}|${m.office}`)?.wins, m.term_count),
                     ]
                       .filter(Boolean)
                       .join(" · ")}

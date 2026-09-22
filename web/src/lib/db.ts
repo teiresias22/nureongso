@@ -221,5 +221,21 @@ export type OfficeTerm = {
 export const termLabel = (n?: number | null) =>
   !n ? "" : n === 1 ? "초선" : n === 2 ? "재선" : `${n}선`;
 
+/** 선수 표기. 단체장·교육감은 두 개를 같이 적어야 뜻이 맞는다.
+ *
+ *  하나만 적으면 양쪽으로 틀린다. 국회 선수만 보이면 서울시장 5선인 오세훈이
+ *  '초선'(16대 의원) 이 되고, 현재 직위 선수만 보이면 경기도지사 초선인 추미애가
+ *  국회 6선이라는 사실이 사라진다. 해당자가 현직 20명이다.
+ *
+ *  국회의원은 국회 선수 하나면 된다 — 지금 직위가 곧 국회의원이다. */
+export const termText = (
+  office: string | null | undefined,
+  wins?: number | null,
+  mpCount?: string | null,
+) =>
+  (office ?? "국회의원") === "국회의원"
+    ? mpCount ?? ""
+    : [termLabel(wins), mpCount && `국회 ${mpCount}`].filter(Boolean).join(" · ");
+
 /** 선거ID(YYYYMMDD) → '2026' */
 export const electionYear = (id?: string | null) => (id ? id.slice(0, 4) : "");
