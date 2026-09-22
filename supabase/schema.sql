@@ -180,7 +180,7 @@ create table if not exists pledge_status (
 create table if not exists pledge_evidence (
   id         bigserial primary key,
   pledge_id  bigint references pledge(id) on delete cascade,
-  kind       text not null check (kind in ('bill','ordin','news','budget','manual')),
+  kind       text not null check (kind in ('bill','ordin','bid','news','budget','manual')),
   ref_id     text,
   url        text,
   summary    text,
@@ -221,6 +221,28 @@ create table if not exists ordinance (
 create index if not exists ordinance_org_idx on ordinance (org);
 -- 공약 제목과 조례명을 유사도로 맞춘다. 이름이 짧고 문어체라 법안보다 잘 맞는다.
 create index if not exists ordinance_name_trgm on ordinance using gin (name gin_trgm_ops);
+
+-- 나라장터 공사 입찰공고. 예산사업형 공약의 근거다.
+--
+-- 발주는 '그 사업이 진행됐다' 는 사실이지 '이 사람이 해냈다' 가 아니다. 국회의원에게는
+-- 예산 편성권이 없고, 단체장 공약도 전임자가 이미 추진하던 사업일 수 있다. 그래서
+-- 화면 문구는 '사업 진행 상태' 이고, 판정에서 이 근거는 '완료' 를 만들지 않는다.
+--
+-- 예산 1억 이상, 우리가 다루는 지자체 발주만 담는다. 하한 없이 전국을 다 받으면
+-- 4년에 27만 행이다 (실측 추산). budget_biz 를 163MB 때문에 뺀 적이 있어 미리 자른다.
+create table if not exists bid_notice (
+  id          text primary key,      -- 공고번호-차수
+  name        text not null,         -- 공고명
+  org         text,                  -- 이 사업의 주인으로 본 지자체 (수요/공고 중 하나)
+  demand_org  text,                  -- 수요기관
+  notice_org  text,                  -- 공고기관
+  notice_at   date,
+  budget      bigint,                -- 예산금액(원)
+  region      text,                  -- 공사현장 지역
+  url         text                   -- 나라장터 공고 원문
+);
+create index if not exists bid_notice_org_idx on bid_notice (org);
+create index if not exists bid_notice_name_trgm on bid_notice using gin (name gin_trgm_ops);
 
 -- 수집 로그
 create table if not exists ingest_run (
@@ -423,11 +445,12 @@ alter table pledge_evidence enable row level security;
 alter table election enable row level security;
 alter table sg_type enable row level security;
 alter table ordinance enable row level security;
+alter table bid_notice enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

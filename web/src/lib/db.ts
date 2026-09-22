@@ -71,6 +71,7 @@ export const NOTE_LABEL: Record<string, string> = {
   law_passed: "발의한 법안이 통과됐습니다",
   law_filed: "관련 법안을 발의했습니다",
   ordin_enacted: "관련 조례가 제·개정됐습니다",
+  bid_ordered: "관련 공사가 발주됐습니다 (준공 여부는 확인할 수 없습니다)",
   none_2y: "임기 2년이 지났지만 관련 기록이 없습니다",
   none_early: "관련 기록이 아직 없습니다 (임기 2년 미만)",
   not_checked: "아직 공식 기록과 대조하지 않았습니다",
@@ -252,5 +253,16 @@ export type Ordinance = {
   name: string;
   rr_kind: string | null;
   effective_at: string | null;
+  url: string | null;
+};
+
+/** 나라장터 공사 입찰공고. 예산사업형 공약의 근거다.
+ *  '발주됐다' 까지만 말한다 — 준공을 확인할 공개 API 가 없고, 그 사업이 이 사람
+ *  덕이라는 증거도 아니다. 단체장은 전임자가 추진하던 사업을 이어받는다. */
+export type BidNotice = {
+  id: string;
+  name: string;
+  budget: number | null;
+  notice_at: string | null;
   url: string | null;
 };

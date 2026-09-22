@@ -6,7 +6,7 @@ import {
   db, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText,
   type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type Ordinance, type Rival,
+  type BidNotice, type Ordinance, type Rival,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -201,6 +201,19 @@ export default async function MemberPage({
   const ordinBy = new Map(
     (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
   );
+  const bidIds = [
+    ...new Set(
+      (pledges ?? []).flatMap((p) =>
+        ((p.pledge_evidence ?? []) as unknown as { kind: string; ref_id: string }[])
+          .filter((e) => e.kind === "bid")
+          .map((e) => e.ref_id),
+      ),
+    ),
+  ];
+  const { data: bidRows } = bidIds.length
+    ? await db.from("bid_notice").select("id, name, budget, notice_at, url").in("id", bidIds)
+    : { data: [] };
+  const bidBy = new Map((bidRows ?? []).map((b) => [b.id as string, b as BidNotice]));
   // 선거·출처마다 공보 PDF 가 하나씩이다. 공약마다 같은 주소를 붙이면 한 사람에게
   // 수십 번 반복되므로 구획 머리글에 한 번만 건다.
   const pdfBy = new Map(
@@ -558,9 +571,22 @@ export default async function MemberPage({
                     <div className="space-y-1.5 px-4 pb-3 pl-[4.25rem] text-xs">
                       {ev.map((e) => {
                         const o = e.kind === "ordin" ? ordinBy.get(e.ref_id) : undefined;
+                        const bd = e.kind === "bid" ? bidBy.get(e.ref_id) : undefined;
                         return (
                           <div key={`${e.kind}:${e.ref_id}`}>
-                            {o ? (
+                            {bd ? (
+                              <a
+                                href={bd.url ?? "#"}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground underline underline-offset-2"
+                              >
+                                발주 공고 · {bd.name}
+                                {bd.budget
+                                  ? ` (${Math.round(bd.budget / 100000000)}억)`
+                                  : ""}
+                              </a>
+                            ) : o ? (
                               <a
                                 href={o.url ?? "#"}
                                 target="_blank"

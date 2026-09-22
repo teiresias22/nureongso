@@ -491,6 +491,186 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
     print(f"[match_ordin] {done}명, 공약-조례 연결 {linked}건", file=sys.stderr)
 
 
+# --------------------------------------------------------------------------- match_bid
+
+BID_PROMPT = """어떤 지방자치단체장(또는 교육감)의 '예산·사업형 공약' 목록과, 그 지자체가
+**임기 중 낸 공사 입찰공고** 후보 목록이다. 각 공약이 가리키는 사업의 공고를 찾아 연결하라.
+
+규칙:
+- 반드시 아래 목록에 있는 bid_id 만 쓴다. 없는 id 를 지어내지 마라.
+- **같은 사업일 때만** 연결한다. 분야나 지역이 같다는 이유로 연결하지 마라.
+  (공약 '○○로 확장' ↔ 공고 '△△로 포장보수' 는 다른 도로면 다른 사업이다)
+- 후보는 글자 유사도로 뽑은 것이라 무관한 게 잔뜩 섞여 있다. 대부분의 공약은 맞는
+  공고가 없는 것이 정상이다. **없는 것을 억지로 붙이는 쪽이 빠뜨리는 쪽보다 훨씬 해롭다.**
+- 한 공약에 공고가 여럿이면 여럿 다 쓴다(구간별로 나눠 발주하는 일이 흔하다).
+- confidence 는 0~1. 공고명만으로 판단하므로 확신이 없으면 낮게 준다.
+- why 는 왜 연결했는지 한 줄 (40자 이내).
+
+공약:
+{pledges}
+
+공사 입찰공고 후보:
+{bids}"""
+
+BID_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "matches": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pledge_id": {"type": "integer"},
+                    "bid_id": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "why": {"type": "string"},
+                },
+                "required": ["pledge_id", "bid_id", "confidence"],
+            },
+        }
+    },
+    "required": ["matches"],
+}
+
+# 공고명은 '갈산천 외 2개소 준설공사' 처럼 고유명사 덩어리라 공약 문장과 겹치는
+# 글자가 적다. 0.3 으로 두면 3,269건 중 120건만 후보가 잡히고, 0.2 로 내리면
+# 434건이 잡힌다(실측). 후보쌍은 1,098개라 의원당 9개꼴이라 LLM 부담은 그대로다.
+# 걸러내는 건 LLM 의 몫이고 여기는 놓치지 않는 것만 한다.
+BID_SIM = 0.2
+BID_TOP = 40
+
+# 모델이 '다르다' 고 써 놓고도 근거로 돌려주는 일이 있다. 실측: 만수시장 아케이드
+# 공약에 모래내전통시장 아케이드 공사를 붙이면서 why 에 "서로 다른 시장임" 이라고
+# 적고 confidence 0.85 를 줬다. 제 말과 어긋나는 건 버린다.
+#
+# ponytail: 말뭉치가 아니라 단어 몇 개로 거른다. 놓치는 표현이 있겠지만 붙는 쪽이
+# 아니라 빠지는 쪽으로만 틀리므로 안전하다. 잘못 붙는 근거가 훨씬 해롭다.
+#
+# 어미가 바뀌면 글자가 달라진다. '다른' 만 넣었다가 재실행에서 "대상이 다름" 으로
+# 나온 같은 건을 놓쳤다. 어간이 아니라 나타난 꼴을 다 적어야 한다.
+DENY_WORDS = ("다른", "다름", "다릅", "다르다", "상이", "아님", "아닌",
+              "불일치", "무관", "별개", "관련 없", "일치하지", "보기 어렵")
+
+
+def self_contradicted(why: str | None) -> bool:
+    return bool(why) and any(w in why for w in DENY_WORDS)
+
+
+def run_match_bid(conn, limit: int | None, redo: bool) -> None:
+    """예산사업형 공약 ↔ 그 지자체가 임기 중 낸 공사 입찰공고.
+
+    국회의원은 대상이 아니다. 의원에게는 예산 편성권도 발주 권한도 없고, 지역구를
+    발주기관 이름으로 옮기는 깨끗한 길도 없다 (선관위 wiw_name 은 선거관리위원회
+    구역이라 '고양시덕양구' 처럼 발주를 못 하는 행정구가 들어온다).
+
+    찾아낸 공고는 '완료' 를 만들지 않는다. 발주는 사업이 시작됐다는 사실일 뿐
+    준공이 아니고, 그 사업이 이 사람 덕이라는 증거도 아니다. decide 를 보라.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select p.member_code, a.office, a.sd_name,
+                   (select c.district from candidacy c
+                     where c.member_code = p.member_code and c.elected
+                       and c.office = a.office
+                     order by c.election_id desc limit 1) as district,
+                   count(*)
+            from pledge p
+            join member_area a on a.member_code = p.member_code
+            where '예산사업' = any(p.kinds)
+              and a.office <> '국회의원'
+              %s
+            group by 1, 2, 3, 4 order by 5 desc
+            """ % ("" if redo else
+                   "and not exists (select 1 from ingest_run r"
+                   " where r.source = 'bid:' || p.member_code)")
+        )
+        rows = cur.fetchall()
+        cur.execute("select distinct org from bid_notice")
+        known = {o for (o,) in cur.fetchall()}
+
+    targets, missing = [], []
+    for mcode, office, sd, district, n in rows:
+        org = ordin_org(office, sd, district or "")
+        (targets if org in known else missing).append((mcode, org, n))
+    if missing:
+        print(f"  ! 입찰공고가 없는 지자체 {len(missing)}곳:"
+              f" {', '.join(o for _, o, _ in missing[:8])}"
+              f"{' …' if len(missing) > 8 else ''}", file=sys.stderr)
+    if limit:
+        targets = targets[:limit]
+    print(f"  대상 {len(targets)}명", file=sys.stderr)
+
+    done = linked = 0
+    for i, (mcode, org, n) in enumerate(targets, 1):
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id, title, coalesce(body,'') from pledge"
+                " where member_code = %s and '예산사업' = any(kinds) order by id", (mcode,))
+            pledges = cur.fetchall()
+            cur.execute(
+                "select b.id, b.name, b.budget, b.notice_at,"
+                "       max(word_similarity(b.name,"
+                "           p.title || ' ' || coalesce(p.body,''))) as sim"
+                " from bid_notice b, pledge p"
+                " where b.org = %s and p.member_code = %s"
+                "   and '예산사업' = any(p.kinds)"
+                "   and word_similarity(b.name,"
+                "       p.title || ' ' || coalesce(p.body,'')) > %s"
+                " group by b.id, b.name, b.budget, b.notice_at"
+                " order by sim desc limit %s",
+                (org, mcode, BID_SIM, BID_TOP))
+            bids = cur.fetchall()
+        if not pledges or not bids:
+            with conn.cursor() as cur:
+                cur.execute("insert into ingest_run (source, finished_at, rows)"
+                            " values ('bid:' || %s, now(), 0)", (mcode,))
+            conn.commit()
+            continue
+
+        try:
+            out = llm.complete_json(
+                BID_PROMPT.format(
+                    pledges="\n".join(f"{p}. {t} / {b[:150]}" for p, t, b in pledges),
+                    bids="\n".join(f"{bid} | {nm} | {(amt or 0)//100000000}억 | {at}"
+                                   for bid, nm, amt, at, _ in bids),
+                ), BID_SCHEMA)
+        except llm.QuotaExhausted as e:
+            print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  키별 성공: {llm.key_usage()}", file=sys.stderr)
+            print(f"  {len(targets) - i + 1}명이 남았습니다.", file=sys.stderr)
+            break
+        except llm.LLMError as e:
+            print(f"  [{i}/{len(targets)}] {mcode} 실패: {str(e)[:120]}", file=sys.stderr)
+            continue
+
+        pids = {p for p, _, _ in pledges}
+        bids_ok = {b for b, _, _, _, _ in bids}
+        rows_ = [
+            (m["pledge_id"], "bid", m["bid_id"],
+             float(m.get("confidence") or 0), (m.get("why") or "")[:300])
+            for m in out.get("matches", [])
+            if m.get("pledge_id") in pids and m.get("bid_id") in bids_ok
+            and not self_contradicted(m.get("why"))
+        ]
+        with conn.cursor() as cur:
+            cur.executemany(
+                "insert into pledge_evidence (pledge_id, kind, ref_id, score, summary)"
+                " values (%s,%s,%s,%s,%s)"
+                " on conflict (pledge_id, kind, ref_id) do update set"
+                "   score = excluded.score, summary = excluded.summary", rows_)
+            cur.execute(
+                "insert into ingest_run (source, finished_at, rows)"
+                " values ('bid:' || %s, now(), %s)", (mcode, len(rows_)))
+        conn.commit()
+        done += 1
+        linked += len(rows_)
+        if i % 20 == 0 or i == len(targets):
+            print(f"  [{i}/{len(targets)}] {done}명 근거 {linked}건", file=sys.stderr)
+
+    print(f"[match_bid] {done}명, 공약-공고 연결 {linked}건", file=sys.stderr)
+
+
 # --------------------------------------------------------------------------- decide
 
 # 판정 규칙. 서비스에 그대로 공개한다. 사람 판단이 아니라 표를 따르므로 재현 가능하다.
@@ -511,14 +691,15 @@ with ev as (
          -- psycopg 는 주석까지 훑어 퍼센트 기호를 파라미터로 본다. 리터럴은 두 번 써야 한다.
          bool_or(e.kind = 'bill' and b.proc_result like '%%가결%%') as law_passed,
          count(*) filter (where e.kind = 'bill')  as law_n,
-         count(*) filter (where e.kind = 'ordin') as ordin_n
+         count(*) filter (where e.kind = 'ordin') as ordin_n,
+         count(*) filter (where e.kind = 'bid')   as bid_n
   from pledge_evidence e
   join pledge p0 on p0.id = e.pledge_id
   -- 약속보다 먼저 낸 법안은 그 약속의 이행이 아니다. 실측으로 4건이 이랬다 —
   -- 국회의원이던 사람이 2026 지방선거에 나와 낸 공약에 2024~25년 법안이 붙었다.
   left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
                   and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
-  where e.kind in ('bill', 'ordin')
+  where e.kind in ('bill', 'ordin', 'bid')
     and (e.kind <> 'bill' or b.bill_id is not null)
   group by e.pledge_id
 ),
@@ -532,6 +713,7 @@ base as (
          coalesce(ev.law_passed, false) as law_passed,
          coalesce(ev.law_n, 0)   as law_n,
          coalesce(ev.ordin_n, 0) as ordin_n,
+         coalesce(ev.bid_n, 0)   as bid_n,
          coalesce(m.office, '국회의원') as office,
          -- 임기 시작일. 국회의원과 단체장은 선거도 취임도 다른 날이다.
          case when coalesce(m.office,'국회의원') = '국회의원'
@@ -569,7 +751,7 @@ flag as (
 judged as (
   select pledge_id,
     case
-      when cardinality(measurable) = 0    then '판단불가'
+      when cardinality(measurable) = 0 and bid_n = 0 then '판단불가'
       -- 지난 임기 공약은 판정하지 않는다. 지금 DB 에 든 법안이 제22대 것뿐이라
       -- (2024-05-30~) 그 이전 임기의 약속은 지킨 근거도, 안 지킨 근거도 없다.
       -- 억지로 재면 2020년 공약이 2025년 법안으로 '진행' 이 되거나, 21대 법안이
@@ -578,12 +760,16 @@ judged as (
       when achieved and cardinality(unmeasurable) = 0 then '완료'
       when achieved                       then '진행'
       when law_n > 0                      then '진행'
+      -- 발주 기록은 여기까지다. 공고는 사업이 시작됐다는 뜻이지 준공이 아니고,
+      -- 그 사업이 이 사람 덕이라는 증거도 아니다(단체장은 전임자가 추진하던 것을
+      -- 이어받는다). 그래서 bid 근거만으로는 '완료' 가 되지 않는다.
+      when bid_n > 0                      then '진행'
       when not checked                    then '판단불가'
       when past_grace                     then '미착수'
       else '판단불가'
     end as status,
     case
-      when cardinality(measurable) = 0
+      when cardinality(measurable) = 0 and bid_n = 0
            then 'no_measure:' || array_to_string(kinds, '+')
       when not coalesce(current_term, true) then 'past_term'
       when achieved and cardinality(unmeasurable) > 0
@@ -591,6 +777,7 @@ judged as (
       when ordin_n > 0                    then 'ordin_enacted'
       when law_passed                     then 'law_passed'
       when law_n > 0                      then 'law_filed'
+      when bid_n > 0                      then 'bid_ordered'
       when not checked                    then 'not_checked'
       when past_grace                     then 'none_2y'
       else 'none_early'
@@ -627,7 +814,8 @@ def run_decide(conn) -> None:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument(
-        "step", choices=["classify", "match", "match_ordin", "decide", "all"])
+        "step",
+        choices=["classify", "match", "match_ordin", "match_bid", "decide", "all"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--redo", action="store_true")
     a = p.parse_args()
@@ -642,6 +830,8 @@ def main():
             run_match(conn, a.limit, a.redo)
         if a.step in ("match_ordin", "all"):
             run_match_ordin(conn, a.limit, a.redo)
+        if a.step in ("match_bid", "all"):
+            run_match_bid(conn, a.limit, a.redo)
         if a.step in ("decide", "all"):
             run_decide(conn)
 
