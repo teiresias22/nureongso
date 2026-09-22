@@ -190,6 +190,8 @@ export type Candidacy = {
   election_id: string;
   sg_typecode: string | null;
   office: string | null;
+  /** 시도명. district 만으로는 선거구가 안 정해진다 — '남구' 가 네 곳이다. */
+  sd_name: string | null;
   district: string | null;
   party: string | null;
   giho: string | null;
@@ -200,8 +202,8 @@ export type Candidacy = {
 
 export type Rival = Pick<
   Candidacy,
-  "id" | "election_id" | "sg_typecode" | "district" | "party" | "giho" | "vote_rate"
-  | "elected" | "member_code"
+  "id" | "election_id" | "sg_typecode" | "sd_name" | "district" | "party" | "giho"
+  | "vote_rate" | "elected" | "member_code"
 > & { name: string };
 
 export type OfficeTerm = {

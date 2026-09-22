@@ -145,16 +145,20 @@ export default async function MemberPage({
   const { data: rivalRows } = runs.length
     ? await db
         .from("candidacy")
-        .select("id, election_id, sg_typecode, district, name, party, giho, vote_rate, elected, member_code")
+        .select("id, election_id, sg_typecode, sd_name, district, name, party, giho, vote_rate, elected, member_code")
         .in("election_id", [...new Set(runs.map((c) => c.election_id))])
         .in("district", [...new Set(runs.map((c) => c.district).filter(Boolean))] as string[])
     : { data: [] };
-  // sg_typecode 까지 봐야 한다. 지방선거는 시도지사·교육감·교육의원이 같은 날 같은
-  // '강원도' 에서 치러져서, 선거일과 지역만 맞추면 교육감 후보가 도지사 경쟁자로 섞인다.
+  // 네 가지를 다 맞춰야 한 선거구가 된다.
+  // - sg_typecode: 지방선거는 시도지사·교육감·교육의원이 같은 날 같은 '강원도' 에서
+  //   치러져서, 선거일과 지역만 맞추면 교육감 후보가 도지사 경쟁자로 섞인다.
+  // - sd_name: '남구' 는 광주·대구·부산·울산에 다 있다. 시도를 안 보면 광주 남구청장
+  //   김병내(무투표당선)에게 전국의 남구 후보 8명이 경쟁자로 붙었다. 동구·서구·중구·
+  //   북구도 같고, 국회의원까지 합쳐 현직 57명이 이 상태였다.
   const rivalsOf = (c: Candidacy) =>
     ((rivalRows ?? []) as Rival[])
       .filter((r) => r.election_id === c.election_id && r.sg_typecode === c.sg_typecode
-                     && r.district === c.district && r.id !== c.id)
+                     && r.sd_name === c.sd_name && r.district === c.district && r.id !== c.id)
       .sort((a, b) => Number(b.elected) - Number(a.elected) || (a.giho ?? "").localeCompare(b.giho ?? ""));
   const s: MemberStats = stats ?? {
     code,
