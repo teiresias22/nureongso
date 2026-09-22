@@ -39,9 +39,19 @@ const PLEDGE_SOURCES = [
   },
 ] as const;
 
+/** 발의 연도 칩에 쓸 해. 지금 DB 에 든 법안은 제22대 것뿐이라(실측: 가장 이른
+ *  발의일이 2024-05-30) 개원 연도부터 올해까지면 빠짐없이 덮는다.
+ *  ponytail: 상수 하나로 끝낸다. 지난 대수 법안을 수집하게 되면 이 범위로는 모자라니
+ *  그때 의원별 최초 발의 연도를 질의해 채운다. */
+const BILL_YEAR_FROM = 2024;
+const billYears = () => {
+  const now = new Date().getFullYear();
+  return Array.from({ length: now - BILL_YEAR_FROM + 1 }, (_, i) => String(now - i));
+};
+
 /** 의원의 법안 목록. 건수는 member_stats 에서 따로 읽는다 — PostgREST 가 1000행에서 잘라서
  *  여기 길이를 세면 1000건 넘는 의원의 통계가 조용히 틀어진다. */
-function bills(code: string, role: "rep" | "co", filter: string, page: number) {
+function bills(code: string, role: "rep" | "co", filter: string, year: string, page: number) {
   let q = db
     .from("member_bill")
     .select("bill_id,bill_no,name,committee,proposed_at,proc_result,proposer,detail_link",
@@ -51,12 +61,17 @@ function bills(code: string, role: "rep" | "co", filter: string, page: number) {
   if (filter === "passed") q = q.like("proc_result", "%가결%");
   else if (filter === "pending") q = q.is("proc_result", null);
   else if (filter === "dropped") q = q.not("proc_result", "is", null).not("proc_result", "like", "%가결%");
+  // 연도는 처리 상태와 따로 걸린다 — '2025년에 낸 것 중 가결된 것' 을 볼 수 있어야 한다.
+  if (year) q = q.gte("proposed_at", `${year}-01-01`).lte("proposed_at", `${year}-12-31`);
   return q
     .order("proposed_at", { ascending: false })
     .range((page - 1) * PAGE, page * PAGE - 1);
 }
 
-type SP = { rep?: string; co?: string; repPage?: string; coPage?: string };
+type SP = {
+  rep?: string; co?: string; repPage?: string; coPage?: string;
+  repYear?: string; coYear?: string;
+};
 
 /** 이 서비스는 팜플랫에서 이름을 보고 검색해 들어오는 것으로 시작한다.
  *  558명이 레이아웃의 기본 제목 하나를 공유하면 그 경로가 막힌다. */
@@ -109,6 +124,10 @@ export default async function MemberPage({
   const sp = await searchParams;
   const repFilter = sp.rep ?? "";
   const coFilter = sp.co ?? "";
+  // 주소로 아무 값이나 들어올 수 있다. 목록에 없는 해는 필터 없음으로 떨어뜨린다.
+  const years = billYears();
+  const repYear = years.includes(sp.repYear ?? "") ? sp.repYear! : "";
+  const coYear = years.includes(sp.coYear ?? "") ? sp.coYear! : "";
   const repPage = Math.max(1, Number(sp.repPage) || 1);
   const coPage = Math.max(1, Number(sp.coPage) || 1);
 
@@ -124,8 +143,8 @@ export default async function MemberPage({
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
-    bills(code, "rep", repFilter, repPage),
-    bills(code, "co", coFilter, coPage),
+    bills(code, "rep", repFilter, repYear, repPage),
+    bills(code, "co", coFilter, coYear, coPage),
     db.from("candidacy").select("*").eq("member_code", code).order("election_id", { ascending: false }),
     db.from("member_office_term").select("*").eq("member_code", code),
     // 선거공보 원문 PDF. 공약은 이 PDF 를 AI 가 읽어 정리한 것이라, 정리가 미덥지
@@ -591,8 +610,10 @@ export default async function MemberPage({
               param="rep"
               pageParam="repPage"
               filter={repFilter}
+              year={repYear}
+              years={years}
               page={repPage}
-              keep={{ co: coFilter, coPage: String(coPage) }}
+              keep={{ co: coFilter, coYear, coPage: String(coPage) }}
             />
           </Section>
 
@@ -604,8 +625,10 @@ export default async function MemberPage({
               param="co"
               pageParam="coPage"
               filter={coFilter}
+              year={coYear}
+              years={years}
               page={coPage}
-              keep={{ rep: repFilter, repPage: String(repPage) }}
+              keep={{ rep: repFilter, repYear, repPage: String(repPage) }}
             />
           </Section>
         </>
@@ -701,15 +724,19 @@ function StatusBadge({ status, auto }: { status?: string; auto?: boolean }) {
 }
 
 function BillList({
-  bills, total, from, param, pageParam, filter, page, keep,
+  bills, total, from, param, pageParam, filter, year, years, page, keep,
 }: {
   bills: Bill[]; total: number; from: string;
   param: string; pageParam: string; filter: string; page: number;
+  year: string; years: string[];
   keep: Record<string, string>;
 }) {
+  const yearParam = `${param}Year`;
   // 필터를 바꾸면 그 목록의 쪽 번호만 1로 되돌리고, 다른 목록의 상태는 유지한다.
   const link = (next: Record<string, string>) => {
-    const q = new URLSearchParams({ ...keep, [param]: filter, [pageParam]: String(page), ...next });
+    const q = new URLSearchParams({
+      ...keep, [param]: filter, [yearParam]: year, [pageParam]: String(page), ...next,
+    });
     for (const [k, v] of [...q]) if (!v || v === "1") q.delete(k);
     const qs = q.toString();
     return qs ? `?${qs}#${param}` : `#${param}`;
@@ -731,6 +758,23 @@ function BillList({
           </Link>
         ))}
         <span className="ml-auto text-xs text-muted">{total.toLocaleString()}건</span>
+      </div>
+
+      {/* 연도는 처리 상태와 따로 걸린다. 한 줄에 같이 늘어놓으면 '가결' 과 '2025' 가
+          같은 갈래로 보여 둘 중 하나만 고르는 줄 안다. */}
+      <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 py-2">
+        <span className="mr-1 text-[11px] text-muted">발의 연도</span>
+        {[{ key: "", label: "전체" }, ...years.map((y) => ({ key: y, label: `${y}년` }))].map((y) => (
+          <Link
+            key={y.key}
+            href={link({ [yearParam]: y.key, [pageParam]: "1" })}
+            className={`rounded px-2 py-1 text-xs ${
+              year === y.key ? "bg-foreground text-background" : "text-muted hover:text-foreground"
+            }`}
+          >
+            {y.label}
+          </Link>
+        ))}
       </div>
 
       {!bills.length ? (
