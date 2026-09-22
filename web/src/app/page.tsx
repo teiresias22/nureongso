@@ -39,7 +39,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
   let rows = members as Member[];
   if (q) rows = rows.filter((m) => m.name.includes(q) || (m.district ?? "").includes(q));
   if (party) rows = rows.filter((m) => lastPart(m.party) === party);
-  if (elect) rows = rows.filter((m) => m.elect_type === elect);
+  // 지역구/비례는 국회 개념이다. 단체장·교육감에게 남아 있는 elect_type 은 의원
+  // 시절 값이라, 안 거르면 '비례대표만' 에 교육감·구청장이 섞인다.
+  if (elect)
+    rows = rows.filter((m) => (m.office ?? "국회의원") === "국회의원" && m.elect_type === elect);
   if (office) rows = rows.filter((m) => (m.office ?? "국회의원") === office);
 
   rows = [...rows].sort((a, b) => {

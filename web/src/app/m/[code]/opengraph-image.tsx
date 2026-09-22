@@ -17,7 +17,11 @@ export default async function Image({ params }: { params: Promise<{ code: string
   const s = stats as MemberStats | null;
   const name = m?.name ?? "";
   const sub = m
-    ? [m.office, lastPart(m.party), lastPart(m.district), m.term_count].filter(Boolean).join(" · ")
+    // 선수(term_count)는 국회 대수 기준이다. 오세훈 서울시장 카드에 16대 의원
+    // 시절의 '초선' 이 붙어 5선 시장이 초선으로 보였다.
+    ? [m.office, lastPart(m.party), lastPart(m.district),
+       (m.office ?? "국회의원") === "국회의원" ? m.term_count : null]
+        .filter(Boolean).join(" · ")
     : "";
 
   // 법안 기록이 있으면 의정활동을, 없으면 공약을 보여준다. 직위가 아니라 데이터로 가른다.

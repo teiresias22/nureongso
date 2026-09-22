@@ -197,8 +197,15 @@ def ingest_photos(conn, sg_id: str, sg_type: str) -> None:
 
     with conn.cursor() as cur:
         # 이미 사진이 있으면 덮지 않는다. 열린국회정보 쪽이 더 크고 선명하다.
+        #
+        # 단, 지금 국회의원이 아닌 사람의 국회 사진은 의원 시절 사진이라 덮는다.
+        # 오세훈 서울시장 자리에 2000년 16대 의원 사진이 붙어 있었다. 정당·지역구와
+        # 같은 규칙이다 — 국회 값은 국회의원일 때만 유효하다.
         cur.executemany(
-            "update member set photo_url = %s where code = %s and photo_url is null", pairs)
+            "update member set photo_url = %s where code = %s"
+            " and (photo_url is null"
+            "      or (coalesce(office, '국회의원') <> '국회의원'"
+            "          and photo_url like '%%assembly.go.kr%%'))", pairs)
         n = cur.rowcount
     conn.commit()
     print(f"[photos] {sg_id}/{sg_type}: 후보 {len(pairs)}명 중 {n}명 채움", file=sys.stderr)
