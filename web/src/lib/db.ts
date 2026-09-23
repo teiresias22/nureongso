@@ -71,6 +71,9 @@ export const KIND_LABEL: Record<string, string> = {
 /** 판정 근거를 사람이 읽는 말로. judge.py 의 note 와 1:1. */
 export const NOTE_LABEL: Record<string, string> = {
   law_passed: "발의한 법안이 통과됐습니다",
+  law_merged: "발의한 법안이 위원회 대안에 반영돼 통과됐습니다",
+  law_alt_unverified:
+    "발의한 법안이 위원회 대안에 반영됐습니다 (대안의 통과 여부는 확인하지 못했습니다)",
   law_filed: "관련 법안을 발의했습니다",
   ordin_enacted: "관련 조례가 제·개정됐습니다",
   bid_ordered: "관련 공사가 발주됐습니다 (준공 여부는 확인할 수 없습니다)",

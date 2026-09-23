@@ -890,6 +890,11 @@ with ev as (
          max(e.score) as conf,
          -- psycopg 는 주석까지 훑어 퍼센트 기호를 파라미터로 본다. 리터럴은 두 번 써야 한다.
          bool_or(e.kind = 'bill' and b.proc_result like '%%가결%%') as law_passed,
+         -- 대안반영폐기: 위원회가 내용을 위원장 대안에 담고 원안은 폐기한 것이다.
+         -- 국회에서 법안이 법이 되는 가장 흔한 길이라, 이걸 빼면 크게 모자라게 센다
+         -- (실측: 대안반영폐기 4,101건 대 가결 699건).
+         bool_or(alt.proc_result like '%%가결%%') as law_merged,
+         bool_or(e.kind = 'bill' and b.proc_result = '대안반영폐기') as law_alt,
          count(*) filter (where e.kind = 'bill')  as law_n,
          count(*) filter (where e.kind = 'ordin') as ordin_n,
          count(*) filter (where e.kind = 'bid')   as bid_n
@@ -899,6 +904,17 @@ with ev as (
   -- 국회의원이던 사람이 2026 지방선거에 나와 낸 공약에 2024~25년 법안이 붙었다.
   left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
                   and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
+  -- 그 대안이 실제로 통과했는지는 본회의 기록에서 직접 읽는다. 추정하지 않는다.
+  -- 같은 위원회·같은 본회의 날짜의 같은 법률명 '(대안)' 이 유일하게 대응된다
+  -- (실측: 한 원안에 대안이 둘 이상 붙는 경우 0건, 4,101건 중 3,688건이 이어졌고
+  --  그중 3,686건이 가결이었다). 못 이은 10%%는 통과했다고 치지 않는다.
+  left join plenary_bill alt
+    on b.proc_result = '대안반영폐기'
+   and alt.committee = b.committee and alt.proc_dt = b.proc_dt
+   -- '%%(' 를 psycopg 가 이름 있는 파라미터로 읽어 버려 strpos 로 쓴다.
+   and alt.name like regexp_replace(
+         b.name, '\\s*(일부개정|전부개정|폐지)?법률안.*$', '') || '%%'
+   and strpos(alt.name, '(대안)') > 0
   where e.kind in ('bill', 'ordin', 'bid')
     and (e.kind <> 'bill' or b.bill_id is not null)
   group by e.pledge_id
@@ -911,6 +927,8 @@ cur_el as (
 base as (
   select p.id as pledge_id, p.kinds, ev.conf,
          coalesce(ev.law_passed, false) as law_passed,
+         coalesce(ev.law_merged, false) as law_merged,
+         coalesce(ev.law_alt, false)    as law_alt,
          coalesce(ev.law_n, 0)   as law_n,
          coalesce(ev.ordin_n, 0) as ordin_n,
          coalesce(ev.bid_n, 0)   as bid_n,
@@ -944,7 +962,7 @@ flag as (
     (not ('입법' = any(b.measurable)) or b.law_checked)
     and (not ('조례제도' = any(b.measurable)) or b.ordin_checked) as checked,
     -- 잴 수 있는 쪽에서 실제로 이뤄진 증거가 나왔는가
-    (b.law_passed or b.ordin_n > 0) as achieved,
+    (b.law_passed or b.law_merged or b.ordin_n > 0) as achieved,
     b.term_start + (%(grace)s || ' years')::interval < now() as past_grace
   from base b
 ),
@@ -976,6 +994,10 @@ judged as (
            then 'partial:' || array_to_string(unmeasurable, '+')
       when ordin_n > 0                    then 'ordin_enacted'
       when law_passed                     then 'law_passed'
+      when law_merged                     then 'law_merged'
+      -- 대안에 반영은 됐는데 그 대안을 본회의 기록에서 못 찾았다. 통과했을 가능성이
+      -- 높지만(실측 99.9%%) 확인한 게 아니라 그렇게 적는다.
+      when law_alt                        then 'law_alt_unverified'
       when law_n > 0                      then 'law_filed'
       when bid_n > 0                      then 'bid_ordered'
       when not checked                    then 'not_checked'
