@@ -154,8 +154,13 @@ jobs:
               # 이 둘이 0 이 아니면 한도에 걸려 멈춘 것이다. 다음 주에 이어서 한다.
               cur.execute("select count(*) from pledge where kinds is null")
               print(f"\n유형 없는 공약: {cur.fetchone()[0]:,}건")
+              # run_match 와 같은 조건이어야 한다. 대표발의 법안이 없는 사람(단체장 등)은
+              # 대조 대상이 아니라 기록도 안 남으니, 그 조건을 빼고 세면 342명이 늘
+              # '안 된 사람' 으로 찍힌다.
               cur.execute("""select count(distinct p.member_code) from pledge p
                              where '입법' = any(p.kinds)
+                               and exists (select 1 from bill_sponsor s
+                                            where s.member_code = p.member_code and s.role = 'rep')
                                and not exists (select 1 from ingest_run r
                                                where r.source = 'match:' || p.member_code)""")
               print(f"법안 대조 안 된 사람: {cur.fetchone()[0]}명")
