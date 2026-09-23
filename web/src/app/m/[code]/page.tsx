@@ -90,6 +90,7 @@ function bills(code: string, role: "rep" | "co", filter: string, year: string, p
 type SP = {
   rep?: string; co?: string; repPage?: string; coPage?: string;
   repYear?: string; coYear?: string;
+  bidYear?: string; bidPage?: string;
 };
 
 /** 이 서비스는 팜플랫에서 이름을 보고 검색해 들어오는 것으로 시작한다.
@@ -255,13 +256,21 @@ export default async function MemberPage({
   // 지역구에서 임기 중 발주된 공공 공사. 공약과는 잇지 않는다 — 한 시군구를 여럿이
   // 나눠 갖는 의원이 253명 중 168명이라 누구 덕인지 가릴 수가 없다. 사실만 보인다.
   const isDistrictMP = isMP && m.elect_type !== "비례대표";
+  const bidYear = years.includes(sp.bidYear ?? "") ? sp.bidYear! : "";
+  const bidPage = Math.max(1, Number(sp.bidPage) || 1);
   const { data: districtBids, count: districtBidTotal } = isDistrictMP
-    ? await db
-        .from("member_district_bid")
-        .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
-        .eq("member_code", code)
-        .order("budget", { ascending: false })
-        .limit(DISTRICT_BID_PAGE)
+    ? await (() => {
+        let q = db
+          .from("member_district_bid")
+          .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
+          .eq("member_code", code);
+        if (bidYear) {
+          q = q.gte("notice_at", `${bidYear}-01-01`).lte("notice_at", `${bidYear}-12-31`);
+        }
+        return q
+          .order("budget", { ascending: false })
+          .range((bidPage - 1) * DISTRICT_BID_PAGE, bidPage * DISTRICT_BID_PAGE - 1);
+      })()
     : { data: [], count: 0 };
   // 같은 선거구에 함께 나온 후보들의 공약 중 같은 약속. 한 지역 공약은 비슷비슷해서,
   // 무엇이 같은지 갈라 줘야 무엇이 다른지 보인다.
@@ -324,6 +333,35 @@ export default async function MemberPage({
     .filter(Boolean)
     .sort()
     .reverse();
+
+  // 목차. 사람마다 있는 구획이 달라(N선 의원은 지난 임기 공약이 여럿, 단체장은
+  // 법안 목록이 없다) 화면을 그리는 조건과 같은 기준으로 여기서 한 번 만든다.
+  // 둘이 어긋나면 눌러도 안 움직이는 줄이 생긴다.
+  const nav: { id: string; label: string }[] = [{ id: "runs", label: "출마 이력" }];
+  for (const eid of pledgeElections) {
+    const isCur = eid === pledgeElections[0];
+    for (const { key, title } of PLEDGE_SOURCES) {
+      if (!(pledges ?? []).some((p) => p.election_id === eid && (p.source ?? "선거공보") === key)) continue;
+      nav.push({
+        id: `p-${eid}-${key}`,
+        label: `${isCur ? "이번 임기" : `${electionYear(eid)}년`} ${title.split(" ")[0]}`,
+      });
+    }
+  }
+  if (hasBills(s)) nav.push({ id: "rep-sec", label: "대표발의" }, { id: "co-sec", label: "공동발의" });
+  if (SHOW_RACE && raceRivals.length && myDocPledges.length)
+    nav.push({ id: "race", label: "후보 공약 비교" });
+  if (isDistrictMP && (districtBidTotal ?? 0) > 0) nav.push({ id: "bid", label: "발주 공사" });
+
+  // 발주 목록의 연도·쪽을 바꿔도 법안 목록의 필터·쪽은 그대로 둔다.
+  const bidKeep = { rep: repFilter, repYear, repPage: String(repPage),
+                    co: coFilter, coYear, coPage: String(coPage) };
+  const bidLink = (next: Record<string, string>) => {
+    const q = new URLSearchParams({ ...bidKeep, bidYear, bidPage: String(bidPage), ...next });
+    for (const [k, v] of [...q]) if (!v || v === "1") q.delete(k);
+    const qs = q.toString();
+    return qs ? `?${qs}#bid` : "#bid";
+  };
 
   // 구글이 이 페이지를 '인물' 로 인식해야 이름 검색에 걸린다. 라이브러리 없이 객체 하나.
   const jsonLd = {
@@ -489,7 +527,27 @@ export default async function MemberPage({
         </section>
       )}
 
-      <Section title="출마 이력" count={runs.length}>
+      {/* 목차. 한 사람 화면이 길어서(공약 수십 건 + 법안 두 목록 + 발주 수백 건)
+          아래에 무엇이 있는지 모른 채 스크롤하게 된다. 누르면 그 구획으로 간다.
+          앵커 링크라 스크립트가 필요 없고, 접힌 구획도 브라우저가 열어 준다. */}
+      {nav.length > 2 && (
+        <nav className="sticky top-0 z-10 -mx-4 overflow-x-auto border-y border-line bg-card/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-lg sm:border">
+          <ul className="flex gap-1 whitespace-nowrap">
+            {nav.map((n) => (
+              <li key={n.id}>
+                <a
+                  href={`#${n.id}`}
+                  className="block rounded px-2 py-1 text-xs text-muted hover:bg-background/60 hover:text-foreground"
+                >
+                  {n.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+
+      <Section id="runs" title="출마 이력" count={runs.length}>
         {runs.length ? (
           <ul className="divide-y divide-line">
             {runs.map((c) => {
@@ -597,6 +655,7 @@ export default async function MemberPage({
         return (
           <Section
             key={`${eid}-${key}`}
+            id={`p-${eid}-${key}`}
             // 지난 임기가 여럿인 사람이 있다. 전재수는 2020·2016 선거가 둘 다
             // 있어서 '지난 임기 공약' 이 두 개로 나온다. 접혀 있으면 안내문의
             // 연도가 안 보이므로 제목에 붙여 구별한다.
@@ -723,7 +782,7 @@ export default async function MemberPage({
 
       {showBills && (
         <>
-          <Section title="대표발의 법안" count={s.rep_count}>
+          <Section id="rep-sec" title="대표발의 법안" count={s.rep_count}>
             <BillList
               bills={(repBills ?? []) as Bill[]}
               total={repTotal ?? 0}
@@ -738,7 +797,7 @@ export default async function MemberPage({
             />
           </Section>
 
-          <Section title="공동발의 법안" count={s.co_count}>
+          <Section id="co-sec" title="공동발의 법안" count={s.co_count}>
             <BillList
               bills={(coBills ?? []) as Bill[]}
               total={coTotal ?? 0}
@@ -771,7 +830,7 @@ export default async function MemberPage({
           confidence 로는 못 거른다 — 0.85 이상에도 표어끼리가 섞여 있었다. 막연한
           근거 문구는 모델에게 맡기지 않고 judge.py 의 vague() 가 기계로 막는다. */}
       {SHOW_RACE && !!raceRivals.length && !!myDocPledges.length && (
-        <Section title="같은 선거구 후보와 공약 비교" count={raceRivals.length} fold>
+        <Section id="race" title="같은 선거구 후보와 공약 비교" count={raceRivals.length} fold>
           <p className="border-b border-line px-4 py-2 text-xs text-muted">
             한 지역에 나온 후보들의 공약은 비슷비슷합니다. 무엇이 같은지 먼저 갈라야 무엇이
             다른지 보입니다. <b>공약서에 낸 대표공약끼리</b> 비교합니다 — 선거공보 전체 공약은
@@ -827,7 +886,7 @@ export default async function MemberPage({
       )}
 
       {isDistrictMP && !!districtBids?.length && (
-        <Section title="지역구에서 발주된 공공 공사" count={districtBidTotal ?? 0} fold>
+        <Section id="bid" title="지역구에서 발주된 공공 공사" count={districtBidTotal ?? 0} fold>
           <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
             <b className="text-foreground">이 의원이 해낸 일이라는 뜻이 아닙니다.</b>{" "}
             국회의원에게는 예산 편성권도 발주 권한도 없습니다. 같은 지역에 시장·군수·
@@ -836,6 +895,28 @@ export default async function MemberPage({
             않으며 이행 판정에도 쓰지 않습니다. 지방자치단체가 발주한 1억 원 이상
             공사만 담았습니다.
           </p>
+          {/* 연도로 좁히고 쪽을 넘겨 전체를 볼 수 있게 한다. 예전에는 금액 큰
+              30건만 보여 주고 나머지는 볼 길이 없었다. */}
+          <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 py-2">
+            <span className="mr-1 text-[11px] text-muted">공고 연도</span>
+            {[{ key: "", label: "전체" }, ...years.map((y) => ({ key: y, label: `${y}년` }))].map((y) => (
+              <Link
+                key={y.key}
+                href={bidLink({ bidYear: y.key, bidPage: "1" })}
+                className={`rounded px-2 py-1 text-xs ${
+                  bidYear === y.key ? "bg-foreground text-background" : "text-muted hover:text-foreground"
+                }`}
+              >
+                {y.label}
+              </Link>
+            ))}
+            <span className="ml-auto text-xs text-muted">
+              {(districtBidTotal ?? 0).toLocaleString()}건
+            </span>
+          </div>
+          {!districtBids?.length ? (
+            <p className="px-4 py-3 text-sm text-muted">해당 연도에 발주된 공사가 없습니다.</p>
+          ) : (
           <ul className="divide-y divide-line">
             {(districtBids as DistrictBid[]).map((b) => {
               // 임기 시작 1년 안에 나온 공고는 전임 임기에 준비된 것일 수 있다.
@@ -870,12 +951,8 @@ export default async function MemberPage({
               );
             })}
           </ul>
-          {(districtBidTotal ?? 0) > DISTRICT_BID_PAGE && (
-            <p className="border-t border-line px-4 py-2 text-xs text-muted">
-              금액이 큰 {DISTRICT_BID_PAGE}건만 보입니다 (전체{" "}
-              {(districtBidTotal ?? 0).toLocaleString()}건).
-            </p>
           )}
+          <BidPager total={districtBidTotal ?? 0} year={bidYear} page={bidPage} keep={bidKeep} />
         </Section>
       )}
     </div>
@@ -905,8 +982,8 @@ function Stat({ label, value, unit, sub }:
 /** fold 를 주면 접힌 상태로 시작한다. 제목줄 전체가 누르는 자리다.
  *  details/summary 라 스크립트가 필요 없고, 검색엔진은 접힌 내용도 읽는다. */
 function Section({
-  title, count, children, fold,
-}: { title: string; count: number; children: React.ReactNode; fold?: boolean }) {
+  title, count, children, fold, id,
+}: { title: string; count: number; children: React.ReactNode; fold?: boolean; id?: string }) {
   const head = (
     <>
       {title} <span className="font-normal text-muted">{count}</span>
@@ -914,14 +991,14 @@ function Section({
   );
   if (!fold) {
     return (
-      <section className="overflow-hidden rounded-lg border border-line bg-card">
+      <section id={id} className="scroll-mt-14 overflow-hidden rounded-lg border border-line bg-card">
         <h2 className="border-b border-line px-4 py-2 text-sm font-semibold">{head}</h2>
         {children}
       </section>
     );
   }
   return (
-    <details className="group overflow-hidden rounded-lg border border-line bg-card">
+    <details id={id} className="group scroll-mt-14 overflow-hidden rounded-lg border border-line bg-card">
       <summary className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-semibold marker:content-none hover:bg-background/40 group-open:border-b group-open:border-line [&::-webkit-details-marker]:hidden">
         <span className="min-w-0">{head}</span>
         <span className="ml-auto shrink-0 text-xs font-normal text-muted group-open:hidden">펼치기</span>
@@ -952,6 +1029,33 @@ function Fold({
       </summary>
       {children}
     </details>
+  );
+}
+
+/** 발주 목록 쪽 넘김. 법안 목록의 쪽 넘김과 모양을 맞춘다. */
+function BidPager({
+  total, year, page, keep,
+}: { total: number; year: string; page: number; keep: Record<string, string> }) {
+  const last = Math.max(1, Math.ceil(total / DISTRICT_BID_PAGE));
+  if (last <= 1) return null;
+  const to = (n: number) => {
+    const q = new URLSearchParams({ ...keep, bidYear: year, bidPage: String(n) });
+    for (const [k, v] of [...q]) if (!v || v === "1") q.delete(k);
+    const qs = q.toString();
+    return qs ? `?${qs}#bid` : "#bid";
+  };
+  return (
+    <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs">
+      {page > 1 ? (
+        <Link href={to(page - 1)} className="text-muted hover:text-foreground">← 이전</Link>
+      ) : <span />}
+      <span className="text-muted">
+        {page} / {last} · 금액 큰 순
+      </span>
+      {page < last ? (
+        <Link href={to(page + 1)} className="text-muted hover:text-foreground">다음 →</Link>
+      ) : <span />}
+    </div>
   );
 }
 
