@@ -17,7 +17,7 @@ const PAGE = 50;
 const DISTRICT_BID_PAGE = 30;
 
 /** 후보 간 공약 비교를 화면에 내보낼지. 아래 섹션의 주석 참고. */
-const SHOW_RACE = true;
+const SHOW_RACE = false;
 
 /** 제22대 국회 임기 시작(2024-05-30) + 1년. 이 날 전에 나온 공고는 전임 임기에
  *  준비된 것일 수 있다 — 공공 공사는 예산 편성부터 발주까지 보통 1년이 넘는다.
@@ -602,9 +602,14 @@ export default async function MemberPage({
             // 연도가 안 보이므로 제목에 붙여 구별한다.
             title={`${isCurrent ? "이번 임기" : `지난 임기(${electionYear(eid)})`} ${title}`}
             count={list.length}
-            // 펼쳐 두는 건 '이번 임기 대표공약' 하나다. 수십 건짜리 선거공보 공약과
-            // 지난 임기까지 다 펼치면 화면이 공약 목록으로만 채워진다.
-            fold={!(isCurrent && key === "공약서")}
+            // 이번 임기 공약은 펼쳐 둔다. 이 서비스에 온 이유가 그것이라 접어 두면
+            // 한 번 더 눌러야 한다. 지난 임기는 접는다.
+            //
+            // 단체장·교육감은 대표공약(공약서)만 펼친다. 그 아래 선거공보 공약이
+            // 수십 건 더 있어서 둘 다 펼치면 화면이 공약 목록으로만 채워진다.
+            // 국회의원은 공약서가 없어(선관위 공약서 API 대상이 아니다) 선거공보가
+            // 유일한 공약이므로 그것을 펼친다.
+            fold={!isCurrent || (!isMP && key !== "공약서")}
           >
             <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
               <b className="text-foreground">{when}</b> 선거 · {note}{" "}
@@ -756,10 +761,15 @@ export default async function MemberPage({
           confidence 로 거르려다 실패했다 — 0.85 이상에도 표어끼리가 섞여 있었다.
           대신 쌍마다 '겹친 내용이 확인할 수 있을 만큼 구체적인가' 를 따로 물었다.
 
-          실측(구시군의장 표본 16): 15개가 정확했다. 제목은 막연해도 근거가 짚는 것은
-          47번 국도 지하화, 하단-녹산선, 서울7호선 청라 연장처럼 확인할 수 있는 것이다.
-          버려진 쪽(156쌍)도 봤는데 대부분 '포괄적 목표가 겹침' 이었다. 아깝게 버려진
-          것도 있지만(영도 빈집 정비) 버리는 쪽으로 기울여 뒀다. */}
+          한 번 켰다가 도로 내렸다. 아깝게 버려진 것(영도 빈집 정비, 화천댐 물 주권)을
+          살리려고 specific 의 정의를 '새로 아는 게 있는가' 로 넓혔더니, 통과율이
+          79%에서 99%로 뛰고 품질이 떨어졌다. 같은 방법으로 잰 구시군의장 표본이
+          15/16(틀림 0)에서 9/16(틀림 2)이 됐다. '주거 환경 개선 방향이 겹침' 같은
+          근거가 통과했는데, 프롬프트에 그건 false 라고 적어 둔 것이었다.
+
+          그래서 정의는 되돌리되 놓쳤던 갈래(손에 잡히는 수단, 지역 현안)만 예시로
+          더했고, 막연한 근거 문구는 모델에게 맡기지 않고 vague() 로 기계가 막는다.
+          다시 돌려 표본이 검증되면 켠다. */}
       {SHOW_RACE && !!raceRivals.length && !!myDocPledges.length && (
         <Section title="같은 선거구 후보와 공약 비교" count={raceRivals.length} fold>
           <p className="border-b border-line px-4 py-2 text-xs text-muted">

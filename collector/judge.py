@@ -561,6 +561,19 @@ def self_contradicted(why: str | None) -> bool:
     return bool(why) and any(w in why for w in DENY_WORDS)
 
 
+# 근거 한 줄이 '무엇이' 같은지 못 말하고 '비슷한 쪽을 본다' 고만 할 때 쓰는 말들.
+# 모델에게 이런 건 false 라고 적어도 지키지 않는다 — 실측으로 이런 문구를 가진 15쌍
+# 중 5쌍이 specific=true 로 왔고, 그중엔 '주거 환경 개선 방향이 겹침' 도 있었다.
+# 부탁하지 말고 여기서 막는다.
+VAGUE_WORDS = ("포괄적", "목표가 겹침", "방향이 겹침", "방향이 같", "방향이 일치",
+               "공통으로 언급", "공통 목표", "목표를 공유", "취지가 같", "맥을 같이")
+
+
+def vague(why: str | None) -> bool:
+    """겹친 내용을 가리키지 못하는 근거. 화면에 내보내지 않는다."""
+    return not why or any(w in why for w in VAGUE_WORDS)
+
+
 def run_match_bid(conn, limit: int | None, redo: bool) -> None:
     """예산사업형 공약 ↔ 그 지자체가 임기 중 낸 공사 입찰공고.
 
@@ -699,11 +712,22 @@ RACE_PROMPT = """한 선거구에 함께 나온 후보들의 대표공약 목록
 - 겹치는 게 없는 것이 정상이다. **억지로 붙이는 쪽이 빠뜨리는 쪽보다 훨씬 해롭다.**
 - confidence 는 0~1. 확신이 없으면 낮게 준다.
 - why 는 무엇이 같은지 한 줄 (40자 이내).
-- specific 은 **겹친 내용이 확인할 수 있을 만큼 구체적인가**. 사람·장소·사업·금액처럼
-  가리키는 것이 분명하면 true 다 ('월 30만원 기본소득', '47번 국도 지하화',
-  'GTX-C 조기 개통', '미사섬 국가정원'). 둘 다 방향만 말하는 표어라 겹친다고 적어도
-  읽는 사람이 새로 아는 게 없으면 false 다 ('살기 좋은 도시' 와 '건강도시',
-  '약자와의 동행' 과 '행복한 복지도시'). **망설여지면 false 다.**
+- specific 은 **겹친 내용이 확인할 수 있을 만큼 구체적인가**.
+
+  true: 무엇을 하겠다는 것인지 가리킬 수 있으면 된다. 이름 붙은 사업만이 아니다.
+    · 사업·장소·금액 — '월 30만원 기본소득', '47번 국도 지하화', '미사섬 국가정원'
+    · 이름은 없어도 **손에 잡히는 수단** — '빈집 정비', '시내버스 요금 무료화',
+      '공공산후조리원 설립', '교복 자율화'
+    · 그 지역의 **구체적 현안** — '동·서부 교육격차 해소', '화천댐 물 주권'
+
+  false: 방향만 있고 수단이 없을 때다. 겹친다고 적어도 읽는 사람이 이미 아는 말이다.
+    · '살기 좋은 도시' 와 '건강도시', '약자와의 동행' 과 '행복한 복지도시'
+    · '지역 경제 활성화', '복지 강화', '교통 편의 증진' 처럼 어느 후보나 하는 말
+
+  **망설여지면 false 다.** 잘못 붙는 쪽이 빠뜨리는 쪽보다 훨씬 해롭다.
+
+  판단은 **why 에 적을 한 줄**로 하라. 그 한 줄이 두 공약 제목을 읽은 사람에게
+  새 정보를 주면 true, 제목만 봐도 알 수 있는 말이면 false 다.
 
 후보와 공약:
 {pledges}"""
@@ -823,7 +847,8 @@ def run_match_race(conn, limit: int | None, redo: bool) -> None:
                 continue
             lo, hi = (a, b) if a < b else (b, a)
             pairs.append((lo, hi, float(m.get("confidence") or 0),
-                          (m.get("why") or "")[:300], bool(m.get("specific"))))
+                          (m.get("why") or "")[:300],
+                          bool(m.get("specific")) and not vague(m.get("why"))))
 
         with conn.cursor() as cur:
             cur.executemany(
