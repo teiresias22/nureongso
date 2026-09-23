@@ -26,6 +26,10 @@ const MP_TERM_EARLY_UNTIL = "2025-05-30";
 
 /** 제9회 지방선거 당선자 취임일. 단체장·교육감은 이 날부터가 자기 임기다. */
 const HEAD_TERM_START = "2026-07-01";
+/** 취임(2026-07-01) + 1년. 의원과 같은 기준이다 — 임기 시작 1년 안의 공고는
+ *  전임 임기에 준비된 것일 수 있다. 취임 석 달째인 지금은 전부가 여기 걸리는데,
+ *  그게 사실이라 그대로 붙인다. 시간이 지나면 저절로 갈린다. */
+const HEAD_TERM_EARLY_UNTIL = "2027-07-01";
 
 /** 단체장·교육감이 장으로 있는 발주기관 이름. collector/judge.py 의 ordin_org 와
  *  같은 규칙이다 — 조례를 찾을 때 쓰는 기관명이 발주기관명과 같은 형식이다.
@@ -1007,10 +1011,9 @@ export default async function MemberPage({
             {(districtBids as DistrictBid[]).map((b) => {
               // 임기 시작 1년 안에 나온 공고는 전임 임기에 준비된 것일 수 있다.
               // 공공 공사는 예산 편성부터 발주까지 보통 1년 넘게 걸린다.
-              // 단체장은 취임 석 달째라 전부가 '임기 초' 다. 배지를 달면 모든 줄에
-              // 붙어 뜻이 없어진다. 그 사정은 위 안내문에 한 번 적었다.
               const early =
-                isMP && !!b.notice_at && b.notice_at < MP_TERM_EARLY_UNTIL;
+                !!b.notice_at
+                && b.notice_at < (isMP ? MP_TERM_EARLY_UNTIL : HEAD_TERM_EARLY_UNTIL);
               return (
                 <li key={b.id} className="px-4 py-2 text-sm">
                   <a
