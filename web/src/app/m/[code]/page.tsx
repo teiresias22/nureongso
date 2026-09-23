@@ -527,23 +527,42 @@ export default async function MemberPage({
         </section>
       )}
 
-      {/* 목차. 한 사람 화면이 길어서(공약 수십 건 + 법안 두 목록 + 발주 수백 건)
-          아래에 무엇이 있는지 모른 채 스크롤하게 된다. 누르면 그 구획으로 간다.
-          앵커 링크라 스크립트가 필요 없고, 접힌 구획도 브라우저가 열어 준다. */}
+      {/* 목차. 한 사람 화면이 길다 — 공약이 선거마다 한 구획씩, 법안 목록 둘,
+          후보 비교, 발주 수백 건. 게다가 이제 전부 펼쳐져 있어 더 길다.
+
+          본문 카드와 확실히 달라 보여야 한다. 카드는 bg-card 에 실선 테두리인데
+          여기는 페이지 배경색에 위아래 줄만 두고, 왼쪽에 '목차' 딱지를 붙이고,
+          항목을 알약 모양으로 둔다. 읽는 것이 아니라 누르는 줄임을 모양으로 말한다.
+
+          앵커 링크라 스크립트가 필요 없다. */}
       {nav.length > 2 && (
-        <nav className="sticky top-0 z-10 -mx-4 overflow-x-auto border-y border-line bg-card/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-lg sm:border">
-          <ul className="flex gap-1 whitespace-nowrap">
-            {nav.map((n) => (
-              <li key={n.id}>
-                <a
-                  href={`#${n.id}`}
-                  className="block rounded px-2 py-1 text-xs text-muted hover:bg-background/60 hover:text-foreground"
-                >
-                  {n.label}
-                </a>
-              </li>
-            ))}
-          </ul>
+        <nav
+          aria-label="목차"
+          className="sticky top-0 z-20 -mx-4 border-y border-line bg-background/95 px-4 py-2 backdrop-blur"
+        >
+          <div className="flex items-center gap-2">
+            <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold text-muted">
+              <span aria-hidden className="flex flex-col gap-[3px]">
+                <span className="block h-[2px] w-3 rounded bg-muted" />
+                <span className="block h-[2px] w-3 rounded bg-muted" />
+                <span className="block h-[2px] w-2 rounded bg-muted" />
+              </span>
+              목차
+            </span>
+            <span aria-hidden className="h-4 w-px shrink-0 bg-line" />
+            <ul className="flex gap-1.5 overflow-x-auto whitespace-nowrap">
+              {nav.map((n) => (
+                <li key={n.id}>
+                  <a
+                    href={`#${n.id}`}
+                    className="block rounded-full border border-line px-2.5 py-1 text-xs text-muted transition hover:border-muted hover:bg-card hover:text-foreground"
+                  >
+                    {n.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
         </nav>
       )}
 
@@ -979,7 +998,9 @@ function Stat({ label, value, unit, sub }:
   );
 }
 
-/** fold 를 주면 접힌 상태로 시작한다. 제목줄 전체가 누르는 자리다.
+/** fold 를 주면 접을 수 있게 된다. 다만 **기본값은 펼침**이다 — 접어 두면 아래에
+ *  뭐가 있는지 모른 채 지나친다. 길어서 접고 싶은 사람은 제목줄을 누르면 된다.
+ *  제목줄 전체가 누르는 자리다.
  *  details/summary 라 스크립트가 필요 없고, 검색엔진은 접힌 내용도 읽는다. */
 function Section({
   title, count, children, fold, id,
@@ -998,7 +1019,7 @@ function Section({
     );
   }
   return (
-    <details id={id} className="group scroll-mt-14 overflow-hidden rounded-lg border border-line bg-card">
+    <details id={id} open className="group scroll-mt-14 overflow-hidden rounded-lg border border-line bg-card">
       <summary className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-semibold marker:content-none hover:bg-background/40 group-open:border-b group-open:border-line [&::-webkit-details-marker]:hidden">
         <span className="min-w-0">{head}</span>
         <span className="ml-auto shrink-0 text-xs font-normal text-muted group-open:hidden">펼치기</span>
