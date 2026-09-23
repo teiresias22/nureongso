@@ -202,6 +202,18 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
                 pairs.append((sorted(ks), it["id"]))
         with conn.cursor() as cur:
             cur.executemany("update pledge set kinds = %s where id = %s", pairs)
+            # 이 사람의 '대조 끝났음' 기록을 지운다.
+            #
+            # match 단계들은 ingest_run 에 기록이 있으면 건너뛴다. classify 가 그
+            # 뒤에 돌면 새로 유형이 붙은 공약은 영원히 대조되지 않는다 — 실측으로
+            # 5,262건이 이 상태였다 (입법 1,090 · 조례 846 · 예산사업 3,326).
+            #
+            # 유형이 바뀌었으면 다시 봐야 한다. 여기서 지우면 다음 match 실행이
+            # 이 사람만 정확히 집는다.
+            cur.execute(
+                "delete from ingest_run where source in"
+                " ('match:' || %s, 'ordin:' || %s, 'bid:' || %s, 'fiscal:' || %s)",
+                (mcode, mcode, mcode, mcode))
         conn.commit()
         done += 1
         tagged += len(pairs)
@@ -906,12 +918,21 @@ with ev as (
   left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
                   and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
   -- 그 대안이 실제로 통과했는지는 본회의 기록에서 직접 읽는다. 추정하지 않는다.
-  -- 같은 위원회·같은 본회의 날짜의 같은 법률명 '(대안)' 이 유일하게 대응된다
-  -- (실측: 한 원안에 대안이 둘 이상 붙는 경우 0건, 4,101건 중 3,688건이 이어졌고
-  --  그중 3,686건이 가결이었다). 못 이은 10%%는 통과했다고 치지 않는다.
+  -- 같은 본회의 날짜에 처리된 같은 법률명 '(대안)' 이 유일하게 대응된다.
+  --
+  -- 위원회는 맞추지 않는다. 위원장 대안이 아니라 의원 발의 대안이면 본회의 기록의
+  -- 위원회 칸이 '본회의' 로 들어와 원안의 소관 위원회와 안 맞는다. 이것 때문에
+  -- 142건을 놓치고 있었다 (정보통신망법, 주택법, 정부조직법 …).
+  --
+  -- 날짜와 법률명만으로도 모호하지 않다 — 실측으로 한 원안에 대안이 둘 이상 붙는
+  -- 경우가 0건이다. 4,101건 중 3,830건이 이어졌고 그중 3,828건이 가결이었다.
+  --
+  -- 남은 271건은 이름이 아예 다른 대안에 통합된 것이다 ('북극항로 개척 및 활성화
+  -- 지원 특별법안' 이 '북극항로 활용 촉진 및 연관산업 육성에 관한 특별법안(대안)'
+  -- 으로). 이름으로는 같은 것인지 알 수 없어 통과했다고 치지 않는다.
   left join plenary_bill alt
     on b.proc_result = '대안반영폐기'
-   and alt.committee = b.committee and alt.proc_dt = b.proc_dt
+   and alt.proc_dt = b.proc_dt
    -- '%%(' 를 psycopg 가 이름 있는 파라미터로 읽어 버려 strpos 로 쓴다.
    and alt.name like regexp_replace(
          b.name, '\\s*(일부개정|전부개정|폐지)?법률안.*$', '') || '%%'

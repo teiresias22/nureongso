@@ -9,9 +9,17 @@ name: 이행 근거 수집
 # 시행일자·공고일이 뒤늦게 붙거나 고쳐지는 건이 있어서, 지난주 것만 받으면 샌다.
 # 전부 upsert 라 겹쳐 받아도 행이 늘지 않는다.
 #
-# 공약과 잇는 단계(judge.py match_ordin / match_bid)는 여기서 돌리지 않는다.
-# LLM 한도를 쓰고 결과를 사람이 봐야 해서 손으로 돌린다. decide 는 LLM 이 없고
-# 규칙만 다시 적용하므로 같이 돌린다.
+# 공약 분류(classify)와 대조(match·match_ordin·match_bid)도 돌린다. 처음엔 LLM
+# 한도 때문에 손으로 돌렸는데, 그러다 classify 를 대조보다 나중에 돌려서 새로
+# 유형이 붙은 공약 5,262건이 영원히 대조되지 않는 구멍이 생겼다. 순서를 여기에
+# 박아 두면 그 실수를 되풀이하지 않는다.
+#
+# 한도는 걱정할 만큼 쓰지 않는다. 네 단계 모두 '아직 안 한 것' 만 집어서, 새
+# 공약이 안 들어온 주에는 0건 호출한다. 선거 직후처럼 몰릴 때는 한도에서 깨끗이
+# 멈추고 다음 주에 이어서 한다 (사람 단위로 기록이 남는다).
+#
+# 후보 간 공약 비교(match_race)는 넣지 않는다. 선거 때만 새로 생기고 표본 검증을
+# 사람이 해야 한다.
 on:
   schedule:
     - cron: "0 20 * * 0" # 매주 월요일 05:00 KST (UTC+9)
@@ -72,6 +80,40 @@ jobs:
           # 지역구-공사현장 대응표는 새 지역이 생겼을 수 있으니 매번 다시 만든다.
           python bid.py link
 
+      # 아래 넷은 LLM 을 쓴다. 한도에 걸리면 QuotaExhausted 로 깨끗이 멈추고 다음
+      # 주에 이어서 한다. 한 단계가 멈췄다고 판정까지 건너뛰지는 않는다.
+      - name: 공약 분류
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python judge.py classify
+
+      - name: 법안 대조
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python judge.py match
+
+      - name: 조례 대조
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python judge.py match_ordin
+
+      - name: 발주 대조
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python judge.py match_bid
+
       - name: 판정 다시 적용
         working-directory: collector
         env:
@@ -109,6 +151,14 @@ jobs:
                         " law.go.kr 접속이 계속 막히는 것일 수 있습니다."
                         " 반복되면 data.go.kr 중계"
                         "(1170000/law/ordinSearchList.do)로 옮기세요.")
+              # 이 둘이 0 이 아니면 한도에 걸려 멈춘 것이다. 다음 주에 이어서 한다.
+              cur.execute("select count(*) from pledge where kinds is null")
+              print(f"\n유형 없는 공약: {cur.fetchone()[0]:,}건")
+              cur.execute("""select count(distinct p.member_code) from pledge p
+                             where '입법' = any(p.kinds)
+                               and not exists (select 1 from ingest_run r
+                                               where r.source = 'match:' || p.member_code)""")
+              print(f"법안 대조 안 된 사람: {cur.fetchone()[0]}명")
               cur.execute("select pg_size_pretty(pg_database_size(current_database()))")
               print(f"\nDB 용량: {cur.fetchone()[0]} / 무료 한도 500MB")
               cur.execute("""select status, count(*) from pledge_status
