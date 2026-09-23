@@ -37,11 +37,26 @@ type DistrictBid = {
 /** 처리 상태 필터. proc_result 는 '원안가결/수정가결/폐기/대안반영폐기...' 처럼
  *  값이 여러 가지라 접두 매칭이 아니라 의미 단위로 묶는다. */
 const BILL_FILTERS = [
-  { key: "", label: "전체" },
-  { key: "passed", label: "가결" },
-  { key: "pending", label: "계류" },
-  { key: "dropped", label: "폐기·기타" },
+  { key: "", label: "전체", tone: "" },
+  { key: "passed", label: "가결", tone: "passed" },
+  { key: "pending", label: "계류", tone: "pending" },
+  { key: "dropped", label: "폐기·기타", tone: "dropped" },
 ] as const;
+
+/** 처리 상태 색. 공약 판정 배지(StatusBadge)와 같은 뜻의 색을 쓴다 —
+ *  된 것은 초록, 진행 중은 주황, 끝났지만 안 된 것은 회색. 한 화면에 둘이
+ *  같이 있으므로 색이 어긋나면 읽는 사람이 다시 배워야 한다. */
+const BILL_TONE: Record<string, string> = {
+  passed: "border-green-600/40 bg-green-600/10 text-green-700 dark:text-green-400",
+  pending: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  dropped: "border-line bg-foreground/5 text-muted",
+};
+
+/** 국회 기록 그대로 가른다. '대안반영폐기' 는 여기서 폐기로 둔다 — 공식 기록이
+ *  그렇다. 그 내용이 대안으로 통과했는지는 공약 판정에서 따로 확인하고, 그쪽
+ *  배지에 '대안에 반영돼 통과' 로 적는다 (judge.py law_merged). */
+const billTone = (r?: string | null) =>
+  !r ? "pending" : r.includes("가결") ? "passed" : "dropped";
 
 /** 공약 출처가 둘이라 섞으면 안 된다. 대표공약은 법정 상한이 있는 5~10건이고,
  *  선거공보는 후보가 낸 전체 공약이다. */
@@ -1120,15 +1135,39 @@ function BillList({
           <Link
             key={f.key}
             href={link({ [param]: f.key, [pageParam]: "1" })}
-            className={`rounded px-2 py-1 text-xs ${
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs ${
               filter === f.key ? "bg-foreground text-background" : "text-muted hover:text-foreground"
             }`}
           >
+            {/* 칩이 곧 범례다. 목록의 배지와 같은 색을 여기 점으로 보여 준다. */}
+            {f.tone && (
+              <span
+                aria-hidden
+                className={`h-2 w-2 rounded-full ${
+                  f.tone === "passed" ? "bg-green-600"
+                    : f.tone === "pending" ? "bg-amber-500" : "bg-stone-400"
+                }`}
+              />
+            )}
             {f.label}
           </Link>
         ))}
         <span className="ml-auto text-xs text-muted">{total.toLocaleString()}건</span>
       </div>
+
+      {/* '폐기·기타' 의 대부분은 대안반영폐기다. 국회 기록이 '폐기' 라 목록에서는
+          그대로 회색으로 두되, 그게 실패를 뜻하지 않는다는 건 적어 둬야 한다 —
+          위원회가 내용을 대안에 담고 원안을 정리한 것이고, 국회에서 법안이 법이
+          되는 가장 흔한 길이다. */}
+      {filter === "dropped" && (
+        <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
+          <b className="text-foreground">&lsquo;대안반영폐기&rsquo;는 실패가 아닙니다.</b>{" "}
+          위원회가 비슷한 법안들을 묶어 위원장 대안 하나로 만들면서 원안을 정리한
+          것으로, 내용은 대안에 살아 있습니다. 국회에서 법안이 법이 되는 가장 흔한
+          길입니다.{" "}
+          <Link href="/rules" className="underline underline-offset-2">판정 기준</Link>
+        </p>
+      )}
 
       {/* 연도는 처리 상태와 따로 걸린다. 한 줄에 같이 늘어놓으면 '가결' 과 '2025' 가
           같은 갈래로 보여 둘 중 하나만 고르는 줄 안다. */}
@@ -1163,8 +1202,13 @@ function BillList({
               >
                 {b.name}
               </Link>
-              <span className="shrink-0 text-xs text-muted">
-                {b.proposed_at} · {b.proc_result ?? "계류"}
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
+                {b.proposed_at}
+                <span
+                  className={`rounded border px-1.5 py-0.5 text-[11px] ${BILL_TONE[billTone(b.proc_result)]}`}
+                >
+                  {b.proc_result ?? "계류"}
+                </span>
               </span>
             </li>
           ))}
