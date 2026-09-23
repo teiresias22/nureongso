@@ -221,6 +221,12 @@ export type Rival = Pick<
   | "vote_rate" | "elected" | "member_code"
 > & { name: string };
 
+/** 같은 선거구 두 후보의 공약이 같은 것을 약속하는 쌍. a < b 로 한 줄만 있다. */
+export type PledgeOverlap = { a: number; b: number; summary: string | null };
+
+/** 경쟁 후보의 공약서 대표공약 한 줄. */
+export type RivalPledge = { id: number; member_code: string | null; title: string };
+
 export type OfficeTerm = {
   member_code: string;
   office: string;

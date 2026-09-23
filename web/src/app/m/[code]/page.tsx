@@ -6,7 +6,7 @@ import {
   db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText,
   type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type BidNotice, type Ordinance, type Rival,
+  type BidNotice, type Ordinance, type PledgeOverlap, type Rival, type RivalPledge,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -260,6 +260,56 @@ export default async function MemberPage({
         .order("budget", { ascending: false })
         .limit(DISTRICT_BID_PAGE)
     : { data: [], count: 0 };
+  // 같은 선거구에 함께 나온 후보들의 공약 중 같은 약속. 한 지역 공약은 비슷비슷해서,
+  // 무엇이 같은지 갈라 줘야 무엇이 다른지 보인다.
+  //
+  // 공약서(대표공약)끼리만 본다. 당선인은 선거공보 전체 공약도 있지만 낙선자는 공약서
+  // 5~10개뿐이라 섞으면 한쪽만 길어 비교가 기울어진다.
+  //
+  // 국회의원은 대상이 아니다. 선관위가 선거 후 당선인 공약만 남겨 낙선자 것을 구할 수 없다.
+  const ownRace = isMP ? undefined : runs.find((c) => c.elected && c.office === m.office);
+  const raceRivals = ownRace ? rivalsOf(ownRace) : [];
+  const myDocPledges = (pledges ?? []).filter(
+    (p) => p.source === "공약서" && p.election_id === ownRace?.election_id,
+  );
+  const rivalCodes = [...new Set(raceRivals.map((r) => r.member_code).filter(Boolean))] as string[];
+  const { data: rivalPledges } = rivalCodes.length && myDocPledges.length
+    ? await db
+        .from("pledge")
+        .select("id, member_code, title")
+        .in("member_code", rivalCodes)
+        .eq("election_id", ownRace!.election_id)
+        .eq("source", "공약서")
+        .order("order_no")
+    : { data: [] };
+  // 쌍은 a<b 로 한 줄만 있다. 내 공약이 a 쪽일 수도 b 쪽일 수도 있어 양쪽을 다 찾는다.
+  const myIds = myDocPledges.map((p) => p.id as number);
+  const { data: overlapRows } = myIds.length && (rivalPledges ?? []).length
+    ? await db
+        .from("pledge_overlap")
+        .select("a, b, summary")
+        .or(`a.in.(${myIds.join(",")}),b.in.(${myIds.join(",")})`)
+    : { data: [] };
+  const myTitle = new Map(myDocPledges.map((p) => [p.id as number, p.title as string]));
+  const rivalById = new Map(
+    ((rivalPledges ?? []) as RivalPledge[]).map((p) => [p.id, p]),
+  );
+  /** 경쟁자별 겹친 쌍. 내 공약 제목 ↔ 그 사람 공약 제목. */
+  const overlapBy = new Map<string, { mine: string; theirs: string; why: string | null }[]>();
+  for (const o of (overlapRows ?? []) as PledgeOverlap[]) {
+    const [mineId, theirId] = myTitle.has(o.a) ? [o.a, o.b] : [o.b, o.a];
+    const theirs = rivalById.get(theirId);
+    // 같은 선거구의 다른 사람이 아니면(다른 선거에서 온 쌍) 건너뛴다.
+    if (!theirs || !myTitle.has(mineId) || !theirs.member_code) continue;
+    const list = overlapBy.get(theirs.member_code) ?? [];
+    list.push({ mine: myTitle.get(mineId)!, theirs: theirs.title, why: o.summary });
+    overlapBy.set(theirs.member_code, list);
+  }
+  const rivalPledgeCount = new Map<string, number>();
+  for (const p of (rivalPledges ?? []) as RivalPledge[]) {
+    if (p.member_code) rivalPledgeCount.set(p.member_code, (rivalPledgeCount.get(p.member_code) ?? 0) + 1);
+  }
+
   // 국회의원은 열린국회정보의 선수를, 나머지는 선관위 당선 횟수를 쓴다.
   const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m.office);
   const showPledges = hasPledges(s);
@@ -694,6 +744,62 @@ export default async function MemberPage({
             />
           </Section>
         </>
+      )}
+
+      {!!raceRivals.length && !!myDocPledges.length && (
+        <Section title="같은 선거구 후보와 공약 비교" count={raceRivals.length} fold>
+          <p className="border-b border-line px-4 py-2 text-xs text-muted">
+            한 지역에 나온 후보들의 공약은 비슷비슷합니다. 무엇이 같은지 먼저 갈라야 무엇이
+            다른지 보입니다. <b>공약서에 낸 대표공약끼리</b> 비교합니다 — 선거공보 전체 공약은
+            낙선자 것이 공개되지 않아 넣지 않습니다.
+          </p>
+          <ul className="divide-y divide-line">
+            {raceRivals.map((r) => {
+              const pairs = (r.member_code && overlapBy.get(r.member_code)) || [];
+              const n = (r.member_code && rivalPledgeCount.get(r.member_code)) || 0;
+              return (
+                <li key={r.id}>
+                  <Fold
+                    open={!!pairs.length}
+                    hint={`겹친 공약 ${pairs.length}`}
+                    head={
+                      <span className="block px-4 py-2.5 text-sm">
+                        <span className="font-medium">{r.name}</span>
+                        <span className="ml-1.5 text-xs text-muted">
+                          {[lastPart(r.party), r.vote_rate != null ? `${r.vote_rate}%` : ""]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted">
+                          {/* 자료가 없는 것과 안 겹치는 것은 다르다. 그대로 적는다. */}
+                          {n === 0
+                            ? "공약서 자료가 없습니다"
+                            : pairs.length === 0
+                              ? `대표공약 ${n}개 — 겹치는 공약이 없습니다`
+                              : `대표공약 ${n}개 중 ${pairs.length}개가 겹칩니다`}
+                        </span>
+                      </span>
+                    }
+                  >
+                    <ul className="space-y-2 px-4 pb-3 text-xs">
+                      {pairs.map((x, i) => (
+                        <li key={i} className="rounded border border-line/70 p-2">
+                          <span className="block">
+                            <b className="text-muted">{m.name}</b> {x.mine}
+                          </span>
+                          <span className="mt-0.5 block">
+                            <b className="text-muted">{r.name}</b> {x.theirs}
+                          </span>
+                          {x.why && <span className="mt-1 block text-muted">{x.why}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </Fold>
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
       )}
 
       {isDistrictMP && !!districtBids?.length && (

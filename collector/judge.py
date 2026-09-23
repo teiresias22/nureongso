@@ -6,6 +6,7 @@
   classify     공약마다 무엇으로 이행을 확인할 수 있는지 유형을 붙인다 (LLM)
   match        입법형 공약을 본인 대표발의 법안과 대조해 근거를 붙인다 (LLM)
   match_ordin  조례제도형 공약을 그 지자체 자치법규와 대조한다 (LLM, 단체장·교육감)
+  match_race   같은 선거구에 함께 나온 후보들의 공약 중 같은 약속을 찾는다 (LLM)
   decide       근거를 보고 규칙표대로 판정한다 (LLM 없음, 몇 번 돌려도 같은 결과)
 
 LLM 은 '이 공약과 이 기록이 같은 일인가' 만 판단한다. '이행됐다' 는 말은 decide 의
@@ -16,10 +17,14 @@ LLM 은 '이 공약과 이 기록이 같은 일인가' 만 판단한다. '이행
 
 match_ordin 은 ordin.py 로 자치법규를 먼저 받아 둬야 한다.
 
+match_race 는 판정과 무관하다. 누가 무엇을 약속했는지 보여줄 뿐 잘잘못을 가리지 않아서
+pledge_status 를 건드리지 않고 pledge_overlap 에만 쌓는다.
+
 사용:
     python judge.py classify --limit 5    # 먼저 소량으로 품질 확인
     python judge.py all
     python judge.py decide                # 규칙만 다시 적용
+    python judge.py match_race            # 선거 때만. all 에 들어 있지 않다.
 
 환경변수: DATABASE_URL + llm.py 가 쓰는 것 (기본 GEMINI_API_KEY)
 """
@@ -671,6 +676,161 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
     print(f"[match_bid] {done}명, 공약-공고 연결 {linked}건", file=sys.stderr)
 
 
+
+# --------------------------------------------------------------------------- match_race
+
+RACE_PROMPT = """한 선거구에 함께 나온 후보들의 대표공약 목록이다. **서로 다른 후보의 공약 중
+같은 것을 약속한 쌍**을 찾아라.
+
+한 지역에 나온 후보들의 공약은 비슷비슷하다. 유권자가 '누가 무엇을 다르게 약속했나' 를
+보려면, 먼저 무엇이 같은지 갈라 줘야 한다.
+
+규칙:
+- 반드시 아래 목록에 있는 pledge_id 만 쓴다. 없는 id 를 지어내지 마라.
+- **서로 다른 후보의 공약끼리만** 짝짓는다. 같은 후보의 공약 둘을 묶지 마라.
+- **대상과 수단이 같아야** 같은 약속이다. 분야가 같은 것만으로는 아니다.
+  ('교통망 확충' 과 '○○선 연장' 은 다르다. '○○선 연장' 과 '○○선 조기 착공' 은 같다.)
+- **제목은 표어다. 판단은 본문으로 하라.** '따뜻한 복지도시', '살기 좋은 ○○' 같은
+  표어끼리는 무엇을 하겠다는 것인지 본문에 드러나야 짝지을 수 있다. 본문을 봐도
+  겹치는 게 무엇인지 한 줄로 못 쓰겠으면 짝짓지 마라.
+- 한쪽이 넓고 한쪽이 좁으면 다른 약속이다. ('복지 강화' 와 '공공의료원 건립',
+  'AI 일자리' 와 '장학금 확대' 는 다르다.)
+- 반대 방향의 약속은 같은 약속이 아니다 ('재개발 추진' 과 '재개발 반대').
+- 겹치는 게 없는 것이 정상이다. **억지로 붙이는 쪽이 빠뜨리는 쪽보다 훨씬 해롭다.**
+- confidence 는 0~1. 확신이 없으면 낮게 준다.
+- why 는 무엇이 같은지 한 줄 (40자 이내).
+
+후보와 공약:
+{pledges}"""
+
+RACE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "pairs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "integer"},
+                    "b": {"type": "integer"},
+                    "confidence": {"type": "number"},
+                    "why": {"type": "string"},
+                },
+                "required": ["a", "b", "confidence"],
+            },
+        }
+    },
+    "required": ["pairs"],
+}
+
+
+def run_match_race(conn, limit: int | None, redo: bool) -> None:
+    """같은 선거구 후보들의 공약 중 같은 약속을 찾는다.
+
+    **공약서(대표공약)끼리만** 본다. 당선인은 선거공보 전체 공약도 있지만 낙선자는
+    공약서 5~10개뿐이라, 섞으면 한쪽만 길어 비교가 기울어진다.
+
+    지방선거 단체장·교육감만이다. 국회의원은 낙선자 공약을 구할 수 없다 — 선관위가
+    선거가 끝나면 당선인 것만 남긴다(실측: policy.nec.go.kr 에 후보자 경로가 없다).
+
+    낙선자 중에도 member 행이 있는 사람만 공약이 들어와 있다. 자료가 없는 후보는
+    화면에서 '공약서 자료 없음' 으로 적는다 — 안 겹치는 것과 자료가 없는 것은 다르다.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select c.election_id, c.sg_typecode, c.sd_name, coalesce(c.district,''),
+                   count(distinct c.member_code)
+            from candidacy c
+            join pledge p on p.member_code = c.member_code
+                         and p.election_id = c.election_id
+                         and p.source = '공약서'
+            where c.sg_typecode in ('3', '4', '11')
+            group by 1, 2, 3, 4
+            having count(distinct c.member_code) >= 2
+            order by count(distinct c.member_code) desc
+            """)
+        races = cur.fetchall()
+
+    if not redo:
+        with conn.cursor() as cur:
+            cur.execute("select source from ingest_run where source like 'race:%'")
+            done_keys = {s for (s,) in cur.fetchall()}
+        races = [r for r in races
+                 if f"race:{r[0]}|{r[1]}|{r[2]}|{r[3]}" not in done_keys]
+    if limit:
+        races = races[:limit]
+    print(f"  대상 선거구 {len(races)}곳", file=sys.stderr)
+
+    done = paired = 0
+    for i, (el, sgt, sd, dist, _n) in enumerate(races, 1):
+        key = f"race:{el}|{sgt}|{sd}|{dist}"
+        with conn.cursor() as cur:
+            cur.execute(
+                "select p.id, c.name, coalesce(c.party,''), p.title, coalesce(p.body,'')"
+                " from candidacy c"
+                " join pledge p on p.member_code = c.member_code"
+                "              and p.election_id = c.election_id"
+                "              and p.source = '공약서'"
+                " where c.election_id = %s and c.sg_typecode = %s"
+                "   and c.sd_name = %s and coalesce(c.district,'') = %s"
+                " order by c.elected desc, c.giho, p.order_no",
+                (el, sgt, sd, dist))
+            rows = cur.fetchall()
+
+        # 누구 공약인지 모델이 알아야 '같은 후보끼리 짝짓지 마라' 를 지킬 수 있다.
+        by_person: dict[str, list[str]] = {}
+        owner: dict[int, str] = {}
+        for pid, name, party, title, body in rows:
+            who = f"{name}({party})" if party else name
+            owner[pid] = who
+            by_person.setdefault(who, []).append(f"  {pid}. {title}\n     {body[:400]}")
+        listing = "\n".join(f"[{who}]\n" + "\n".join(items)
+                             for who, items in by_person.items())
+
+        try:
+            out = llm.complete_json(
+                RACE_PROMPT.replace("{pledges}", listing), RACE_SCHEMA)
+        except llm.QuotaExhausted as e:
+            print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  키별 성공: {llm.key_usage()}", file=sys.stderr)
+            print(f"  선거구 {len(races) - i + 1}곳이 남았습니다.", file=sys.stderr)
+            break
+        except llm.LLMError as e:
+            print(f"  [{i}/{len(races)}] {sd} {dist} 실패: {str(e)[:120]}", file=sys.stderr)
+            continue
+
+        pairs = []
+        for m in out.get("pairs", []):
+            a, b = m.get("a"), m.get("b")
+            if a not in owner or b not in owner:
+                continue
+            # 같은 후보의 공약 둘은 '겹침' 이 아니다. 모델이 어겨도 여기서 막는다.
+            if owner[a] == owner[b]:
+                continue
+            if self_contradicted(m.get("why")):
+                continue
+            lo, hi = (a, b) if a < b else (b, a)
+            pairs.append((lo, hi, float(m.get("confidence") or 0),
+                          (m.get("why") or "")[:300]))
+
+        with conn.cursor() as cur:
+            cur.executemany(
+                "insert into pledge_overlap (a, b, score, summary)"
+                " values (%s,%s,%s,%s)"
+                " on conflict (a, b) do update set"
+                "   score = excluded.score, summary = excluded.summary", pairs)
+            cur.execute("insert into ingest_run (source, finished_at, rows)"
+                        " values (%s, now(), %s)", (key, len(pairs)))
+        conn.commit()
+        done += 1
+        paired += len(pairs)
+        if i % 20 == 0 or i == len(races):
+            print(f"  [{i}/{len(races)}] {done}곳 겹침 {paired}쌍", file=sys.stderr)
+
+    print(f"[match_race] 선거구 {done}곳, 같은 약속 {paired}쌍", file=sys.stderr)
+
+
 # --------------------------------------------------------------------------- decide
 
 # 판정 규칙. 서비스에 그대로 공개한다. 사람 판단이 아니라 표를 따르므로 재현 가능하다.
@@ -815,7 +975,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument(
         "step",
-        choices=["classify", "match", "match_ordin", "match_bid", "decide", "all"])
+        choices=["classify", "match", "match_ordin", "match_bid",
+                 "match_race", "decide", "all"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--redo", action="store_true")
     a = p.parse_args()
@@ -832,6 +993,9 @@ def main():
             run_match_ordin(conn, a.limit, a.redo)
         if a.step in ("match_bid", "all"):
             run_match_bid(conn, a.limit, a.redo)
+        # match_race 는 all 에 넣지 않는다. LLM 한도를 쓰는데 선거 때만 새로 생긴다.
+        if a.step == "match_race":
+            run_match_race(conn, a.limit, a.redo)
         if a.step in ("decide", "all"):
             run_decide(conn)
 

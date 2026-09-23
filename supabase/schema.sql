@@ -462,6 +462,25 @@ grant select on member_region, party_stats, region_stats, member_office_term, me
 alter table pledge_doc enable row level security;
 alter table ingest_run enable row level security;
 
+-- 같은 선거구에 함께 나온 두 후보의 공약이 같은 것을 약속하는 쌍.
+--
+-- 한 지역에 나온 후보들의 공약은 비슷비슷하다. 유권자가 '누가 무엇을 다르게 약속했나'
+-- 를 보려면 무엇이 같은지 먼저 갈라 줘야 한다.
+--
+-- 공약서(대표공약)끼리만 본다. 당선인은 선거공보 전체 공약도 있지만 낙선자는 공약서
+-- 5~10개뿐이라 섞으면 비교가 기울어진다. 국회의원은 아예 대상이 아니다 — 선관위가
+-- 선거 후 당선인 공약만 남겨 낙선자 것을 구할 수 없다.
+--
+-- a < b 로 한 번만 둔다. 방향이 없는 관계라 두 줄로 두면 화면에서 두 번 센다.
+create table if not exists pledge_overlap (
+  a        bigint references pledge(id) on delete cascade,
+  b        bigint references pledge(id) on delete cascade,
+  score    numeric,               -- LLM confidence 0~1
+  summary  text,                  -- 무엇이 같은지 한 줄
+  primary key (a, b)
+);
+create index if not exists pledge_overlap_b_idx on pledge_overlap (b);
+
 -- 공개 읽기 전용
 alter table member enable row level security;
 alter table bill enable row level security;
@@ -477,11 +496,12 @@ alter table sg_type enable row level security;
 alter table ordinance enable row level security;
 alter table bid_notice enable row level security;
 alter table member_sigungu enable row level security;
+alter table pledge_overlap enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);
