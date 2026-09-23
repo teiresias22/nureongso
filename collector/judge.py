@@ -699,6 +699,11 @@ RACE_PROMPT = """한 선거구에 함께 나온 후보들의 대표공약 목록
 - 겹치는 게 없는 것이 정상이다. **억지로 붙이는 쪽이 빠뜨리는 쪽보다 훨씬 해롭다.**
 - confidence 는 0~1. 확신이 없으면 낮게 준다.
 - why 는 무엇이 같은지 한 줄 (40자 이내).
+- specific 은 **겹친 내용이 확인할 수 있을 만큼 구체적인가**. 사람·장소·사업·금액처럼
+  가리키는 것이 분명하면 true 다 ('월 30만원 기본소득', '47번 국도 지하화',
+  'GTX-C 조기 개통', '미사섬 국가정원'). 둘 다 방향만 말하는 표어라 겹친다고 적어도
+  읽는 사람이 새로 아는 게 없으면 false 다 ('살기 좋은 도시' 와 '건강도시',
+  '약자와의 동행' 과 '행복한 복지도시'). **망설여지면 false 다.**
 
 후보와 공약:
 {pledges}"""
@@ -715,8 +720,9 @@ RACE_SCHEMA = {
                     "b": {"type": "integer"},
                     "confidence": {"type": "number"},
                     "why": {"type": "string"},
+                    "specific": {"type": "boolean"},
                 },
-                "required": ["a", "b", "confidence"],
+                "required": ["a", "b", "confidence", "specific"],
             },
         }
     },
@@ -735,6 +741,11 @@ def run_match_race(conn, limit: int | None, redo: bool) -> None:
 
     낙선자 중에도 member 행이 있는 사람만 공약이 들어와 있다. 자료가 없는 후보는
     화면에서 '공약서 자료 없음' 으로 적는다 — 안 겹치는 것과 자료가 없는 것은 다르다.
+
+    specific=false 인 쌍은 저장은 하되 화면에 내보내지 않는다. 구청장 후보는 대표공약
+    5개에 경제·복지·교통을 통째로 담는 일이 많아, 표어끼리 붙으면 '살기 좋은 수영구' 와
+    '건강도시 수영' 이 이어진다. 읽는 사람이 새로 아는 게 없고 틀린 것도 섞인다.
+    confidence 로는 안 갈린다 — 0.85 이상에도 표어끼리가 섞여 있었다(실측).
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -762,7 +773,7 @@ def run_match_race(conn, limit: int | None, redo: bool) -> None:
         races = races[:limit]
     print(f"  대상 선거구 {len(races)}곳", file=sys.stderr)
 
-    done = paired = 0
+    done = paired = sharp = 0
     for i, (el, sgt, sd, dist, _n) in enumerate(races, 1):
         key = f"race:{el}|{sgt}|{sd}|{dist}"
         with conn.cursor() as cur:
@@ -812,23 +823,27 @@ def run_match_race(conn, limit: int | None, redo: bool) -> None:
                 continue
             lo, hi = (a, b) if a < b else (b, a)
             pairs.append((lo, hi, float(m.get("confidence") or 0),
-                          (m.get("why") or "")[:300]))
+                          (m.get("why") or "")[:300], bool(m.get("specific"))))
 
         with conn.cursor() as cur:
             cur.executemany(
-                "insert into pledge_overlap (a, b, score, summary)"
-                " values (%s,%s,%s,%s)"
+                "insert into pledge_overlap (a, b, score, summary, specific)"
+                " values (%s,%s,%s,%s,%s)"
                 " on conflict (a, b) do update set"
-                "   score = excluded.score, summary = excluded.summary", pairs)
+                "   score = excluded.score, summary = excluded.summary,"
+                "   specific = excluded.specific", pairs)
             cur.execute("insert into ingest_run (source, finished_at, rows)"
                         " values (%s, now(), %s)", (key, len(pairs)))
         conn.commit()
         done += 1
         paired += len(pairs)
+        sharp += sum(1 for x in pairs if x[4])
         if i % 20 == 0 or i == len(races):
-            print(f"  [{i}/{len(races)}] {done}곳 겹침 {paired}쌍", file=sys.stderr)
+            print(f"  [{i}/{len(races)}] {done}곳 겹침 {paired}쌍"
+                  f" (구체적인 것 {sharp})", file=sys.stderr)
 
-    print(f"[match_race] 선거구 {done}곳, 같은 약속 {paired}쌍", file=sys.stderr)
+    print(f"[match_race] 선거구 {done}곳, 같은 약속 {paired}쌍,"
+          f" 그중 구체적인 것 {sharp}쌍", file=sys.stderr)
 
 
 # --------------------------------------------------------------------------- decide

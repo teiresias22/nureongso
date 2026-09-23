@@ -477,6 +477,11 @@ create table if not exists pledge_overlap (
   b        bigint references pledge(id) on delete cascade,
   score    numeric,               -- LLM confidence 0~1
   summary  text,                  -- 무엇이 같은지 한 줄
+  -- 겹친 내용이 확인할 수 있을 만큼 구체적인가. false 면 화면에 내보내지 않는다.
+  -- 구청장 후보는 대표공약 5개에 경제·복지·교통을 통째로 담는 일이 많아, 표어끼리
+  -- 붙으면 '살기 좋은 수영구' 와 '건강도시 수영' 이 이어진다. 읽는 사람이 새로 아는
+  -- 게 없다. confidence 로는 안 갈린다 — 0.85 이상에도 표어끼리가 섞여 있었다.
+  specific boolean
   primary key (a, b)
 );
 create index if not exists pledge_overlap_b_idx on pledge_overlap (b);

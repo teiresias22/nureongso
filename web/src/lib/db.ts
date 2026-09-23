@@ -222,7 +222,8 @@ export type Rival = Pick<
 > & { name: string };
 
 /** 같은 선거구 두 후보의 공약이 같은 것을 약속하는 쌍. a < b 로 한 줄만 있다. */
-export type PledgeOverlap = { a: number; b: number; summary: string | null };
+/** specific: 겹친 내용이 확인할 수 있을 만큼 구체적인가. 화면은 이것만 쓴다. */
+export type PledgeOverlap = { a: number; b: number; summary: string | null; specific: boolean | null };
 
 /** 경쟁 후보의 공약서 대표공약 한 줄. */
 export type RivalPledge = { id: number; member_code: string | null; title: string };

@@ -16,6 +16,9 @@ export const revalidate = 3600;
 const PAGE = 50;
 const DISTRICT_BID_PAGE = 30;
 
+/** 후보 간 공약 비교를 화면에 내보낼지. 위 주석 참고. */
+const SHOW_RACE = false;
+
 /** 제22대 국회 임기 시작(2024-05-30) + 1년. 이 날 전에 나온 공고는 전임 임기에
  *  준비된 것일 수 있다 — 공공 공사는 예산 편성부터 발주까지 보통 1년이 넘는다.
  *  버리지 않고 표시만 한다. 판단은 보는 사람 몫이다. */
@@ -287,7 +290,8 @@ export default async function MemberPage({
   const { data: overlapRows } = myIds.length && (rivalPledges ?? []).length
     ? await db
         .from("pledge_overlap")
-        .select("a, b, summary")
+        .select("a, b, summary, specific")
+        .eq("specific", true)
         .or(`a.in.(${myIds.join(",")}),b.in.(${myIds.join(",")})`)
     : { data: [] };
   const myTitle = new Map(myDocPledges.map((p) => [p.id as number, p.title as string]));
@@ -746,7 +750,18 @@ export default async function MemberPage({
         </>
       )}
 
-      {!!raceRivals.length && !!myDocPledges.length && (
+      {/* 아직 내보내지 않는다. 겹친 내용이 구체적일 때는 좋은데(47번 국도 지하화,
+          GTX-C 조기 개통, 월 30만원 기본소득), 양쪽이 다 포괄적 표어일 때는
+          '살기 좋은 수영구' 와 '건강도시 수영' 을 이어 붙인다. 틀린 것도 섞인다
+          ('머물고 싶은 관광기장' 과 '소상공인 통합지원센터').
+
+          confidence 로 거르려다 실패했다. 표본 9건에서는 0.9=구체 / 0.7=느슨으로
+          갈리는 듯했는데, 무작위로 더 뽑으니 0.85 이상에도 표어끼리가 섞여 있었다.
+          점수로는 안 갈린다.
+
+          match_race 가 쌍마다 specific 을 매기게 고쳤다. 254곳을 다시 돌려
+          그 값이 채워지면 SHOW_RACE 를 켠다. */}
+      {SHOW_RACE && !!raceRivals.length && !!myDocPledges.length && (
         <Section title="같은 선거구 후보와 공약 비교" count={raceRivals.length} fold>
           <p className="border-b border-line px-4 py-2 text-xs text-muted">
             한 지역에 나온 후보들의 공약은 비슷비슷합니다. 무엇이 같은지 먼저 갈라야 무엇이
