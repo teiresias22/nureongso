@@ -24,6 +24,24 @@ const SHOW_RACE = true;
  *  버리지 않고 표시만 한다. 판단은 보는 사람 몫이다. */
 const MP_TERM_EARLY_UNTIL = "2025-05-30";
 
+/** 제9회 지방선거 당선자 취임일. 단체장·교육감은 이 날부터가 자기 임기다. */
+const HEAD_TERM_START = "2026-07-01";
+
+/** 단체장·교육감이 장으로 있는 발주기관 이름. collector/judge.py 의 ordin_org 와
+ *  같은 규칙이다 — 조례를 찾을 때 쓰는 기관명이 발주기관명과 같은 형식이다.
+ *  시군구는 시도까지 있어야 한다 ('남구' 가 네 곳). 교육감은 지자체가 아니라 교육청이다. */
+const SIDO_ALIAS: Record<string, string> = {
+  광주광역시: "전남광주통합특별시",
+  전라남도: "전남광주통합특별시",
+};
+const headOrgOf = (office: string | null, sd: string | null, district: string | null) => {
+  if (!sd) return null;
+  const sido = SIDO_ALIAS[sd] ?? sd;
+  if (office === "구시군의장") return district ? `${sido} ${district}` : null;
+  if (office === "교육감") return `${sido}교육청`;
+  return sido;
+};
+
 type DistrictBid = {
   id: string;
   name: string;
@@ -271,22 +289,6 @@ export default async function MemberPage({
   // 지역구에서 임기 중 발주된 공공 공사. 공약과는 잇지 않는다 — 한 시군구를 여럿이
   // 나눠 갖는 의원이 253명 중 168명이라 누구 덕인지 가릴 수가 없다. 사실만 보인다.
   const isDistrictMP = isMP && m.elect_type !== "비례대표";
-  const bidYear = years.includes(sp.bidYear ?? "") ? sp.bidYear! : "";
-  const bidPage = Math.max(1, Number(sp.bidPage) || 1);
-  const { data: districtBids, count: districtBidTotal } = isDistrictMP
-    ? await (() => {
-        let q = db
-          .from("member_district_bid")
-          .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
-          .eq("member_code", code);
-        if (bidYear) {
-          q = q.gte("notice_at", `${bidYear}-01-01`).lte("notice_at", `${bidYear}-12-31`);
-        }
-        return q
-          .order("budget", { ascending: false })
-          .range((bidPage - 1) * DISTRICT_BID_PAGE, bidPage * DISTRICT_BID_PAGE - 1);
-      })()
-    : { data: [], count: 0 };
   // 같은 선거구에 함께 나온 후보들의 공약 중 같은 약속. 한 지역 공약은 비슷비슷해서,
   // 무엇이 같은지 갈라 줘야 무엇이 다른지 보인다.
   //
@@ -338,6 +340,35 @@ export default async function MemberPage({
     if (p.member_code) rivalPledgeCount.set(p.member_code, (rivalPledgeCount.get(p.member_code) ?? 0) + 1);
   }
 
+  // 발주 공사. 두 갈래인데 뜻이 다르다.
+  //   국회의원 — 지역구 안에서 남이 발주한 것. 본인은 발주 권한이 없다.
+  //   단체장·교육감 — 본인이 장으로 있는 기관이 발주한 것.
+  // 뒤쪽이 훨씬 가깝지만 그래도 '해냈다' 는 아니다 (전임자가 준비한 사업이 많다).
+  const headOrg = isMP ? null : headOrgOf(m.office, ownRace?.sd_name ?? null, ownRace?.district ?? null);
+  const showBids = isDistrictMP || !!headOrg;
+  // 국회의원은 2024년 개원부터, 단체장·교육감은 2026년 취임부터. 남의 임기에 나온
+  // 공고를 자기 것처럼 늘어놓으면 안 된다.
+  const bidFrom = isMP ? `${BILL_YEAR_FROM}-01-01` : HEAD_TERM_START;
+  const bidYears = years.filter((y) => y >= bidFrom.slice(0, 4));
+  const bidYear = bidYears.includes(sp.bidYear ?? "") ? sp.bidYear! : "";
+  const bidPage = Math.max(1, Number(sp.bidPage) || 1);
+  const { data: districtBids, count: districtBidTotal } = showBids
+    ? await (() => {
+        let q = isDistrictMP
+          ? db.from("member_district_bid")
+              .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
+              .eq("member_code", code)
+          : db.from("bid_notice_uniq")
+              .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
+              .eq("org", headOrg!);
+        q = q.gte("notice_at", bidYear ? `${bidYear}-01-01` : bidFrom);
+        if (bidYear) q = q.lte("notice_at", `${bidYear}-12-31`);
+        return q
+          .order("budget", { ascending: false })
+          .range((bidPage - 1) * DISTRICT_BID_PAGE, bidPage * DISTRICT_BID_PAGE - 1);
+      })()
+    : { data: [], count: 0 };
+
   // 국회의원은 열린국회정보의 선수를, 나머지는 선관위 당선 횟수를 쓴다.
   const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m.office);
   const showPledges = hasPledges(s);
@@ -366,7 +397,7 @@ export default async function MemberPage({
   if (hasBills(s)) nav.push({ id: "rep-sec", label: "대표발의" }, { id: "co-sec", label: "공동발의" });
   if (SHOW_RACE && raceRivals.length && myDocPledges.length)
     nav.push({ id: "race", label: "후보 공약 비교" });
-  if (isDistrictMP && (districtBidTotal ?? 0) > 0) nav.push({ id: "bid", label: "발주 공사" });
+  if (showBids && (districtBidTotal ?? 0) > 0) nav.push({ id: "bid", label: "발주 공사" });
 
   // 발주 목록의 연도·쪽을 바꿔도 법안 목록의 필터·쪽은 그대로 둔다.
   const bidKeep = { rep: repFilter, repYear, repPage: String(repPage),
@@ -919,21 +950,42 @@ export default async function MemberPage({
         </Section>
       )}
 
-      {isDistrictMP && !!districtBids?.length && (
-        <Section id="bid" title="지역구에서 발주된 공공 공사" count={districtBidTotal ?? 0} fold>
+      {showBids && (
+        <Section
+          id="bid"
+          title={isMP ? "지역구에서 발주된 공공 공사" : "임기 중 발주한 공공 공사"}
+          count={districtBidTotal ?? 0}
+          fold
+        >
+          {/* 두 경우의 뜻이 달라 문구도 달라야 한다. 의원은 남이 발주한 것을
+              지역으로 묶어 보여 주는 것이고, 단체장은 자기 기관이 낸 것이다. */}
           <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
-            <b className="text-foreground">이 의원이 해낸 일이라는 뜻이 아닙니다.</b>{" "}
-            국회의원에게는 예산 편성권도 발주 권한도 없습니다. 같은 지역에 시장·군수·
-            구청장이 따로 있고, 한 시군구를 여러 의원이 나눠 맡기도 합니다. 지역구
-            안에서 임기 중 무엇이 발주됐는지를 사실 그대로만 적습니다. 공약과 연결하지
-            않으며 이행 판정에도 쓰지 않습니다. 지방자치단체가 발주한 1억 원 이상
-            공사만 담았습니다.
+            {isMP ? (
+              <>
+                <b className="text-foreground">이 의원이 해낸 일이라는 뜻이 아닙니다.</b>{" "}
+                국회의원에게는 예산 편성권도 발주 권한도 없습니다. 같은 지역에 시장·군수·
+                구청장이 따로 있고, 한 시군구를 여러 의원이 나눠 맡기도 합니다. 지역구
+                안에서 임기 중 무엇이 발주됐는지를 사실 그대로만 적습니다.
+              </>
+            ) : (
+              <>
+                {/* 조사는 받침에 따라 갈리는데 기관명 끝 글자가 제각각이다
+                    ('강남구가' / '교육청이'). 받침과 무관한 '에서' 로 쓴다. */}
+                {m.name} 취임 후 <b className="text-foreground">{headOrg}</b>에서 낸 공사
+                입찰공고입니다. 발주기관의 장이라는 점에서 국회의원보다는 가깝지만,{" "}
+                <b className="text-foreground">이 사람이 해낸 일이라는 뜻은 아닙니다.</b>{" "}
+                공공 공사는 예산 편성부터 발주까지 보통 1년이 넘게 걸려, 지금 목록의
+                대부분은 전임자가 준비한 사업입니다. 발주는 착공이지 준공도 아닙니다.
+              </>
+            )}{" "}
+            공약과 연결하지 않으며 이행 판정에도 쓰지 않습니다. 지방자치단체가 발주한
+            1억 원 이상 공사만 담았습니다.
           </p>
           {/* 연도로 좁히고 쪽을 넘겨 전체를 볼 수 있게 한다. 예전에는 금액 큰
               30건만 보여 주고 나머지는 볼 길이 없었다. */}
           <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 py-2">
             <span className="mr-1 text-[11px] text-muted">공고 연도</span>
-            {[{ key: "", label: "전체" }, ...years.map((y) => ({ key: y, label: `${y}년` }))].map((y) => (
+            {[{ key: "", label: "전체" }, ...bidYears.map((y) => ({ key: y, label: `${y}년` }))].map((y) => (
               <Link
                 key={y.key}
                 href={bidLink({ bidYear: y.key, bidPage: "1" })}
@@ -955,8 +1007,10 @@ export default async function MemberPage({
             {(districtBids as DistrictBid[]).map((b) => {
               // 임기 시작 1년 안에 나온 공고는 전임 임기에 준비된 것일 수 있다.
               // 공공 공사는 예산 편성부터 발주까지 보통 1년 넘게 걸린다.
+              // 단체장은 취임 석 달째라 전부가 '임기 초' 다. 배지를 달면 모든 줄에
+              // 붙어 뜻이 없어진다. 그 사정은 위 안내문에 한 번 적었다.
               const early =
-                !!b.notice_at && b.notice_at < MP_TERM_EARLY_UNTIL;
+                isMP && !!b.notice_at && b.notice_at < MP_TERM_EARLY_UNTIL;
               return (
                 <li key={b.id} className="px-4 py-2 text-sm">
                   <a

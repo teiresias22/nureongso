@@ -486,6 +486,18 @@ create table if not exists pledge_overlap (
 );
 create index if not exists pledge_overlap_b_idx on pledge_overlap (b);
 
+-- 같은 사업이 차수를 바꿔 여러 번 공고된다. 발주기관·공고명·예산이 같으면 한 건으로
+-- 본다 (member_district_bid 가 쓰는 규칙과 같다).
+--
+-- 단체장·교육감 화면이 쓴다. 이들은 국회의원과 달리 **본인이 그 발주기관의 장**이라
+-- 지역구를 기관명으로 옮기는 과정이 필요 없다 — 기관명으로 바로 찾으면 된다.
+create or replace view bid_notice_uniq
+with (security_invoker = true) as
+select distinct on (org, name, budget)
+       id, name, org, budget, notice_at, region, url
+from bid_notice
+order by org, name, budget, notice_at;
+
 -- 공개 읽기 전용
 alter table member enable row level security;
 alter table bill enable row level security;
