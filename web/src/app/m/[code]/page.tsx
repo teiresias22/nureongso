@@ -11,6 +11,7 @@ import {
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
+import { TocNav } from "./toc";
 
 export const revalidate = 3600;
 
@@ -430,7 +431,9 @@ export default async function MemberPage({
       .map((r) => [r.pdf_id, r]),
   );
   const sidejobs = (sidejobRows ?? []) as Sidejob[];
-  const nav: { id: string; label: string }[] = [{ id: "runs", label: "출마 이력" }];
+  const nav: { id: string; label: string }[] = [];
+  if (att || s.vote_total > 0) nav.push({ id: "activity", label: "출결·표결" });
+  nav.push({ id: "runs", label: "출마 이력" });
   if (assets.length) nav.push({ id: "asset", label: "재산" });
   if (sidejobs.length) nav.push({ id: "sidejob", label: "겸직" });
   for (const eid of pledgeElections) {
@@ -503,7 +506,7 @@ export default async function MemberPage({
             <h1 className="text-xl font-bold">{m.name}</h1>
             {isMP && m.elect_type && (
               <span
-                className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                className={`rounded px-1.5 py-0.5 text-xs font-medium ${
                   m.elect_type.includes("비례")
                     ? "bg-violet-600 text-white"
                     : "border border-line text-muted"
@@ -561,57 +564,73 @@ export default async function MemberPage({
         </p>
       )}
 
-      <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {showPledges && (
-          <>
-            <Stat label="공약" value={s.pledge_count} unit="건" />
-            {/* 이행률은 해석이고 발의·가결은 사실이다. 사실을 먼저 보여준다. */}
-            {s.pledge_law > 0 ? (
-              <Stat
-                label="법률로 재는 공약"
-                value={s.pledge_law}
-                unit="건"
-                sub={`발의 ${s.pledge_law_filed} · 통과 ${s.pledge_law_passed}`}
-              />
-            ) : (
-              <Stat
-                label="공약 이행"
-                value={judged ? pct(s.pledge_done, s.pledge_count) : null}
-                unit="%"
-                sub={judged ? `완료 ${s.pledge_done}/${s.pledge_count}` : "아직 판정하지 않음"}
-              />
-            )}
-          </>
-        )}
+      {/* 한눈에 보기. 여섯 칸을 3열로 — 예전 4열은 여섯 칸이 두 줄로 들쭉날쭉했다.
+          의정활동(발의·출석·표결) → 공약 → 재산 순이고, 칸마다 그 근거 구획으로 내려간다.
+          가결률은 따로 칸을 두지 않고 대표발의 칸에 붙인다 — 분모가 같은 숫자다. */}
+      <section aria-label="한눈에 보기" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {showBills && (
           <>
-            <Stat label="대표발의" value={s.rep_count} unit="건" />
-            <Stat label="공동발의" value={s.co_count} unit="건" />
             <Stat
-              label="대표발의 가결률"
-              value={pct(s.rep_passed, s.rep_count)}
-              unit="%"
-              sub={`가결 ${s.rep_passed} · 계류 ${s.rep_pending}`}
+              label="대표발의"
+              value={s.rep_count}
+              unit="건"
+              sub={`가결 ${s.rep_passed} · 계류 ${s.rep_pending} · 가결률 ${pct(s.rep_passed, s.rep_count)}%`}
+              href="#rep-sec"
             />
-            {/* 표결 기록이 없으면 칸을 비운다. 0% 로 두면 '한 번도 안 나왔다' 로
-                읽히는데, 임기 중 들어온 의원은 국회 표결 API 명부에 아예 없다. */}
-            {s.vote_total > 0 && (
-              <Stat
-                label="본회의 표결 참여"
-                value={pct(attended, s.vote_total)}
-                unit="%"
-                sub={`${attended}/${s.vote_total}회`}
-              />
-            )}
+            <Stat label="공동발의" value={s.co_count} unit="건" href="#co-sec" />
           </>
+        )}
+        {att && (
+          <Stat
+            label="본회의 출석률"
+            value={((att.present / (att.days || 1)) * 100).toFixed(1)}
+            unit="%"
+            sub={`제${att.age}대 ${att.present}/${att.days}일 · 결석 ${att.absent}`}
+            href="#activity"
+          />
+        )}
+        {/* 표결 기록이 없으면 칸을 비운다. 0% 로 두면 '한 번도 안 나왔다' 로
+            읽히는데, 임기 중 들어온 의원은 국회 표결 API 명부에 아예 없다. */}
+        {s.vote_total > 0 && (
+          <Stat
+            label="본회의 표결 참여"
+            value={pct(attended, s.vote_total)}
+            unit="%"
+            sub={`${attended.toLocaleString("ko-KR")}/${s.vote_total.toLocaleString("ko-KR")}회`}
+            href="#activity"
+          />
+        )}
+        {showPledges && (
+          <Stat
+            label="공약"
+            value={s.pledge_count}
+            unit="건"
+            // 이행률은 해석이고 발의·가결은 사실이다. 사실을 먼저 보여준다.
+            sub={
+              s.pledge_law > 0
+                ? `법률로 재는 공약 ${s.pledge_law} · 발의 ${s.pledge_law_filed} · 통과 ${s.pledge_law_passed}`
+                : judged
+                  ? `이행 완료 ${s.pledge_done}/${s.pledge_count} (${pct(s.pledge_done, s.pledge_count)}%)`
+                  : "이행 판정 전"
+            }
+            href={nav.find((n) => n.id.startsWith("p-"))?.id ? `#${nav.find((n) => n.id.startsWith("p-"))!.id}` : undefined}
+          />
+        )}
+        {assets.length > 0 && (
+          <Stat
+            label="순재산"
+            value={eok(assets[0].total_now_k)}
+            sub={`${assets[0].notice_date.slice(0, 7).replace("-", ".")} 신고 · 본인·배우자·직계 합`}
+            href="#asset"
+          />
         )}
       </section>
 
       {/* 출결은 표결이 없어도 있을 수 있어(임기 중 들어온 의원은 표결 API 명부에 없다)
           구획은 둘 중 하나만 있어도 연다. */}
       {(s.vote_total > 0 || att) && (
-        <section className="space-y-5 rounded-lg border border-line bg-card p-4">
-          <h2 className="text-sm font-semibold">본회의 출결과 표결</h2>
+        <section id="activity" className="scroll-mt-14 space-y-5 rounded-lg border border-line bg-card p-4">
+          <h2 className="text-base font-semibold">본회의 출결과 표결</h2>
           {atts.length > 0 && (
             <AttendanceBlock
               rows={atts}
@@ -643,7 +662,7 @@ export default async function MemberPage({
           className="sticky top-0 z-20 -mx-4 border-y border-line bg-background/95 px-4 py-2 backdrop-blur"
         >
           <div className="flex items-center gap-2">
-            <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold text-muted">
+            <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-muted">
               <span aria-hidden className="flex flex-col gap-[3px]">
                 <span className="block h-[2px] w-3 rounded bg-muted" />
                 <span className="block h-[2px] w-3 rounded bg-muted" />
@@ -652,18 +671,7 @@ export default async function MemberPage({
               목차
             </span>
             <span aria-hidden className="h-4 w-px shrink-0 bg-line" />
-            <ul className="flex gap-1.5 overflow-x-auto whitespace-nowrap">
-              {nav.map((n) => (
-                <li key={n.id}>
-                  <a
-                    href={`#${n.id}`}
-                    className="block rounded-full border border-line px-2.5 py-1 text-xs text-muted transition hover:border-muted hover:bg-card hover:text-foreground"
-                  >
-                    {n.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <TocNav items={nav} />
           </div>
         </nav>
       )}
@@ -740,7 +748,7 @@ export default async function MemberPage({
                           </li>
                         ))}
                       </ul>
-                      <p className="mt-1 text-[11px] text-muted">
+                      <p className="mt-1 text-xs text-muted">
                         득표율은 선관위 개표 정보의 득표수 ÷ 유효투표수입니다. 등록 후
                         사퇴한 후보는 개표에 집계되지 않아 비어 있습니다.
                       </p>
@@ -813,6 +821,10 @@ export default async function MemberPage({
                 판정 기준
               </Link>
             </p>
+            <PledgeStatusBar
+              statuses={list.map((p) =>
+                ((p.pledge_status as unknown as { status: string } | null)?.status) ?? "판단불가")}
+            />
             <ul className="divide-y divide-line">
             {list.map((p) => {
               const st = p.pledge_status as unknown as
@@ -830,10 +842,10 @@ export default async function MemberPage({
                         {st ? (
                           <StatusBadge status={st.status} auto={st.decided_by !== "reviewer"} />
                         ) : (
-                          <span className="mt-0.5 shrink-0 text-[11px] text-muted">미판정</span>
+                          <span className="mt-0.5 shrink-0 text-xs text-muted">미판정</span>
                         )}
                         <span className="min-w-0">
-                          <span className="block text-[11px] text-muted">
+                          <span className="block text-xs text-muted">
                             {[p.category, ...(p.kinds ?? []).map((k: string) => KIND_LABEL[k] ?? k)]
                               .filter(Boolean)
                               .join(" · ")}
@@ -1043,7 +1055,7 @@ export default async function MemberPage({
           {/* 연도로 좁히고 쪽을 넘겨 전체를 볼 수 있게 한다. 예전에는 금액 큰
               30건만 보여 주고 나머지는 볼 길이 없었다. */}
           <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 py-2">
-            <span className="mr-1 text-[11px] text-muted">공고 연도</span>
+            <span className="mr-1 text-xs text-muted">공고 연도</span>
             {[{ key: "", label: "전체" }, ...bidYears.map((y) => ({ key: y, label: `${y}년` }))].map((y) => (
               <Link
                 key={y.key}
@@ -1088,7 +1100,7 @@ export default async function MemberPage({
                       .filter(Boolean)
                       .join(" · ")}
                     {early && (
-                      <span className="ml-1 rounded border border-line px-1 py-0.5 text-[10px]">
+                      <span className="ml-1 rounded border border-line px-1 py-0.5 text-[11px]">
                         임기 초 발주 — 전임 임기에 준비된 것일 수 있습니다
                       </span>
                     )}
@@ -1186,7 +1198,7 @@ function AttendanceBlock({ rows, peers }: {
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[11px] text-muted">
+      <p className="mt-2 text-xs text-muted">
         {cur.source_url && (
           <a href={cur.source_url} className="underline underline-offset-2 hover:text-foreground">원문</a>
         )}{" "}
@@ -1243,7 +1255,7 @@ function SidejobSection({ rows }: { rows: Sidejob[] }) {
   const flagged = rows.filter((r) => r.decision_kind !== "허용").length;
   return (
     <Section id="sidejob" title="겸직 신고" count={rows.length}>
-      <p className="border-b border-line px-4 py-2 text-[11px] text-muted">
+      <p className="border-b border-line px-4 py-2 text-xs text-muted">
         국회법 제29조에 따라 의원이 신고한 다른 직과, 국회의장이 정해 공개한 허용 여부입니다.
         {flagged > 0 && <> 이 중 <b className="text-foreground">{flagged}건</b>은 겸직 불가 또는 사직 권고를 받았습니다.</>}{" "}
         <Link href="/rules#sidejob" className="underline underline-offset-2 hover:text-foreground">결정 내용 읽는 법</Link>
@@ -1253,7 +1265,7 @@ function SidejobSection({ rows }: { rows: Sidejob[] }) {
           <li key={r.id} className="flex items-start justify-between gap-3 px-4 py-2 text-sm">
             <span className="min-w-0">
               <span className="block">{[r.org, r.position].filter(Boolean).join(" · ")}</span>
-              <span className="block text-[11px] text-muted">
+              <span className="block text-xs text-muted">
                 제{r.age}대{r.opened_at ? ` · ${r.opened_at.replaceAll("-", ".")} 공개` : ""}
                 {/* 원문을 늘 적는다. '겸직 불가(현재 진행 중인 강의에 대해서는 가능)' 처럼
                     단서가 붙은 결정이 있어 배지만으로는 빠지는 게 있다. */}
@@ -1395,7 +1407,7 @@ function AssetSection({ rows, stats }: {
                   {wonK(r.total_now_k)}
                 </span>
               </div>
-              <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-muted">
+              <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted">
                 {diff != null && (
                   <span>
                     직전 신고보다 {diff >= 0 ? "+" : "-"}{wonK(Math.abs(diff))}
@@ -1417,23 +1429,34 @@ function AssetSection({ rows, stats }: {
   );
 }
 
-function Stat({ label, value, unit, sub }:
-  { label: string; value: number | null; unit: string; sub?: string }) {
-  return (
-    <div className="rounded-lg border border-line bg-card p-3">
+/** 요약 타일. href 가 있으면 타일 전체가 그 구획으로 가는 링크다 — 숫자를 보고 '왜?'
+ *  를 묻는 사람이 바로 근거로 내려갈 수 있어야 한다. 누르는 자리가 타일 전체라 손가락으로도
+ *  맞힌다. 값은 숫자('65')도 글자('15.9억')도 된다. */
+function Stat({ label, value, unit = "", sub, href }:
+  { label: string; value: number | string | null; unit?: string; sub?: string; href?: string }) {
+  const body = (
+    <>
       <p className="text-xs text-muted">{label}</p>
-      <p className="mt-1 text-2xl font-bold tabular-nums">
+      <p className="mt-1 text-2xl font-bold">
         {value === null ? (
           <span className="text-base font-normal text-muted">미집계</span>
         ) : (
           <>
             {value}
-            <span className="ml-0.5 text-sm font-normal text-muted">{unit}</span>
+            {unit && <span className="ml-0.5 text-sm font-normal text-muted">{unit}</span>}
           </>
         )}
       </p>
-      {sub && <p className="text-[11px] text-muted">{sub}</p>}
-    </div>
+      {sub && <p className="mt-0.5 text-xs leading-snug text-muted">{sub}</p>}
+    </>
+  );
+  const box = "block rounded-lg border border-line bg-card p-3";
+  return href ? (
+    <a href={href} className={`${box} transition hover:border-muted focus-visible:outline-2 focus-visible:outline-offset-2`}>
+      {body}
+    </a>
+  ) : (
+    <div className={box}>{body}</div>
   );
 }
 
@@ -1452,14 +1475,14 @@ function Section({
   if (!fold) {
     return (
       <section id={id} className="scroll-mt-14 overflow-hidden rounded-lg border border-line bg-card">
-        <h2 className="border-b border-line px-4 py-2 text-sm font-semibold">{head}</h2>
+        <h2 className="border-b border-line px-4 py-3 text-base font-semibold">{head}</h2>
         {children}
       </section>
     );
   }
   return (
     <details id={id} open className="group scroll-mt-14 overflow-hidden rounded-lg border border-line bg-card">
-      <summary className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-semibold marker:content-none hover:bg-background/40 group-open:border-b group-open:border-line [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-base font-semibold marker:content-none hover:bg-background/40 group-open:border-b group-open:border-line [&::-webkit-details-marker]:hidden">
         <span className="min-w-0">{head}</span>
         <span className="ml-auto shrink-0 text-xs font-normal text-muted group-open:hidden">펼치기</span>
         <span className="ml-auto hidden shrink-0 text-xs font-normal text-muted group-open:inline">접기</span>
@@ -1484,8 +1507,8 @@ function Fold({
     <details className="group">
       <summary className="flex cursor-pointer items-start marker:content-none hover:bg-background/40 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 flex-1">{head}</span>
-        <span className="shrink-0 py-2 pr-3 text-[11px] text-muted group-open:hidden">+{hint}</span>
-        <span className="hidden shrink-0 py-2 pr-3 text-[11px] text-muted group-open:inline">접기</span>
+        <span className="shrink-0 py-2 pr-3 text-xs text-muted group-open:hidden">+{hint}</span>
+        <span className="hidden shrink-0 py-2 pr-3 text-xs text-muted group-open:inline">접기</span>
       </summary>
       {children}
     </details>
@@ -1519,15 +1542,43 @@ function BidPager({
   );
 }
 
+/** 공약 상태 색. 흰 글자가 4.5:1 을 넘는 단계로 골랐다 — 예전 판단불가(stone-300)는
+ *  흰 글자 대비가 1.5:1, 진행(amber-500)은 2:1 이었다. 판단불가는 짙은 글자를 쓴다.
+ *  분포 막대(PledgeStatusBar)도 같은 색이라 배지와 막대가 같은 말을 한다. */
+const STATUS_BG: Record<string, string> = {
+  완료: "bg-green-700 text-white",
+  진행: "bg-amber-700 text-white",
+  미착수: "bg-stone-500 text-white",
+  판단불가: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200",
+};
+const STATUS_FILL: Record<string, string> = {
+  완료: "#15803d", 진행: "#b45309", 미착수: "#78716c", 판단불가: "var(--viz-peer)",
+};
+
+/** 한 선거 공약의 상태 분포. 목록을 다 내려 보지 않아도 몇 건이 어디쯤인지 보인다. */
+function PledgeStatusBar({ statuses }: { statuses: string[] }) {
+  const order = ["완료", "진행", "미착수", "판단불가"];
+  const count = (k: string) => statuses.filter((x) => x === k).length;
+  return (
+    <div className="border-b border-line px-4 py-3">
+      <StackBar
+        ariaLabel="공약 이행 상태 분포"
+        unit="건"
+        parts={order.map((k) => ({ key: k, label: k, value: count(k), color: STATUS_FILL[k] }))}
+      />
+    </div>
+  );
+}
+
 function StatusBadge({ status, auto }: { status?: string; auto?: boolean }) {
   const color =
-    status === "완료" ? "bg-green-600" : status === "진행" ? "bg-amber-500" : status === "미착수" ? "bg-stone-400" : "bg-stone-300";
+    STATUS_BG[status ?? "판단불가"] ?? STATUS_BG.판단불가;
   return (
     <span className="shrink-0">
-      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] text-white ${color}`}>
+      <span className={`inline-block rounded px-1.5 py-0.5 text-xs ${color}`}>
         {status ?? "판단불가"}
       </span>
-      {auto && <span className="ml-1 text-[10px] text-muted">자동</span>}
+      {auto && <span className="ml-1 text-[11px] text-muted">자동</span>}
     </span>
   );
 }
@@ -1596,7 +1647,7 @@ function BillList({
       {/* 연도는 처리 상태와 따로 걸린다. 한 줄에 같이 늘어놓으면 '가결' 과 '2025' 가
           같은 갈래로 보여 둘 중 하나만 고르는 줄 안다. */}
       <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 py-2">
-        <span className="mr-1 text-[11px] text-muted">발의 연도</span>
+        <span className="mr-1 text-xs text-muted">발의 연도</span>
         {[{ key: "", label: "전체" }, ...years.map((y) => ({ key: y, label: `${y}년` }))].map((y) => (
           <Link
             key={y.key}
@@ -1629,7 +1680,7 @@ function BillList({
               <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
                 {b.proposed_at}
                 <span
-                  className={`rounded border px-1.5 py-0.5 text-[11px] ${BILL_TONE[billTone(b.proc_result)]}`}
+                  className={`rounded border px-1.5 py-0.5 text-xs ${BILL_TONE[billTone(b.proc_result)]}`}
                 >
                   {b.proc_result ?? "계류"}
                 </span>

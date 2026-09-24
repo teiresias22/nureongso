@@ -79,7 +79,7 @@ export function Strip({
           title={`이 의원 ${format(mine)}`}
         />
       </div>
-      <figcaption className="mt-0.5 flex items-start justify-between gap-2 text-[11px] text-muted">
+      <figcaption className="mt-0.5 flex items-start justify-between gap-2 text-xs text-muted">
         <span className="shrink-0">{lowLabel}</span>
         <span className="text-center">
           {caption} · 이 의원 <b className="text-foreground">{format(mine)}</b> · 중간값 {format(median)}
