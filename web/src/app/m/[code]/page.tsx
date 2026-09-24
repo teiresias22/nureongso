@@ -5,8 +5,8 @@ import { notFound } from "next/navigation";
 import {
   db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText, wonK,
-  type AssetReport, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge,
+  type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
+  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Sidejob,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -199,6 +199,8 @@ export default async function MemberPage({
     { data: pledges },
     { data: assetRows },
     { data: partyLine },
+    { data: attRows },
+    { data: sidejobRows },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
@@ -222,6 +224,16 @@ export default async function MemberPage({
       .eq("member_code", code)
       .order("notice_date", { ascending: false }),
     db.from("member_party_line").select("*").eq("code", code).maybeSingle(),
+    // 출결은 대수마다 한 줄. 지금은 22대만 있지만 가장 최근 대수를 고른다.
+    db.from("attendance")
+      .select("age, session_no, as_of, days, present, absent, leave, trip, absence_report, source_url")
+      .eq("member_code", code)
+      .order("age", { ascending: false })
+      .limit(1),
+    db.from("member_sidejob")
+      .select("id, age, opened_at, org, position, decision, decision_kind")
+      .eq("member_code", code)
+      .order("opened_at", { ascending: false }),
   ]);
 
   if (!member) notFound();
@@ -396,8 +408,11 @@ export default async function MemberPage({
   // 법안 목록이 없다) 화면을 그리는 조건과 같은 기준으로 여기서 한 번 만든다.
   // 둘이 어긋나면 눌러도 안 움직이는 줄이 생긴다.
   const assets = (assetRows ?? []) as AssetReport[];
+  const att = ((attRows ?? []) as Attendance[])[0];
+  const sidejobs = (sidejobRows ?? []) as Sidejob[];
   const nav: { id: string; label: string }[] = [{ id: "runs", label: "출마 이력" }];
   if (assets.length) nav.push({ id: "asset", label: "재산" });
+  if (sidejobs.length) nav.push({ id: "sidejob", label: "겸직" });
   for (const eid of pledgeElections) {
     const isCur = eid === pledgeElections[0];
     for (const { key, title } of PLEDGE_SOURCES) {
@@ -572,10 +587,15 @@ export default async function MemberPage({
         )}
       </section>
 
-      {s.vote_total > 0 && (
+      {/* 출결은 표결이 없어도 있을 수 있어(임기 중 들어온 의원은 표결 API 명부에 없다)
+          구획은 둘 중 하나만 있어도 연다. */}
+      {(s.vote_total > 0 || att) && (
         <section className="rounded-lg border border-line bg-card p-4">
-          <h2 className="text-sm font-semibold">표결 성향</h2>
-          <div className="mt-2 flex gap-4 text-sm text-muted">
+          <h2 className="text-sm font-semibold">본회의 출결과 표결</h2>
+          {att && <AttendanceLine a={att} />}
+          {s.vote_total > 0 && (<>
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm text-muted">
+            <span className="w-8 shrink-0 text-xs">표결</span>
             {([["찬성", s.vote_yes], ["반대", s.vote_no], ["기권", s.vote_blank], ["불참", s.vote_absent]] as const).map(
               ([k, v]) => (
                 <span key={k}>
@@ -585,6 +605,7 @@ export default async function MemberPage({
             )}
           </div>
           <PartyLineNote line={partyLine as PartyLine | null} party={lastPart(m.party)} />
+          </>)}
         </section>
       )}
 
@@ -715,6 +736,7 @@ export default async function MemberPage({
       </Section>
 
       {assets.length > 0 && <AssetSection rows={assets} />}
+      {sidejobs.length > 0 && <SidejobSection rows={sidejobs} />}
 
       {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
           '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
@@ -1092,6 +1114,80 @@ function PartyLineNote({ line, party }: { line: PartyLine | null; party: string 
         어떻게 세나
       </Link>
     </p>
+  );
+}
+
+/** 본회의 출결 누적. 무단 결석과 사유 있는 결석을 가르는 것이 표결 '불참' 과 다른 점이다.
+ *  결석은 0 이어도 적는다 — 그게 이 줄에서 가장 궁금한 숫자다. 나머지는 있을 때만 적는다. */
+function AttendanceLine({ a }: { a: Attendance }) {
+  const extra = ([["청가", a.leave], ["출장", a.trip], ["결석신고서", a.absence_report]] as const)
+    .filter(([, v]) => v > 0);
+  return (
+    <div className="mt-2 text-sm text-muted">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <span className="w-8 shrink-0 text-xs">출결</span>
+        <span>
+          출석 <b className="text-foreground">{a.present}</b>/{a.days}일
+        </span>
+        <span>
+          결석 <b className={a.absent > 0 ? "text-foreground" : ""}>{a.absent}</b>
+        </span>
+        {extra.map(([k, v]) => (
+          <span key={k}>
+            {k} <b className="text-foreground">{v}</b>
+          </span>
+        ))}
+      </div>
+      <p className="mt-1 text-[11px]">
+        제{a.age}대 개원부터 제{a.session_no}회 국회{a.as_of ? `(${a.as_of.replaceAll("-", ".")})` : ""}까지
+        본회의 회의일 기준입니다.{" "}
+        {a.source_url && (
+          <a href={a.source_url} className="underline underline-offset-2 hover:text-foreground">원문 엑셀</a>
+        )}{" "}
+        <Link href="/rules#attendance" className="underline underline-offset-2 hover:text-foreground">
+          청가·출장·결석신고서란
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+/** 겸직 결정 내역. 허용된 것이 대부분이라, 불가·사직권고만 색을 입혀 눈에 띄게 한다. */
+function SidejobSection({ rows }: { rows: Sidejob[] }) {
+  const flagged = rows.filter((r) => r.decision_kind !== "허용").length;
+  return (
+    <Section id="sidejob" title="겸직 신고" count={rows.length}>
+      <p className="border-b border-line px-4 py-2 text-[11px] text-muted">
+        국회법 제29조에 따라 의원이 신고한 다른 직과, 국회의장이 정해 공개한 허용 여부입니다.
+        {flagged > 0 && <> 이 중 <b className="text-foreground">{flagged}건</b>은 겸직 불가 또는 사직 권고를 받았습니다.</>}{" "}
+        <Link href="/rules#sidejob" className="underline underline-offset-2 hover:text-foreground">결정 내용 읽는 법</Link>
+      </p>
+      <ul className="divide-y divide-line">
+        {rows.map((r) => (
+          <li key={r.id} className="flex items-start justify-between gap-3 px-4 py-2 text-sm">
+            <span className="min-w-0">
+              <span className="block">{[r.org, r.position].filter(Boolean).join(" · ")}</span>
+              <span className="block text-[11px] text-muted">
+                제{r.age}대{r.opened_at ? ` · ${r.opened_at.replaceAll("-", ".")} 공개` : ""}
+                {/* 원문을 늘 적는다. '겸직 불가(현재 진행 중인 강의에 대해서는 가능)' 처럼
+                    단서가 붙은 결정이 있어 배지만으로는 빠지는 게 있다. */}
+                {r.decision ? ` · ${r.decision}` : ""}
+              </span>
+            </span>
+            {r.decision_kind === "허용" ? (
+              <span className="shrink-0 text-xs text-muted">허용</span>
+            ) : (
+              <span
+                title={r.decision ?? undefined}
+                className="shrink-0 rounded border border-red-600/40 bg-red-600/10 px-1.5 py-0.5 text-xs text-red-700 dark:text-red-400"
+              >
+                {r.decision_kind === "사직권고" ? "사직 권고" : "겸직 불가"}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 

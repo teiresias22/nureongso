@@ -314,3 +314,28 @@ export function wonK(k: number) {
   if (!eok) return `${sign}${rest.toLocaleString("ko-KR")}만 원`;
   return `${sign}${eok.toLocaleString("ko-KR")}억${rest ? ` ${rest.toLocaleString("ko-KR")}만` : ""} 원`;
 }
+
+/** 본회의 출결 누적. 최신 회기 엑셀의 '총 계' — 회의일수 = 출석+결석+청가+출장+결석신고서. */
+export type Attendance = {
+  age: number;
+  session_no: number;
+  as_of: string | null;
+  days: number;
+  present: number;
+  absent: number;
+  leave: number;
+  trip: number;
+  absence_report: number;
+  source_url: string | null;
+};
+
+/** 겸직 결정 내역. decision 은 원문, decision_kind 는 허용 | 불가 | 사직권고. */
+export type Sidejob = {
+  id: number;
+  age: number;
+  opened_at: string | null;
+  org: string | null;
+  position: string | null;
+  decision: string | null;
+  decision_kind: string | null;
+};

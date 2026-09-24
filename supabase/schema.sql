@@ -305,6 +305,42 @@ create table if not exists asset_report (
 );
 create index if not exists asset_report_member_idx on asset_report (member_code, notice_date);
 
+-- 본회의 출결 누적. ingest.py attendance 가 최신 회기 엑셀 하나로 통째로 바꾼다.
+--
+-- 표결 기록(vote)의 '불참' 과 다르다. 표결은 표결마다, 이것은 본회의 회의일마다 세고,
+-- 결석을 사유로 가른다 — 청가(미리 허가), 출장(공무), 결석신고서(사유 신고), 결석(무단).
+-- 회의일수 = 출석 + 결석 + 청가 + 출장 + 결석신고서 (실측 22대 299명 전원 성립).
+-- 의원 코드 없이 이름·정당만 와서 이름으로 붙인다. 못 붙으면 member_code 가 비어 있다.
+create table if not exists attendance (
+  age            int  not null,
+  name           text not null,                 -- 원문 그대로 ('朴芝源' 처럼 한자일 수 있다)
+  party          text,
+  member_code    text references member(code) on delete set null,
+  session_no     int  not null,                 -- 어느 회기까지의 누적인가
+  as_of          date,                          -- 그 회기 마지막 본회의
+  days           int  not null,
+  present        int, absent int, leave int, trip int, absence_report int,
+  source_url     text,
+  primary key (age, name)
+);
+create index if not exists attendance_member_idx on attendance (member_code);
+
+-- 겸직 결정 내역 (국회법 제29조). ingest.py sidejobs 가 통째로 바꾼다.
+-- decision 은 원문, decision_kind 는 화면이 가르는 셋: 허용 | 불가 | 사직권고.
+create table if not exists member_sidejob (
+  id            bigserial primary key,
+  age           int  not null,
+  year          text,
+  opened_at     date,                           -- 공개일. 원문은 '2021.2.22.' 와 '2024-09-20' 이 섞였다
+  name          text not null,
+  member_code   text references member(code) on delete set null,
+  org           text,
+  position      text,
+  decision      text,
+  decision_kind text
+);
+create index if not exists member_sidejob_member_idx on member_sidejob (member_code);
+
 -- 수집 로그
 create table if not exists ingest_run (
   id         bigserial primary key,
@@ -583,11 +619,13 @@ alter table bid_notice enable row level security;
 alter table member_sigungu enable row level security;
 alter table pledge_overlap enable row level security;
 alter table asset_report enable row level security;
+alter table attendance enable row level security;
+alter table member_sidejob enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

@@ -7,6 +7,8 @@
     python ingest.py plenary --age 22   # 본회의 처리 의안
     python ingest.py votes --age 22     # 본회의 표결 (plenary 먼저 실행)
     python ingest.py summaries --age 22 # 법안 제안이유·주요내용
+    python ingest.py sidejobs           # 겸직 결정 내역 (20대~, 통째로 교체)
+    python ingest.py attendance --age 22 # 본회의 출결 누적 (최신 회기 엑셀 하나)
     python ingest.py refresh            # member_stats 갱신
     python ingest.py all --age 22
 
@@ -16,10 +18,13 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
+import re
 import sys
 import time
+import unicodedata
 
 import httpx
 import psycopg
@@ -35,6 +40,8 @@ SERVICES = {
     "plenary": "ncocpgfiaoituanbr",  # 본회의 처리 의안 (표결 집계)
     "votes": "nojepdqqaweusdfbi",  # 국회의원 본회의 표결
     "summary": "BPMBILLSUMMARY",  # 법률안 제안이유 및 주요내용 (BILL_NO 필수)
+    # 목록(OPENSRVAPI)의 SRV_URL 은 설명 화면 주소다. 호출 이름은 명세서 xls 에만 있다.
+    "sidejob": "nahfbzwvatmaxscwq",  # 국회의원 겸직 결정 내역 (OHAC6C000892WC13765)
 }
 
 
@@ -326,6 +333,188 @@ def ingest_summaries(cur, age: int, limit: int | None = None) -> int:
     return got
 
 
+# --------------------------------------------------------------------------- 이름으로 잇기
+
+HANJA = re.compile(r"^[一-鿿]+$")
+
+
+def people_of(cur, age: int) -> list[tuple]:
+    """그 대수에 재직한 사람. (code, name, name_hanja, district, elect_type, party).
+
+    name_hanja 는 NFC 로 편다. 열린국회정보가 준 한자가 호환용 코드로 들어 있다 — 李 가
+    U+674E 가 아니라 U+F9E1 이다(실측 790명). 겸직 API 는 표준 코드로 보내서 그대로
+    비교하면 같은 글자가 안 맞는다.
+    """
+    cur.execute("select code, name, name_hanja, district, elect_type, party from member"
+                " where terms like %s", (f"%제{age}대%",))
+    return [(c, n, unicodedata.normalize("NFC", h) if h else h, *rest)
+            for c, n, h, *rest in cur.fetchall()]
+
+
+def match_person(people: list[tuple], raw: str, party: str | None = None,
+                 used: set[str] = frozenset()) -> str | None:
+    """의원 코드 없이 이름만 주는 자료(겸직·출결)를 사람에 잇는다.
+
+    실측으로 본 이름 모양: '박 정'(띄어쓰기), '李達坤'(한자만), '최경환(崔敬煥)'(한자 병기),
+    '이수진(비)'(비례 표시). 동명이인은 괄호 → 정당 → 이미 붙은 사람 제외 순으로 가른다.
+    출결표의 22대 박지원 둘은 한 사람이 '朴芝源' 으로 적혀 있어 한자 쪽을 먼저 붙이면
+    나머지 '박지원' 이 저절로 갈린다. 그래도 하나가 아니면 비운다.
+    """
+    raw = unicodedata.normalize("NFC", raw.strip())
+    m = re.match(r"^(.+?)\((.+)\)$", raw)
+    base, hint = (m.group(1), m.group(2)) if m else (raw, None)
+    base = base.replace(" ", "")
+    if HANJA.match(base):
+        hits = [p for p in people if p[2] == base]
+    else:
+        hits = [p for p in people if p[1] == base]
+    if len(hits) > 1 and hint:
+        if HANJA.match(hint):
+            hits = [p for p in hits if p[2] == hint]
+        elif hint.startswith("비"):
+            hits = [p for p in hits if "비례" in f"{p[3]}{p[4]}"]
+        else:
+            hits = [p for p in hits if hint.split()[-1] in (p[3] or "")]
+    if len(hits) > 1 and party:
+        hits = [p for p in hits if (p[5] or "").endswith(party)] or hits
+    if len(hits) > 1 and used:
+        hits = [p for p in hits if p[0] not in used]
+    return hits[0][0] if len(hits) == 1 else None
+
+
+# --------------------------------------------------------------------------- 겸직
+
+
+def ymd(v) -> str | None:
+    """'2021.2.22.' / '2024-09-20' → '2021-02-22'. 한 API 안에 두 형식이 섞여 온다."""
+    nums_ = re.findall(r"\d+", str(v or ""))
+    if len(nums_) < 3:
+        return None
+    y, mo, da = (int(x) for x in nums_[:3])
+    return f"{y:04d}-{mo:02d}-{da:02d}"
+
+
+def sidejob_kind(decision: str | None) -> str:
+    """결정 내용 원문은 열두 가지로 적혀 온다. 화면에서 가를 것은 셋뿐이다."""
+    s = (decision or "").replace(" ", "")
+    if "사직" in s:
+        return "사직권고"
+    if "불가" in s or "해당하지않음" in s:
+        return "불가"
+    return "허용"
+
+
+def ingest_sidejobs(cur, age: int) -> int:
+    """겸직 결정 내역. 20~22대 수백 건이라 매번 통째로 바꾼다.
+
+    국회법 제29조: 의원이 다른 직을 가지면 신고하고, 의장이 윤리심사자문위원회 의견을
+    들어 허용 여부를 정한다. 사직권고·겸직 불가도 그대로 공개된다.
+    """
+    rows = fetch("sidejob")
+    ages = {int(re.sub(r"\D", "", r.get("ORD_NUM") or "") or 0) for r in rows} - {0}
+    people = {a: people_of(cur, a) for a in ages}
+    out, miss = [], []
+    for r in rows:
+        a = int(re.sub(r"\D", "", r.get("ORD_NUM") or "") or 0)
+        name = d(r.get("PN")) or ""
+        code = match_person(people.get(a, []), name)
+        if not code:
+            miss.append(f"{name}({a}대)")
+        out.append((a, d(r.get("YR")), ymd(r.get("OPB_DAY")), name, code,
+                    d(r.get("CCOF_INST_NM")), d(r.get("PSIT_NM")),
+                    d(r.get("CCOF_PSB_YN_CD")), sidejob_kind(r.get("CCOF_PSB_YN_CD"))))
+    cur.execute("delete from member_sidejob")
+    cur.executemany(
+        "insert into member_sidejob (age, year, opened_at, name, member_code, org, position,"
+        " decision, decision_kind) values (%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
+    if miss:
+        print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:20])}", file=sys.stderr)
+    return len(out)
+
+
+# --------------------------------------------------------------------------- 출결
+
+# 본회의 출결은 Open API 가 없다. 열린국회정보 '파일 데이터' 로 회기마다 엑셀 하나가
+# 올라온다(22대 제415회부터 xlsx, 그 앞은 pdf). 최신 파일에 그 대수 **누적 총계** 가
+# 있어서 하나만 받으면 된다 — 438회와 437회 파일을 대조하니 전원이 그 회기 회의일수만큼
+# 정확히 늘었다. 공개 API 가 아니라 화면이 쓰는 엔드포인트라 모양이 바뀌면 멈춘다.
+ATT_INF = "O4Q5B50011905O18367"
+ATT_LIST = "https://open.assembly.go.kr/portal/data/file/searchFileData.do"
+ATT_DOWN = "https://open.assembly.go.kr/portal/data/file/downloadFileData.do"
+ATT_COLS = ("회의일수", "출석", "결석", "청가", "출장", "결석신고서")
+
+
+def latest_attendance_file(c: httpx.Client) -> dict:
+    r = c.post(ATT_LIST, data={"infId": ATT_INF, "infSeq": 1},
+               headers={"X-Requested-With": "XMLHttpRequest"})
+    r.raise_for_status()
+    files = (r.json() or {}).get("data")
+    if not files:
+        raise RuntimeError("출결 파일 목록 형태가 바뀌었습니다")
+    xlsx = [f for f in files if f.get("fileExt") == "xlsx" and re.search(r"제(\d+)회", f.get("viewFileNm", ""))]
+    return max(xlsx, key=lambda f: int(re.search(r"제(\d+)회", f["viewFileNm"]).group(1)))
+
+
+def parse_attendance(rows: list[tuple]) -> tuple[list[tuple], str | None]:
+    """출결 시트 → [(이름, 정당, 회의일수, 출석, 결석, 청가, 출장, 결석신고서)], 마지막 회의일.
+
+    머리글: '구분 | 438회(임시) … | 총 계' 줄, 그 아래 '의원명 | 소속정당 | 1차 … | 회의일수 …',
+    그 아래 회의 날짜 '(2026년08월26일)'. 누적은 '총 계' 칸부터 여섯 칸이다.
+    """
+    top = next(i for i, r in enumerate(rows) if r and "총 계" in [str(v).strip() for v in r if v])
+    head, dates = rows[top + 1], rows[top + 2]
+    ti = [str(v).strip() if v else "" for v in rows[top]].index("총 계")
+    if tuple(str(v).strip() for v in head[ti:ti + 6]) != ATT_COLS:
+        raise RuntimeError(f"출결 표 머리글이 바뀌었습니다: {head[ti:ti + 6]}")
+    days = [ymd(v) for v in dates if v and re.search(r"\d{4}년", str(v))]
+    out = []
+    for r in rows[top + 3:]:
+        if not r or not r[0]:
+            continue
+        out.append((str(r[0]).strip(), d(r[1]), *(int(r[ti + k] or 0) for k in range(6))))
+    return out, max(days) if days else None
+
+
+def ingest_attendance(cur, age: int) -> int:
+    import openpyxl  # 이 단계에서만 쓴다
+
+    with httpx.Client(timeout=120, headers={"User-Agent": "nureongso/0.1"}) as c:
+        f = latest_attendance_file(c)
+        url = f"{ATT_DOWN}?infId={ATT_INF}&infSeq=1&fileSeq={f['fileSeq']}"
+        r = c.get(url)
+        r.raise_for_status()
+    wb = openpyxl.load_workbook(io.BytesIO(r.content), data_only=True, read_only=True)
+    ws = next((w for w in wb.worksheets if w.title.strip() == f"{age}대"), None)
+    if ws is None:
+        raise RuntimeError(f"{f['viewFileNm']} 에 '{age}대' 시트가 없습니다: {wb.sheetnames}")
+    rows, as_of = parse_attendance(list(ws.iter_rows(values_only=True)))
+    session = int(re.search(r"제(\d+)회", f["viewFileNm"]).group(1))
+
+    # 한자 이름부터 붙여야 같은 이름의 한글 쪽이 '이미 붙은 사람 제외' 로 갈린다.
+    people = people_of(cur, age)
+    used: set[str] = set()
+    code_of: dict[str, str | None] = {}
+    for name, party, *_ in sorted(rows, key=lambda x: not HANJA.match(x[0].replace(" ", ""))):
+        code_of[name] = match_person(people, name, party, used)
+        if code_of[name]:
+            used.add(code_of[name])
+    bad = [x[0] for x in rows if x[2] != sum(x[3:8])]
+    if bad:  # 회의일수 = 출석+결석+청가+출장+결석신고서 (실측 전원 성립)
+        print(f"  ! 합이 안 맞는 줄 {len(bad)}: {', '.join(bad[:10])}", file=sys.stderr)
+    miss = [n for n, c_ in code_of.items() if not c_]
+    if miss:
+        print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss)}", file=sys.stderr)
+
+    cur.execute("delete from attendance where age = %s", (age,))
+    cur.executemany(
+        "insert into attendance (age, name, party, member_code, session_no, as_of, days,"
+        " present, absent, leave, trip, absence_report, source_url)"
+        " values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        [(age, n, p, code_of[n], session, as_of, *v, url) for n, p, *v in rows])
+    print(f"  {f['viewFileNm']} (마지막 회의 {as_of})", file=sys.stderr)
+    return len(rows)
+
+
 # --------------------------------------------------------------------------- run
 
 
@@ -337,6 +526,8 @@ STEPS = {
     # 의안 1건당 1회 호출이라 첫 실행이 오래 걸린다. 중간중간 커밋해서
     # 도중에 끊겨도 받은 만큼 남고, 다음 실행이 없는 것만 이어받는다.
     "summaries": lambda cur, age: ingest_summaries(cur, age),
+    "sidejobs": lambda cur, age: ingest_sidejobs(cur, age),
+    "attendance": lambda cur, age: ingest_attendance(cur, age),
 }
 
 

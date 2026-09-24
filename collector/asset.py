@@ -32,6 +32,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 
 import httpx
 
@@ -228,7 +229,9 @@ def match(members: list[tuple], name: str, age: int, hint: str | None = None,
     if len(hits) > 1 and hint:
         # '경기 성남시분당구을' 은 끝 토막만 member.district 와 겹친다. '비례대표' 도 같다.
         key = hint.split()[-1]
-        hits = [m for m in hits if hint == m[4] or key in (m[3] or "")]
+        # member.name_hanja 는 호환용 한자(李=U+F9E1)로 들어 있어 NFC 로 펴서 비교한다.
+        nfc = lambda v: unicodedata.normalize("NFC", v or "")
+        hits = [m for m in hits if nfc(hint) == nfc(m[4]) or key in (m[3] or "")]
     if len(hits) > 1 and kind == "최초":
         first = [m for m in hits
                  if not any(f"제{n}대" in (m[2] or "") for n in range(1, age))]
