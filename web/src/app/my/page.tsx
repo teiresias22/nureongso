@@ -117,8 +117,8 @@ export default async function MyPage({
         </p>
       ) : (
         <>
-          <p className="text-xs text-muted">
-            {[sd, wiw].filter(Boolean).join(" ")} · {picked.length}명
+          <p className="text-sm text-muted">
+            {[sd, wiw].filter(Boolean).join(" ")} · <b className="text-foreground">{picked.length}</b>명
           </p>
           <ul className="grid gap-2 sm:grid-cols-2">
             {picked.map((m: Member) => (
@@ -152,18 +152,18 @@ function Card({ m, s }: { m: Member; s?: CardStats }) {
       <Photo src={m.photo_url} name={m.name} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <span className="whitespace-nowrap font-semibold">{m.name}</span>
-          <span className={`ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium ${officeBadge(m.office)}`}>
+          <span className="whitespace-nowrap text-base font-semibold">{m.name}</span>
+          <span className={`ml-auto shrink-0 rounded border px-1.5 py-0.5 text-xs font-medium ${officeBadge(m.office)}`}>
             {m.office ?? "국회의원"}
           </span>
         </div>
-        <p className="mt-0.5 truncate text-xs text-muted">
+        <p className="mt-0.5 truncate text-sm text-muted">
           {[lastPart(m.party), shortDistrict(m.district)].filter(Boolean).join(" · ")}
         </p>
         {/* 한 구에 갑·을·병이 나란히 뜨는 화면이라, 자기 동이 어디인지 여기서
             갈라줘야 한다. 구 전체가 한 선거구인 곳은 값이 없다. */}
-        {area && <p className="mt-0.5 text-[11px] leading-snug text-muted/80">{area}</p>}
-        <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted">
+        {area && <p className="mt-0.5 text-xs leading-snug text-muted">{area}</p>}
+        <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted">
           {/* 국회의원 탭은 발의·표결로 정렬하고, 단체장·교육감 탭은 공약·득표율·
               당선으로 정렬한다. 카드도 그 값을 보여야 왜 이 순서인지 보인다.
               단체장의 국회 기록은 상세 페이지에서 '국회의원 시절' 로 보여준다. */}

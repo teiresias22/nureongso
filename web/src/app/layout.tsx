@@ -100,12 +100,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <span className="hidden text-xs text-muted sm:inline">선출직이 실제로 한 일</span>
             {/* 글씨만 있으면 본문과 구별이 안 돼 누를 수 있는 줄 모른다. 테두리를 준다. */}
-            <nav className="ml-auto flex gap-1.5 text-xs">
+            {/* 누르는 자리: 모바일은 44px(손가락), 넓은 화면은 36px. 예전엔 30px 였다. */}
+            <nav className="ml-auto flex gap-1.5 text-sm">
               {NAV.map(({ href, label }) => (
                 <Link
                   key={href}
                   href={href}
-                  className="rounded-md border border-line px-2.5 py-1.5 text-muted transition hover:border-muted hover:text-foreground"
+                  className="flex min-h-11 items-center rounded-md border border-line px-3 text-muted transition hover:border-muted hover:text-foreground sm:min-h-9"
                 >
                   {label}
                 </Link>
@@ -118,9 +119,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="mx-auto max-w-5xl space-y-3 px-4 py-8 text-xs text-muted">
             {/* 찾아보는 길(내 지역·통계·비교)은 헤더에 있다. 여기 두면 같은 링크가
                 두 번 나와 정작 읽어야 할 두 문서가 묻힌다. */}
-            <nav className="flex flex-wrap gap-x-4 gap-y-2">
+            <nav className="-my-2 flex flex-wrap gap-x-4 text-sm">
               {FOOTER_NAV.map(({ href, label }) => (
-                <Link key={href} href={href} className="hover:text-foreground">
+                <Link key={href} href={href} className="inline-block py-2 hover:text-foreground">
                   {label}
                 </Link>
               ))}

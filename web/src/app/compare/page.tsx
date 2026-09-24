@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  attendRate, db, hasBills, lastPart, partyColor, pct,
+  attendRate, db, hasBills, lastPart, partyColor, pct, wonK,
   type Member, type MemberStats,
 } from "@/lib/db";
 
@@ -14,8 +14,9 @@ export const metadata = {
 
 type SP = { a?: string; b?: string };
 
-/** 비교 항목. higher=true 면 큰 쪽이 진하게 표시된다.
- *  '많을수록 좋다' 는 뜻이 아니라 '어느 쪽이 큰가' 만 보여준다. */
+/** 비교 항목. 큰 쪽을 굵게 칠하지 않는다 — '이긴 쪽' 으로 읽혀서 이 페이지의 첫 문장
+ *  ('숫자가 크다고 더 일을 잘한 것은 아니다')과 어긋났다. 크기는 두 값 중 큰 쪽 기준의
+ *  막대 길이로만 보인다. */
 const ROWS: {
   label: string;
   get: (s: MemberStats) => number;
@@ -50,12 +51,24 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
     .order("name");
 
   const codes = [a, b].filter(Boolean) as string[];
-  const [{ data: members }, { data: stats }] = codes.length
+  const [{ data: members }, { data: stats }, { data: atts }, { data: lines }, { data: assets }] = codes.length
     ? await Promise.all([
         db.from("member").select("*").in("code", codes),
         db.from("member_stats").select("*").in("code", codes),
+        db.from("attendance").select("member_code, present, days").eq("age", 22).in("member_code", codes),
+        db.from("member_party_line").select("code, party_counted, against_party").in("code", codes),
+        db.from("asset_report").select("member_code, total_now_k, notice_date").in("member_code", codes)
+          .order("notice_date", { ascending: false }),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+  const attBy = new Map(((atts ?? []) as { member_code: string; present: number; days: number }[])
+    .map((r) => [r.member_code, r]));
+  const lineBy = new Map(((lines ?? []) as { code: string; party_counted: number; against_party: number }[])
+    .map((r) => [r.code, r]));
+  const assetBy = new Map<string, { total_now_k: number; notice_date: string }>();
+  for (const r of (assets ?? []) as { member_code: string; total_now_k: number; notice_date: string }[]) {
+    if (!assetBy.has(r.member_code)) assetBy.set(r.member_code, r); // 최근 것이 먼저 온다
+  }
 
   const byCode = new Map((members ?? []).map((m) => [m.code, m as Member]));
   const statBy = new Map((stats ?? []).map((s) => [s.code, s as MemberStats]));
@@ -84,6 +97,7 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
           <select
             key={k}
             name={k}
+            aria-label={k === "a" ? "첫 번째 사람" : "두 번째 사람"}
             defaultValue={(k === "a" ? a : b) ?? ""}
             className="min-w-40 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm"
           >
@@ -125,9 +139,9 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
                     className="h-3 w-1 shrink-0 rounded-full"
                     style={{ background: partyColor(m!.party) }}
                   />
-                  <b className="truncate">{m!.name}</b>
+                  <b className="truncate text-base">{m!.name}</b>
                 </span>
-                <p className="mt-1 truncate text-xs text-muted">
+                <p className="mt-1 truncate text-sm text-muted">
                   {[
                     m!.office,
                     lastPart(m!.party),
@@ -141,45 +155,93 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
             ))}
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-line bg-card">
-            <table className="w-full border-collapse text-sm">
-              <tbody>
-                {ROWS.map((row) => {
+          {/* 표 대신 행마다 격자다. 좁은 화면에선 항목 이름을 한 줄로 올리고 두 값을 그 아래
+              나란히 둔다 — 세 칸 표로는 이름 칸이 좁아 '대표발의 가 / 결' 처럼 끊겼다. */}
+          <div role="table" aria-label="두 사람 비교" className="divide-y divide-line/60 overflow-hidden rounded-lg border border-line bg-card text-sm">
+                {(() => {
                   const vals = picked.map((m) => statBy.get(m!.code));
-                  // 둘 다 법안 기록이 없으면 법안 항목은 숨긴다 (단체장 등)
-                  if (row.label.includes("발의") || row.label.includes("표결")) {
-                    if (!vals.some((s) => hasBills(s))) return null;
+                  const noBills = !vals.some((st) => hasBills(st));
+                  const cs = picked.map((m) => m!.code);
+                  // 한 행 = 항목 이름 + 두 사람 값. num 은 막대 길이(없으면 막대 없음), text 는 글자.
+                  const rows: { label: string; note?: string; cells: { num: number | null; text: string }[] }[] = [];
+                  for (const row of ROWS) {
+                    if (noBills && (row.label.includes("발의") || row.label.includes("표결"))) continue;
+                    rows.push({
+                      label: row.label,
+                      note: row.note,
+                      cells: vals.map((st) => {
+                        if (!st) return { num: null, text: "—" };
+                        const n = row.get(st);
+                        return { num: n < 0 ? null : n, text: (row.fmt ?? ((x) => String(x)))(n, st) };
+                      }),
+                    });
+                    // 표결 참여 바로 아래에 출석률·정당 표를 둔다 — 같은 본회의 이야기다.
+                    if (row.label === "본회의 표결 참여") {
+                      rows.push({
+                        label: "본회의 출석률",
+                        note: "제22대 회의일 기준. 청가·출장도 출석이 아니다",
+                        cells: cs.map((c) => {
+                          const a = attBy.get(c);
+                          return a
+                            ? { num: a.present / a.days, text: `${((a.present / a.days) * 100).toFixed(1)}% (${a.present}/${a.days}일)` }
+                            : { num: null, text: "기록 없음" };
+                        }),
+                      });
+                      rows.push({
+                        label: "정당 다수와 다른 표",
+                        note: "좋고 나쁨이 아니다",
+                        cells: cs.map((c) => {
+                          const l = lineBy.get(c);
+                          return l?.party_counted
+                            ? { num: l.against_party / l.party_counted,
+                                text: `${((l.against_party / l.party_counted) * 100).toFixed(1)}% (${l.against_party}표)` }
+                            : { num: null, text: "셀 수 없음" };
+                        }),
+                      });
+                    }
                   }
-                  const nums = vals.map((s) => (s ? row.get(s) : 0));
-                  const win = nums[0] === nums[1] ? -1 : nums[0] > nums[1] ? 0 : 1;
-                  return (
-                    <tr key={row.label} className="border-b border-line/60 last:border-0">
-                      {/* 항목 이름이 먼저다. 값·값·이름 순이면 무엇을 재는 숫자인지가
-                          맨 나중에 나와 눈이 오른쪽까지 갔다가 되돌아와야 한다. */}
-                      <th
-                        scope="row"
-                        className="w-[28%] px-4 py-3 text-left text-[11px] font-normal text-muted"
-                      >
-                        {row.label}
-                        {row.note && <span className="block opacity-70">{row.note}</span>}
-                      </th>
-                      {[0, 1].map((i) => (
-                        <td
-                          key={i}
-                          className={`px-4 py-3 text-right tabular-nums ${
-                            win === i ? "font-bold" : "text-muted"
-                          }`}
-                        >
-                          {vals[i]
-                            ? (row.fmt ?? ((n) => String(n)))(nums[i], vals[i]!)
-                            : "—"}
-                        </td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  rows.push({
+                    label: "순재산",
+                    note: "국회공보 최근 신고",
+                    cells: cs.map((c) => {
+                      const r = assetBy.get(c);
+                      return r
+                        ? { num: r.total_now_k, text: `${wonK(r.total_now_k)} (${r.notice_date.slice(0, 7).replace("-", ".")})` }
+                        : { num: null, text: "공개 전" };
+                    }),
+                  });
+                  return rows.map((row) => {
+                    const max = Math.max(...row.cells.map((c) => Math.abs(c.num ?? 0)), 0) || 1;
+                    return (
+                      <div key={row.label} role="row" className="grid grid-cols-2 gap-x-4 gap-y-2 px-4 py-3 sm:grid-cols-[30%_1fr_1fr]">
+                        {/* 항목 이름이 먼저다. 값·값·이름 순이면 무엇을 재는 숫자인지가
+                            맨 나중에 나와 눈이 오른쪽까지 갔다가 되돌아와야 한다. */}
+                        <div role="rowheader" className="col-span-2 font-medium sm:col-span-1">
+                          {row.label}
+                          {row.note && <span className="ml-1.5 text-xs font-normal text-muted sm:ml-0 sm:mt-0.5 sm:block">{row.note}</span>}
+                        </div>
+                        {row.cells.map((c, i) => (
+                          <div key={i} role="cell">
+                            <span className={`block text-right font-semibold ${c.num == null ? "font-normal text-muted" : ""}`}>
+                              {c.text}
+                            </span>
+                            {c.num != null && (
+                              <span className="mt-1.5 flex h-1.5 justify-end rounded-full bg-foreground/5">
+                                <span
+                                  className="block h-1.5 rounded-full"
+                                  style={{
+                                    width: `${Math.max(2, (Math.abs(c.num) / max) * 100)}%`,
+                                    background: c.num < 0 ? "var(--viz-neg)" : "var(--viz-1)",
+                                  }}
+                                />
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  });
+                })()}
           </div>
 
           <p className="text-xs text-muted">

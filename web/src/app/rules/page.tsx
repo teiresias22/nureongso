@@ -6,6 +6,25 @@ export const metadata = {
   description: "공약 이행 여부를 어떤 근거로, 어떤 규칙으로 판정하는지 전부 공개합니다.",
 };
 
+/** 맨 위 목차. 의원 페이지의 '어떻게 세나' 같은 링크가 이 구획들을 id 로 가리킨다. */
+const TOC: [string, string][] = [
+  ["kinds", "1. 공약마다 '무엇으로 확인할 수 있는가'를 먼저 정합니다"],
+  ["judge", "2. 판정 규칙"],
+  ["ai", "3. 공약과 근거는 AI가 연결하고, 원문을 함께 보여줍니다"],
+  ["bid", "4. 발주 공사는 판정이 아니라 사실로만 둡니다"],
+  ["review", "5. 자동 판정과 검수 판정을 구분해 표시합니다"],
+  ["no-comments", "6. 댓글과 평점이 없는 것은 빠뜨린 것이 아닙니다"],
+  ["merged", "7. 법안이 ‘대안’으로 통과된 경우"],
+  ["race", "8. 같은 선거구 후보와 공약 비교"],
+  ["limits", "9. 아직 못 하는 것"],
+  ["party-line", "10. 소속 정당 다수와 다른 표"],
+  ["asset", "11. 재산 공개"],
+  ["attendance", "12. 본회의 출결"],
+  ["sidejob", "13. 겸직 신고"],
+  ["not-shown", "14. 공개돼 있어도 싣지 않는 것"],
+  ["sources", "출처"],
+];
+
 export default function RulesPage() {
   return (
     <div className="space-y-6">
@@ -15,14 +34,25 @@ export default function RulesPage() {
 
       <header>
         <h1 className="text-xl font-bold">판정 기준</h1>
-        <p className="mt-2 text-sm text-muted">
+        <p className="mt-2 max-w-prose text-[15px] leading-7 text-muted">
           공약 이행 여부는 어느 기관도 공식으로 발표하지 않습니다. 이 서비스가 공개된
           자료를 모아 내린 판정이며, 아래 규칙을 그대로 적용합니다. 규칙을 공개하는 이유는
           같은 자료로 누구나 같은 결과에 이를 수 있어야 하기 때문입니다.
         </p>
       </header>
 
-      <Box title="1. 공약마다 '무엇으로 확인할 수 있는가'를 먼저 정합니다">
+      <nav aria-label="목차" className="rounded-lg border border-line bg-card p-4">
+        <h2 className="text-sm font-semibold text-muted">목차</h2>
+        <ol className="mt-2 grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+          {TOC.map(([id, title]) => (
+            <li key={id}>
+              <a href={`#${id}`} className="underline-offset-2 hover:underline">{title}</a>
+            </li>
+          ))}
+        </ol>
+      </nav>
+
+      <Box id="kinds" title="1. 공약마다 '무엇으로 확인할 수 있는가'를 먼저 정합니다">
         <p className="text-muted">
           주제(교통·복지)가 아니라 확인 수단으로 나눕니다. 확인할 방법이 없는 공약을
           억지로 판정하지 않기 위해서입니다.
@@ -44,7 +74,7 @@ export default function RulesPage() {
         </p>
       </Box>
 
-      <Box title="2. 판정 규칙">
+      <Box id="judge" title="2. 판정 규칙">
         <Table
           head={["근거", "판정"]}
           rows={[
@@ -84,7 +114,7 @@ export default function RulesPage() {
         </p>
       </Box>
 
-      <Box title="3. 공약과 근거는 AI가 연결하고, 원문을 함께 보여줍니다">
+      <Box id="ai" title="3. 공약과 근거는 AI가 연결하고, 원문을 함께 보여줍니다">
         <p className="text-muted">
           공약 문장을 그 의원이 대표발의한 법안, 그 지자체가 임기 중 제·개정한 자치법규,
           그 지자체가 낸 공사 입찰공고와 대조해 연결합니다. 연결된 법안·조례·공고는 공약
@@ -102,7 +132,7 @@ export default function RulesPage() {
         </p>
       </Box>
 
-      <Box title="4. 발주 공사는 판정이 아니라 사실로만 둡니다">
+      <Box id="bid" title="4. 발주 공사는 판정이 아니라 사실로만 둡니다">
         <p className="text-muted">
           국회의원 페이지 아래에 <b>지역구에서 발주된 공공 공사</b> 목록이 있습니다.
           이것은 <b>이행 판정이 아니며 공약과 연결하지도 않습니다.</b> 그 지역구 안에서
@@ -129,14 +159,14 @@ export default function RulesPage() {
         </p>
       </Box>
 
-      <Box title="5. 자동 판정과 검수 판정을 구분해 표시합니다">
+      <Box id="review" title="5. 자동 판정과 검수 판정을 구분해 표시합니다">
         <p className="text-muted">
           위 규칙으로 기계가 내린 판정에는 <b>자동</b> 표시가 붙습니다. 사람이 확인해
           확정한 판정은 표시가 없습니다. 자동 판정은 초안이며, 검수로 뒤집힐 수 있습니다.
         </p>
       </Box>
 
-      <Box title="6. 댓글과 평점이 없는 것은 빠뜨린 것이 아닙니다">
+      <Box id="no-comments" title="6. 댓글과 평점이 없는 것은 빠뜨린 것이 아닙니다">
         <p className="text-muted">
           정치인에 대한 의견은 이미 넘칩니다. 없는 것은 기록입니다. 이 사이트는 기록만
           두기 위해 댓글·평점·추천을 두지 않습니다. 여기 있는 모든 숫자는 위 규칙과 아래
@@ -149,7 +179,7 @@ export default function RulesPage() {
         </p>
       </Box>
 
-      <Box title="7. 법안이 &lsquo;대안&rsquo;으로 통과된 경우">
+      <Box id="merged" title="7. 법안이 &lsquo;대안&rsquo;으로 통과된 경우">
         <p className="text-muted">
           국회에서 법안이 법이 되는 가장 흔한 길은 원안 그대로의 통과가 아닙니다. 위원회가
           비슷한 법안 여러 건을 묶어 <b>위원장 대안</b> 하나를 만들고, 원안들은{" "}
@@ -169,7 +199,7 @@ export default function RulesPage() {
         </p>
       </Box>
 
-      <Box title="8. 같은 선거구 후보와 공약 비교">
+      <Box id="race" title="8. 같은 선거구 후보와 공약 비교">
         <p className="text-muted">
           한 지역에 나온 후보들의 공약은 비슷비슷합니다. 누가 무엇을 <b>다르게</b> 약속했는지
           보려면, 무엇이 <b>같은지</b> 먼저 갈라야 합니다.
@@ -197,7 +227,7 @@ export default function RulesPage() {
         </p>
       </Box>
 
-      <Box title="9. 아직 못 하는 것">
+      <Box id="limits" title="9. 아직 못 하는 것">
         <p className="text-muted">
           숨기면 나중에 더 큰 오해가 됩니다. 지금 이 서비스가 못 하는 것을 적어 둡니다.
         </p>
@@ -349,7 +379,7 @@ export default function RulesPage() {
         />
       </Box>
 
-      <Box title="14. 공개돼 있어도 싣지 않는 것">
+      <Box id="not-shown" title="14. 공개돼 있어도 싣지 않는 것">
         <ul className="list-disc space-y-1.5 pl-4 text-muted">
           <li>
             <b>전과·병역·납세·체납.</b> 후보자 정보공개자료로 선거 기간에 공개되지만,
@@ -371,7 +401,7 @@ export default function RulesPage() {
         </ul>
       </Box>
 
-      <Box title="출처">
+      <Box id="sources" title="출처">
         <ul className="list-disc space-y-1 pl-4 text-muted">
           <li>법안·발의·본회의 표결: 국회 열린국회정보 Open API</li>
           <li>
@@ -407,8 +437,9 @@ export default function RulesPage() {
 function Box({ id, title, children }: { id?: string; title: string; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-14 rounded-lg border border-line bg-card p-4">
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <div className="mt-2 space-y-2 text-sm">{children}</div>
+      <h2 className="text-base font-semibold">{title}</h2>
+      {/* 글은 한 줄 65자 안팎으로 자른다 — 화면 폭을 다 쓰면 110자가 넘어 줄을 잃는다. 표는 넓게 둔다. */}
+      <div className="mt-3 space-y-3 text-[15px] leading-7 [&_p]:max-w-prose [&_ul]:max-w-prose">{children}</div>
     </section>
   );
 }

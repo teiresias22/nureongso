@@ -12,8 +12,10 @@ export type Part = { key: string; label: string; value: number; color: string };
 
 /** 100% 누적 가로 막대 + 숫자 범례. 0 인 칸은 막대에서 빼고 범례에는 남긴다
  *  ('결석 0' 이 이 줄에서 가장 궁금한 숫자일 수 있다). */
-export function StackBar({ parts, unit = "", ariaLabel, format }: {
+export function StackBar({ parts, unit = "", ariaLabel, format, legend = true }: {
   parts: Part[]; unit?: string; ariaLabel: string; format?: (v: number) => string;
+  /** 여러 줄이 같은 범례를 쓸 때(법안의 정당별 막대) 줄마다 되풀이하지 않는다. */
+  legend?: boolean;
 }) {
   const fmt = format ?? ((v: number) => `${v.toLocaleString("ko-KR")}${unit}`);
   const total = parts.reduce((a, p) => a + p.value, 0);
@@ -30,7 +32,7 @@ export function StackBar({ parts, unit = "", ariaLabel, format }: {
           />
         ))}
       </div>
-      <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+      {legend && <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
         {parts.map((p) => (
           <li key={p.key} className="flex items-center gap-1">
             <span aria-hidden className="inline-block h-2 w-2 rounded-sm" style={{ background: p.color }} />
@@ -38,7 +40,7 @@ export function StackBar({ parts, unit = "", ariaLabel, format }: {
             <b className="font-semibold text-foreground">{fmt(p.value)}</b>
           </li>
         ))}
-      </ul>
+      </ul>}
     </div>
   );
 }
