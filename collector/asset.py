@@ -9,6 +9,7 @@
     python asset.py list                 # 대상 공보 목록만
     python asset.py fetch                # 받아서 적재 (이미 받은 호는 건너뜀)
     python asset.py fetch --redo         # 전부 다시
+    python asset.py relink               # 의원 연결만 다시 (적재 후 자동으로도 돈다)
     python asset.py dump --out a.json    # DB 없이 파싱 결과만 파일로
 
 환경변수: DATABASE_URL (fetch 만)
@@ -209,12 +210,16 @@ def fetch_issue(c: httpx.Client, pdf_id: int) -> tuple[dict, list[dict]]:
 
 
 def match(members: list[tuple], name: str, age: int, hint: str | None = None,
-          notice_date: str | None = None) -> str | None:
+          notice_date: str | None = None, kind: str | None = None) -> str | None:
     """이름 + 그 대수에 재직했는가. 둘 이상이면 차례로 좁힌다.
 
     1. 공보가 이름 뒤에 붙인 괄호(지역구·한자)
-    2. 공고일 뒤에 처음 당선된 사람은 뺀다 — 22대 박지원은 둘인데, 한 사람은
-       2026-06 재보궐 당선이라 2026-03 공보에는 다른 한 사람만 실려 있다.
+    2. '최초' 등록이면 그 대가 첫 임기인 사람만 — 2020-08 공보의 김병욱은 괄호가 없는데
+       21대 김병욱 둘 중 한 사람은 20대부터라 최초 등록일 수 없다.
+    3. 공고일 뒤에 처음 당선된 사람은 뺀다 — 22대 박지원 둘 중 한 사람은 2026-06
+       재보궐 당선이라 2026-03 공보에 없다. 다만 선거 이력이 빠진 사람(21대 비례
+       이수진은 첫 당선이 2024 로 잡힌다)도 걸러지므로, 이 단계는 **하나가 남을 때만**
+       쓰고 결과는 link() 의 중복 검사를 거친다.
 
     그래도 하나가 아니면 고르지 않는다 — 틀린 사람에게 붙느니 비운다.
     members 는 (code, name, terms, district, name_hanja, first_elected 'YYYYMMDD'|None).
@@ -224,10 +229,76 @@ def match(members: list[tuple], name: str, age: int, hint: str | None = None,
         # '경기 성남시분당구을' 은 끝 토막만 member.district 와 겹친다. '비례대표' 도 같다.
         key = hint.split()[-1]
         hits = [m for m in hits if hint == m[4] or key in (m[3] or "")]
+    if len(hits) > 1 and kind == "최초":
+        first = [m for m in hits
+                 if not any(f"제{n}대" in (m[2] or "") for n in range(1, age))]
+        hits = first or hits
     if len(hits) > 1 and notice_date:
         day = notice_date.replace("-", "")
-        hits = [m for m in hits if not m[5] or m[5] <= day]
+        later = [m for m in hits if not m[5] or m[5] <= day]
+        hits = later if len(later) == 1 else hits
     return hits[0][0] if len(hits) == 1 else None
+
+
+def split_name(name: str) -> tuple[str, str | None]:
+    """'김병욱(경기 성남시분당구을)' → ('김병욱', '경기 성남시분당구을')."""
+    m = re.match(r"^(.+?)\((.+)\)$", name)
+    return (m.group(1), m.group(2)) if m else (name, None)
+
+
+def link(rows: list[dict], members: list[tuple]) -> dict[tuple[int, int], str | None]:
+    """모든 신고 줄 → 의원 코드. rows 는 pdf_id·seq·name·age·kind·notice_date·
+    total_prev_k·total_now_k 를 가진 dict.
+
+    1. 줄마다 match().
+    2. 같은 호에서 한 사람에게 두 줄이 붙으면 둘 다 비운다. 실제로 2021 공보의 괄호 없는
+       이수진 둘이 한 사람에게 붙었다.
+    3. 빈 줄은 금액으로 잇는다. 같은 사람의 연속 신고는 앞 호의 현재가액이 뒤 호의
+       종전가액과 같다(실측 1,745쌍 중 1,732쌍, 나머지는 장관 재임 등으로 한 해를 건너뛴
+       경우). 같은 이름의 확정된 줄 가운데 앞뒤로 딱 한 사람만 이어지면 붙인다.
+       붙은 줄이 다시 단서가 되므로 더 붙지 않을 때까지 되풀이한다.
+    """
+    code: dict[tuple[int, int], str | None] = {}
+    for r in rows:
+        base, hint = split_name(r["name"])
+        code[(r["pdf_id"], r["seq"])] = match(
+            members, base, r["age"], hint, str(r["notice_date"]), r["kind"])
+
+    def dedupe() -> None:
+        seen: dict[tuple[int, str], list[tuple[int, int]]] = {}
+        for k, c in code.items():
+            if c:
+                seen.setdefault((k[0], c), []).append(k)
+        for ks in seen.values():
+            if len(ks) > 1:
+                for k in ks:
+                    code[k] = None
+
+    dedupe()
+    by_key = {(r["pdf_id"], r["seq"]): r for r in rows}
+    changed = True
+    while changed:
+        changed = False
+        for k, r in by_key.items():
+            if code[k]:
+                continue
+            base = split_name(r["name"])[0]
+            used = {c for kk, c in code.items() if kk[0] == k[0] and c}
+            cands = set()
+            for kk, o in by_key.items():
+                c = code[kk]
+                if not c or c in used or split_name(o["name"])[0] != base:
+                    continue
+                before = o["notice_date"] < r["notice_date"]
+                if before and r["total_prev_k"] is not None and o["total_now_k"] == r["total_prev_k"]:
+                    cands.add(c)
+                if not before and o["total_prev_k"] is not None and o["total_prev_k"] == r["total_now_k"]:
+                    cands.add(c)
+            if len(cands) == 1:
+                code[k] = cands.pop()
+                changed = True
+    dedupe()
+    return code
 
 
 COLS = ["pdf_id", "seq", "member_code", "name", "position", "kind", "age", "notice_date",
@@ -235,31 +306,44 @@ COLS = ["pdf_id", "seq", "member_code", "name", "position", "kind", "age", "noti
         "total_now_k", "breakdown", "refused"]
 
 
-def to_rows(meta: dict, rows: list[dict], members) -> tuple[list[tuple], list[str]]:
-    out, miss = [], []
-    for r in rows:
-        code = match(members, r["name"], r["age"], r["hint"], meta["notice_date"])
-        if not code:
-            miss.append(f"{r['name']}(제{r['age']}대, {r['position']})")
-        out.append((
-            meta["pdf_id"], r["seq"], code,
-            f"{r['name']}({r['hint']})" if r["hint"] else r["name"], r["position"], r["kind"], r["age"],
-            meta["notice_date"], meta["title"], r["page"], meta["link"],
-            r["total_prev_k"], r["total_inc_k"], r["total_dec_k"], r["total_now_k"],
-            json.dumps(r["breakdown"], ensure_ascii=False), r["refused"],
-        ))
-    return out, miss
+def to_rows(meta: dict, rows: list[dict]) -> list[tuple]:
+    """의원 코드는 비워 넣는다. 다른 호의 금액이 단서가 되므로 relink 가 전체를 보고 붙인다."""
+    return [(
+        meta["pdf_id"], r["seq"], None,
+        f"{r['name']}({r['hint']})" if r["hint"] else r["name"], r["position"], r["kind"], r["age"],
+        meta["notice_date"], meta["title"], r["page"], meta["link"],
+        r["total_prev_k"], r["total_inc_k"], r["total_dec_k"], r["total_now_k"],
+        json.dumps(r["breakdown"], ensure_ascii=False), r["refused"],
+    ) for r in rows]
 
 
-def run_fetch(conn, redo: bool) -> None:
-    from ingest import upsert
-
+def run_relink(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "select code, name, terms, district, name_hanja,"
             " (select min(election_id) from candidacy c where c.member_code = m.code"
             "   and c.elected and c.sg_typecode in ('2', '7')) from member m")
         members = cur.fetchall()
+        cur.execute("select pdf_id, seq, name, age, kind, notice_date, total_prev_k, total_now_k"
+                    " from asset_report")
+        cols = [d.name for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    code = link(rows, members)
+    with conn.cursor() as cur:
+        cur.executemany("update asset_report set member_code = %s where pdf_id = %s and seq = %s",
+                        [(c, k[0], k[1]) for k, c in code.items()])
+    conn.commit()
+    miss = [f"{r['name']}(제{r['age']}대, {r['notice_date']})"
+            for r in rows if not code[(r["pdf_id"], r["seq"])]]
+    print(f"[asset] 의원 연결 {len(rows) - len(miss)}/{len(rows)}", file=sys.stderr)
+    if miss:
+        print(f"  ! 못 붙인 줄 {len(miss)}: {', '.join(miss[:30])}", file=sys.stderr)
+
+
+def run_fetch(conn, redo: bool) -> None:
+    from ingest import upsert
+
+    with conn.cursor() as cur:
         cur.execute("select distinct pdf_id from asset_report")
         done = {r[0] for r in cur.fetchall()}
 
@@ -269,19 +353,17 @@ def run_fetch(conn, redo: bool) -> None:
         print(f"[asset] 공보 {len(issues)}호, 받을 것 {len(todo)}호", file=sys.stderr)
         for pdf_id in todo:
             meta, rows = fetch_issue(c, pdf_id)
-            vals, miss = to_rows(meta, rows, members)
             with conn.cursor() as cur:
                 cur.execute("delete from asset_report where pdf_id = %s", (pdf_id,))
-                upsert(cur, "asset_report", COLS, vals, "pdf_id,seq")
+                upsert(cur, "asset_report", COLS, to_rows(meta, rows), "pdf_id,seq")
             conn.commit()
-            if miss:
-                print(f"  ! 의원 매칭 실패 {len(miss)}명: {', '.join(miss[:20])}", file=sys.stderr)
             time.sleep(1)  # 공개 API 가 아니므로 천천히
+    run_relink(conn)
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("step", choices=["list", "fetch", "dump"])
+    p.add_argument("step", choices=["list", "fetch", "relink", "dump"])
     p.add_argument("--redo", action="store_true")
     p.add_argument("--out", default="asset.json")
     a = p.parse_args()
@@ -306,7 +388,10 @@ def main():
     if not dsn:
         sys.exit("DATABASE_URL 이 없습니다.")
     with psycopg.connect(dsn) as conn:
-        run_fetch(conn, a.redo)
+        if a.step == "relink":
+            run_relink(conn)
+        else:
+            run_fetch(conn, a.redo)
 
 
 if __name__ == "__main__":

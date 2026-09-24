@@ -1,7 +1,7 @@
 """국회공보 재산공개 파서. 원문 발췌를 줄여 붙였다 (숫자는 실제 공보 그대로)."""
 import datetime as dt
 
-from asset import age_at, match, parse
+from asset import age_at, link, match, parse
 
 REGULAR = ["""2025년 정기재산변동신고 공개목록
 1. 국회의원
@@ -93,3 +93,34 @@ def test_name_hint() -> None:
     rows = parse(["소속 국회 직위 (전)국회의원 성명 김병욱(경기 성남시분당구을)\n총 계 1\n"],
                  "2024-08-29", regular=False)
     assert (rows[0]["name"], rows[0]["hint"]) == ("김병욱", "경기 성남시분당구을")
+
+
+def test_first_registration() -> None:
+    # 21대 김병욱 둘 중 한 명은 20대부터라 2020-08 공보의 '최초' 일 수 없다.
+    members = [("A", "김병욱", "제20대, 제21대", "경기 성남시분당구을", None, "20160413"),
+               ("B", "김병욱", "제21대", "경북 포항시남구울릉군", None, "20200415")]
+    assert match(members, "김병욱", 21, None, "2020-08-28", "최초") == "B"
+    assert match(members, "김병욱", 21, None, "2021-03-25", "정기") is None
+
+
+def test_link_dedupe_and_chain() -> None:
+    # 2021 공보에 괄호 없는 이수진이 둘. 비례대표 이수진(P)은 21대 비례 당선 기록이 빠져
+    # 첫 당선이 2024 로 잡힌다 — 공고일 규칙만 쓰면 둘 다 동작구을(D)에게 붙는다.
+    members = [("P", "이수진", "제21대, 제22대", "경기 성남시중원구", "李壽珍", "20240410"),
+               ("D", "이수진", "제21대", "서울 동작구을", "李秀眞", "20200415")]
+    row = lambda pdf, seq, name, date, prev, now, kind="정기": dict(
+        pdf_id=pdf, seq=seq, name=name, age=21, kind=kind, notice_date=date,
+        total_prev_k=prev, total_now_k=now)
+    rows = [
+        row(1, 1, "이수진(李壽珍)", "2020-08-28", None, 1195678, "최초"),
+        row(1, 2, "이수진(李秀眞)", "2020-08-28", None, 500000, "최초"),
+        row(2, 1, "이수진", "2021-03-25", 1195678, 2894782),   # P 의 다음 해
+        row(2, 2, "이수진", "2021-03-25", 500000, 690902),     # D 의 다음 해
+        row(3, 1, "이수진(비례대표)", "2022-03-31", 2894782, 3000000),
+        row(3, 2, "이수진(서울 동작구을)", "2022-03-31", 690902, 700000),
+    ]
+    code = link(rows, members)
+    assert code[(1, 1)] == "P" and code[(1, 2)] == "D"       # 한자로
+    assert code[(2, 1)] == "P" and code[(2, 2)] == "D"       # 중복을 비운 뒤 금액으로
+    assert code[(3, 2)] == "D"                               # 지역구로
+    assert code[(3, 1)] == "P"                               # '비례대표' 는 못 맞추지만 금액으로
