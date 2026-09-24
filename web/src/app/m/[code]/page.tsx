@@ -413,14 +413,22 @@ export default async function MemberPage({
   const line = partyLine as PartyLine | null;
   // 비교 띠에 쓸 다른 의원들. 출결은 그 대수 전원(21대 322·22대 299 — 1000행 상한 아래),
   // 정당 표는 비교가 100표 이상인 사람만(재보궐로 막 들어온 몇 표짜리가 끝에 몰린다).
-  const [{ data: attPeers }, { data: linePeers }] = await Promise.all([
+  const [{ data: attPeers }, { data: linePeers }, { data: issueStats }] = await Promise.all([
     att
       ? db.from("attendance").select("age, present, days").eq("age", att.age)
       : Promise.resolve({ data: [] }),
     line?.party_counted
       ? db.from("member_party_line").select("party_counted, against_party").gte("party_counted", 100)
       : Promise.resolve({ data: [] }),
+    // 재산 비교 눈금: 같은 공보에 실린 의원들의 평균·중간값 (asset_issue_stats, SQL 에서 셈)
+    assets.length
+      ? db.from("asset_issue_stats").select("pdf_id, n, mean_k, median_k").in("pdf_id", assets.map((a) => a.pdf_id))
+      : Promise.resolve({ data: [] }),
   ]);
+  const statOf = new Map(
+    ((issueStats ?? []) as { pdf_id: number; n: number; mean_k: number; median_k: number }[])
+      .map((r) => [r.pdf_id, r]),
+  );
   const sidejobs = (sidejobRows ?? []) as Sidejob[];
   const nav: { id: string; label: string }[] = [{ id: "runs", label: "출마 이력" }];
   if (assets.length) nav.push({ id: "asset", label: "재산" });
@@ -747,7 +755,7 @@ export default async function MemberPage({
         )}
       </Section>
 
-      {assets.length > 0 && <AssetSection rows={assets} />}
+      {assets.length > 0 && <AssetSection rows={assets} stats={statOf} />}
       {sidejobs.length > 0 && <SidejobSection rows={sidejobs} />}
 
       {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
@@ -1301,7 +1309,10 @@ const eok = (k: number) => {
  *  위에서부터: 연도별 순재산 막대 → 최근 신고의 구성 → 신고별 목록(증감·고지거부·원문).
  *  금액은 '순재산' 이다 — 공보의 총계가 이미 채무를 뺀 값이라 음수도 나온다(실측: 2026년 공개
  *  기준 22대 현직 285명 중 2명). 음수는 기준선 아래로 빨갛게 그린다. */
-function AssetSection({ rows }: { rows: AssetReport[] }) {
+function AssetSection({ rows, stats }: {
+  rows: AssetReport[];
+  stats: Map<number, { n: number; mean_k: number; median_k: number }>;
+}) {
   const latest = rows[0];
   const chrono = [...rows].reverse();
   const byGroup = new Map<string, number>();
@@ -1313,7 +1324,7 @@ function AssetSection({ rows }: { rows: AssetReport[] }) {
   const gross = [...byGroup.values()].reduce((a, v) => a + v, 0);
   return (
     <Section id="asset" title="재산 공개" count={rows.length}>
-      <p className="border-b border-line px-4 py-2 text-[11px] text-muted">
+      <p className="border-b border-line px-4 py-2 text-xs text-muted">
         국회공직자윤리위원회가 국회공보로 공개한 신고액입니다. 본인·배우자·직계존비속의
         재산에서 채무를 뺀 값이고, 고지를 거부한 가족의 재산은 빠져 있습니다. 신고한 가액이라
         시세와 다를 수 있습니다.
@@ -1321,16 +1332,36 @@ function AssetSection({ rows }: { rows: AssetReport[] }) {
       <div className="space-y-4 border-b border-line px-4 py-3">
         {chrono.length > 1 && (
           <div>
-            <h3 className="text-xs font-semibold text-muted">순재산 추이</h3>
+            <h3 className="text-xs font-semibold text-muted">순재산 추이 · 같은 공보에 실린 의원들과 비교</h3>
             <Columns
               format={eok}
-              points={chrono.map((r) => ({
-                key: String(r.pdf_id),
-                label: r.notice_date.slice(2, 7).replace("-", "."),
-                value: r.total_now_k,
-                tip: `${r.notice_date.slice(0, 7).replace("-", ".")} ${ASSET_KIND[r.kind] ?? r.kind} · ${wonK(r.total_now_k)}`,
-              }))}
+              points={chrono.map((r) => {
+                const st = stats.get(r.pdf_id);
+                const when = `${r.notice_date.slice(0, 7).replace("-", ".")} ${ASSET_KIND[r.kind] ?? r.kind}`;
+                return {
+                  key: String(r.pdf_id),
+                  label: r.notice_date.slice(2, 7).replace("-", "."),
+                  value: r.total_now_k,
+                  median: st?.median_k,
+                  mean: st?.mean_k,
+                  tip: st
+                    ? `${when} · 이 의원 ${wonK(r.total_now_k)} · 의원 ${st.n}명 중간값 ${wonK(st.median_k)} · 평균 ${wonK(st.mean_k)}`
+                    : `${when} · ${wonK(r.total_now_k)}`,
+                };
+              })}
             />
+            {(() => {
+              const st = stats.get(latest.pdf_id);
+              return st ? (
+                <p className="mt-2 text-xs leading-relaxed text-muted">
+                  {latest.notice_date.slice(0, 4)}년 공개 의원 {st.n}명의 중간값은{" "}
+                  <b className="text-foreground">{wonK(st.median_k)}</b>, 평균은{" "}
+                  <b className="text-foreground">{wonK(st.mean_k)}</b>입니다. 재산이 아주 많은 몇 명이
+                  평균을 끌어올려 둘이 크게 다르므로, 보통 의원과 견주려면 중간값을 보세요.
+                  총선 뒤 신규등록 공보는 새로 들어온 의원끼리 비교합니다.
+                </p>
+              ) : null;
+            })()}
           </div>
         )}
         {gross > 0 && (

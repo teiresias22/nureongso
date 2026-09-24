@@ -90,25 +90,31 @@ export function Strip({
   );
 }
 
-/** 연도별 순재산 세로 막대. 한 계열이라 범례가 없다(제목이 말한다).
- *  0 을 기준선으로 위는 파랑, 아래(빚이 더 많은 해)는 빨강. 값 라벨은 처음과 마지막만 —
- *  나머지는 아래 목록과 마우스 오버가 맡는다. Strip 과 같은 이유로 HTML 이다. */
+/** 연도별 순재산 세로 막대. 이 사람은 파랑(음수는 기준선 아래 빨강) 막대 하나고,
+ *  ref 가 있으면 같은 공보에 실린 의원들의 중간값(실선)·평균(점선) 눈금을 막대 위에 겹친다.
+ *  값은 막대 안이 아니라 날짜 아래 줄에 전부 적는다 — 막대 끝에 달았더니 중간값 눈금과
+ *  겹쳤다(실측). 막대가 많아야 여덟 개라 작은 표처럼 읽힌다.
+ *  Strip 과 같은 이유(viewBox 가 넓은 화면에서 가운데로 몰림)로 퍼센트 위치 HTML 이다. */
 export function Columns({
   points, format,
-}: { points: { key: string; label: string; value: number; tip: string }[]; format: (v: number) => string }) {
+}: {
+  points: { key: string; label: string; value: number; tip: string; median?: number; mean?: number }[];
+  format: (v: number) => string;
+}) {
   if (!points.length) return null;
-  const maxV = Math.max(0, ...points.map((p) => p.value));
-  const minV = Math.min(0, ...points.map((p) => p.value));
+  const all = points.flatMap((p) => [p.value, p.median ?? 0, p.mean ?? 0]);
+  const maxV = Math.max(0, ...all);
+  const minV = Math.min(0, ...all); // 음수 막대가 있는가도 이걸로 본다
   const span = maxV - minV || 1;
-  const zero = (maxV / span) * 100; // 기준선이 위에서 몇 % 인가
-  const last = points.length - 1;
+  const pos = (v: number) => ((maxV - v) / span) * 100; // 위에서 몇 %
+  const zero = pos(0);
+  const hasRef = points.some((p) => p.median != null);
   return (
     <div role="img" aria-label={`순재산 추이: ${points.map((p) => `${p.label} ${format(p.value)}`).join(", ")}`}>
-      {/* 값 라벨 자리: 위쪽은 늘, 아래쪽은 음수 막대가 있을 때만 비운다(날짜 라벨과 겹쳤다). */}
-      <div className={`relative mt-5 h-28 ${minV < 0 ? "mb-5" : ""}`}>
+      <div className="relative mt-3 h-32">
         <div className="absolute inset-x-0 h-px bg-line" style={{ top: `${zero}%` }} />
         <div className="absolute inset-0 flex">
-          {points.map((p, i) => {
+          {points.map((p) => {
             const h = (Math.abs(p.value) / span) * 100;
             const up = p.value >= 0;
             return (
@@ -121,13 +127,19 @@ export function Columns({
                     background: up ? "var(--viz-1)" : "var(--viz-neg)",
                   }}
                 />
-                {(i === 0 || i === last) && (
-                  <span
-                    className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-semibold"
-                    style={up ? { bottom: `${100 - zero + h}%`, marginBottom: 2 } : { top: `${zero + h}%`, marginTop: 2 }}
-                  >
-                    {format(p.value)}
-                  </span>
+                {/* 비교 눈금은 막대보다 넓게 그려 막대 안에 들어가도 끝이 보이게 한다.
+                    카드색 테두리(2px)로 막대 위에서도 떨어져 보인다. */}
+                {p.median != null && (
+                  <div
+                    className="absolute left-1/2 h-[4px] w-[min(40px,90%)] -translate-x-1/2 -translate-y-1/2 rounded-full border border-card"
+                    style={{ top: `${pos(p.median)}%`, background: "var(--foreground)" }}
+                  />
+                )}
+                {p.mean != null && (
+                  <div
+                    className="absolute left-1/2 h-0 w-[min(40px,90%)] -translate-x-1/2 border-t-2 border-dotted"
+                    style={{ top: `${pos(p.mean)}%`, borderColor: "var(--muted)" }}
+                  />
                 )}
               </div>
             );
@@ -136,9 +148,40 @@ export function Columns({
       </div>
       <div className="mt-1 flex">
         {points.map((p) => (
-          <span key={p.key} className="flex-1 text-center text-[10px] text-muted">{p.label}</span>
+          <span key={p.key} className="flex-1 text-center leading-tight">
+            <span className="block text-[11px] text-muted">{p.label}</span>
+            <span className={`block text-xs font-semibold ${p.value < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
+              {format(p.value)}
+            </span>
+          </span>
         ))}
       </div>
+      {hasRef && (
+        <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+          {/* 범례는 실제로 그려진 색만 — 순재산이 늘 음수인 사람에게 파란 '이 의원' 을 보이면
+              막대(빨강)와 안 맞는다. */}
+          {points.some((p) => p.value >= 0) && (
+            <li className="flex items-center gap-1.5">
+              <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "var(--viz-1)" }} />
+              이 의원
+            </li>
+          )}
+          {minV < 0 && (
+            <li className="flex items-center gap-1.5">
+              <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "var(--viz-neg)" }} />
+              이 의원 (채무가 재산보다 많음)
+            </li>
+          )}
+          <li className="flex items-center gap-1.5">
+            <span aria-hidden className="inline-block h-[4px] w-4 rounded-full" style={{ background: "var(--foreground)" }} />
+            의원 중간값
+          </li>
+          <li className="flex items-center gap-1.5">
+            <span aria-hidden className="inline-block w-4 border-t-2 border-dotted" style={{ borderColor: "var(--muted)" }} />
+            의원 평균
+          </li>
+        </ul>
+      )}
     </div>
   );
 }

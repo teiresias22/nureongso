@@ -305,6 +305,22 @@ create table if not exists asset_report (
 );
 create index if not exists asset_report_member_idx on asset_report (member_code, notice_date);
 
+-- 공보 호마다 의원 재산의 평균·중간값. 의원 페이지 순재산 막대 옆 비교 눈금에 쓴다.
+-- 퇴직 신고는 뺀다(그 호의 '지금 의원' 이 아니다). 둘 다 싣는 이유: 평균은 재산이 아주 많은
+-- 몇 명(2026년 최대 1,257억)이 끌어올려 중간값의 두 배 가까이 된다(2026년 35.0억 대 17.8억).
+-- 행이 2,382개라 화면에서 받아 세면 PostgREST 1000행 상한에 잘린다. 그래서 SQL 에서 센다.
+create or replace view asset_issue_stats
+with (security_invoker = true) as
+select pdf_id,
+       count(*)::int as n,
+       round(avg(total_now_k))::bigint as mean_k,
+       round((percentile_cont(0.5) within group (order by total_now_k))::numeric)::bigint as median_k,
+       max(total_now_k) as max_k
+from asset_report
+where kind <> '퇴직'
+group by pdf_id;
+grant select on asset_issue_stats to anon, authenticated;
+
 -- 본회의 출결 누적. ingest.py attendance 가 최신 회기 엑셀 하나로 통째로 바꾼다.
 --
 -- 표결 기록(vote)의 '불참' 과 다르다. 표결은 표결마다, 이것은 본회의 회의일마다 세고,
