@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 # 값이 없는 빈 서식이라 올린다
 !.env.example
+# 값이 dotenvx 로 암호화돼 있어 올린다. 개인키(.env.keys)는 절대 올리지 않는다
+!.env.local
+.env.keys

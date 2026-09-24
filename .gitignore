@@ -1,6 +1,8 @@
 collector/.venv/
-collector/.env*
+.env*
 # 값이 없는 빈 서식이라 올린다 (gitignore 는 줄 끝 주석을 모른다)
 !collector/.env.example
-.env
+# 값이 dotenvx 로 암호화돼 있어 올린다. 개인키(.env.keys)는 절대 올리지 않는다
+!collector/.env
+**/.env.keys
 __pycache__/
