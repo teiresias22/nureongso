@@ -37,12 +37,20 @@ web/         Next.js (App Router) 프론트
 
 1. Supabase 프로젝트 생성 → SQL Editor 에 `supabase/schema.sql` 실행
 2. `.env.example` 참고해 `collector/.env`, `web/.env.local` 작성
-3. 수집
+3. `collector/.env` 는 [dotenvx](https://dotenvx.com) 로 암호화해 둔다
 
 ```bash
+brew install dotenvx/brew/dotenvx
 cd collector
+dotenvx encrypt                       # .env 값을 제자리에서 암호화. 개인키는 OS 키체인에 저장
+dotenvx get DATABASE_URL              # 값 확인
+dotenvx set GEMINI_API_KEY 새값       # 값 바꾸기 (암호화된 채로 저장)
+```
+
+4. 수집 — 실행은 항상 `dotenvx run --` 뒤에 붙인다
+
+```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-dotenvx encrypt                       # .env 값을 암호화 (brew install dotenvx/brew/dotenvx)
 dotenvx run -- .venv/bin/python ingest.py all --age 22
 ```
 
