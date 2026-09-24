@@ -42,8 +42,8 @@ web/         Next.js (App Router) 프론트
 ```bash
 cd collector
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-set -a; source .env; set +a
-.venv/bin/python ingest.py all --age 22
+dotenvx encrypt                       # .env 값을 암호화 (brew install dotenvx/brew/dotenvx)
+dotenvx run -- .venv/bin/python ingest.py all --age 22
 ```
 
 `members` → `bills` → `plenary` → `votes` 순으로 돈다. votes 는 의안 1건당 1회 호출이라
