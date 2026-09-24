@@ -130,17 +130,21 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         })}
       </nav>
 
-      <form className="flex flex-wrap gap-2">
+      <form role="search" className="flex flex-wrap gap-2">
         <input type="hidden" name="office" value={office} />
+        <label htmlFor="q" className="sr-only">이름 또는 지역구로 찾기</label>
         <input
+          id="q"
+          type="search"
           name="q"
           defaultValue={q}
-          placeholder="이름 또는 지역구"
-          className="min-w-40 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm"
+          placeholder="이름 또는 지역구 (예: 강남, 홍길동)"
+          className="min-w-40 flex-1 rounded-md border border-line bg-card px-3 py-2 text-base sm:text-sm"
         />
         {parties.length > 1 && (
           <select
             name="party"
+            aria-label="정당"
             defaultValue={party}
             className="rounded-md border border-line bg-card px-3 py-2 text-sm"
           >
@@ -156,6 +160,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         {office === "국회의원" && (
           <select
             name="elect"
+            aria-label="지역구·비례"
             defaultValue={elect}
             className="rounded-md border border-line bg-card px-3 py-2 text-sm"
           >
@@ -167,6 +172,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         {allowed.length > 1 && (
           <select
             name="sort"
+            aria-label="정렬"
             defaultValue={sort}
             className="rounded-md border border-line bg-card px-3 py-2 text-sm"
           >
@@ -182,21 +188,50 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
         </button>
       </form>
 
-      <p className="text-xs text-muted">
-        현직 {rows.length}명
-        {/* 22대 정원은 300명인데 현역 명부는 299명이다. 이유를 안 적으면 읽는
-            사람이 '1명이 어디 갔지' 에서 막힌다. 국회의원 탭에서만 보인다 —
-            단체장·교육감은 현역 명부를 주는 API 가 없어 공석을 알 수 없다. */}
-        {!!vacancies.length && (office === "국회의원" || !office) && (
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+        <span>
+          현직 <b className="text-foreground">{rows.length.toLocaleString("ko-KR")}</b>명
+          {allowed.length > 1 && <> · {allowed.find(([k]) => k === sort)?.[1]}</>}
+        </span>
+        {/* 걸린 조건을 보이고 한 번에 지울 수 있게. 검색어가 남은 걸 모르고 '왜 몇 명뿐이지'
+            에서 막힌다. */}
+        {(q || party || elect) && (
           <>
-            {" · "}
-            <span>
-              공석 {vacancies.length}곳 (
-              {vacancies.map((v) => shortDistrict(`${v.sd_name} ${v.district}`)).join(", ")})
-            </span>
+            {[q && `'${q}'`, party, elect && `${elect}만`].filter(Boolean).map((t) => (
+              <span key={t as string} className="rounded-full border border-line bg-card px-2 py-0.5 text-xs text-foreground">
+                {t}
+              </span>
+            ))}
+            <Link
+              href={{ pathname: "/", query: { ...(office && { office }) } }}
+              className="text-xs underline underline-offset-2 hover:text-foreground"
+            >
+              조건 지우기
+            </Link>
           </>
         )}
-      </p>
+      </div>
+      {/* 22대 정원은 300명인데 현역 명부는 299명이다. 이유를 안 적으면 읽는
+          사람이 '1명이 어디 갔지' 에서 막힌다. 국회의원 탭에서만 보인다 —
+          단체장·교육감은 현역 명부를 주는 API 가 없어 공석을 알 수 없다. */}
+      {!!vacancies.length && (office === "국회의원" || !office) && (
+        <p className="-mt-3 text-xs text-muted">
+          공석 {vacancies.length}곳 (
+          {vacancies.map((v) => shortDistrict(`${v.sd_name} ${v.district}`)).join(", ")})
+        </p>
+      )}
+
+      {!rows.length && (
+        <div className="rounded-lg border border-line bg-card p-6 text-center text-sm">
+          <p className="font-semibold">조건에 맞는 사람이 없습니다.</p>
+          <p className="mt-1 text-muted">
+            이름은 성까지, 지역구는 &lsquo;강남&rsquo; 처럼 일부만 넣어도 찾습니다.{" "}
+            <Link href={{ pathname: "/", query: { ...(office && { office }) } }} className="underline underline-offset-2">
+              조건 지우기
+            </Link>
+          </p>
+        </div>
+      )}
 
       {/* prefetch 를 끈다. 카드가 558개라 스크롤하면 Next 가 보이는 링크마다 RSC
           페이로드를 미리 받는다. 요청 수백 건이 사진과 대역폭을 두고 다툰다. */}
@@ -219,15 +254,19 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     {/* 이름은 줄이지 않는다. 누구인지가 이 카드의 핵심이다. */}
-                    <span className="whitespace-nowrap font-semibold">{m.name}</span>
+                    <span className="whitespace-nowrap text-base font-semibold">{m.name}</span>
                     {(m.office ?? "국회의원") === "국회의원" && (
                       <ElectBadge type={m.elect_type} />
                     )}
-                    <span className={`ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium ${officeBadge(m.office)}`}>
-                      {m.office ?? "국회의원"}
-                    </span>
+                    {/* 직위 배지는 직위가 섞인 '전체' 탭에서만. 한 직위 탭에서 모든 카드에
+                        같은 배지가 반복되면 눈이 이름보다 배지로 간다. */}
+                    {!office && (
+                      <span className={`ml-auto shrink-0 rounded border px-1.5 py-0.5 text-xs font-medium ${officeBadge(m.office)}`}>
+                        {m.office ?? "국회의원"}
+                      </span>
+                    )}
                   </div>
-                  <p className="mt-0.5 truncate text-xs text-muted">
+                  <p className="mt-0.5 truncate text-sm text-muted">
                     {[
                       lastPart(m.party),
                       shortDistrict(m.district),
@@ -239,43 +278,27 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                       .filter(Boolean)
                       .join(" · ")}
                   </p>
-                  <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
                     {/* 국회의원 탭은 발의·표결로 정렬하고, 단체장·교육감 탭은 공약·득표율·
-                        당선으로 정렬한다. 카드도 그 값을 보여야 왜 이 순서인지 보인다.
+                        당선으로 정렬한다. 카드도 그 값을 보여야 왜 이 순서인지 보인다 —
+                        지금 정렬 기준인 값은 테두리를 둘러 눈이 먼저 가게 한다.
                         단체장의 국회 기록은 상세 페이지에서 '국회의원 시절' 로 보여준다. */}
                     {(m.office ?? "국회의원") === "국회의원" && hasBills(s) ? (
                       <>
-                        <span>
-                          대표발의 <b className="text-foreground">{s?.rep_count ?? 0}</b>
-                        </span>
-                        <span>
-                          공동발의 <b className="text-foreground">{s?.co_count ?? 0}</b>
-                        </span>
-                        <span>
-                          표결참여{" "}
-                          <b className="text-foreground">
-                            {attendRate(s) == null ? "기록 없음" : `${attendRate(s)}%`}
-                          </b>
-                        </span>
+                        <Fig on={sort === "rep"} label="대표발의" value={s?.rep_count ?? 0} />
+                        <Fig on={sort === "co"} label="공동발의" value={s?.co_count ?? 0} />
+                        <Fig on={sort === "vote"} label="표결참여"
+                             value={attendRate(s) == null ? "기록 없음" : `${attendRate(s)}%`} />
                       </>
                     ) : hasPledges(s) ? (
                       <>
-                        <span>
-                          공약 <b className="text-foreground">{s!.pledge_count}</b>건
-                        </span>
+                        <Fig on={sort === "pledge"} label="공약" value={`${s!.pledge_count}건`} />
                         {/* 정렬로 고를 수 있는 값은 카드에도 보여야 한다. 안 그러면
-                            '득표율 높은 순' 을 골라도 왜 이 순서인지 알 수가 없다.
-                            이행률 자리였는데 판정이 아직 거의 다 판단불가라 비어 있었다. */}
+                            '득표율 높은 순' 을 골라도 왜 이 순서인지 알 수가 없다. */}
                         {term?.last_vote_rate != null && (
-                          <span>
-                            득표율 <b className="text-foreground">{term.last_vote_rate}%</b>
-                          </span>
+                          <Fig on={sort === "rate"} label="득표율" value={`${term.last_vote_rate}%`} />
                         )}
-                        {!!term?.wins && (
-                          <span>
-                            당선 <b className="text-foreground">{term.wins}</b>회
-                          </span>
-                        )}
+                        {!!term?.wins && <Fig on={sort === "wins"} label="당선" value={`${term.wins}회`} />}
                       </>
                     ) : (
                       <span>수집된 활동 기록 없음</span>
@@ -291,11 +314,20 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
   );
 }
 
+/** 카드의 수치 하나. on 이면 지금 정렬 기준이라 테두리를 두른다(색만으로 가르지 않는다). */
+function Fig({ label, value, on }: { label: string; value: number | string; on?: boolean }) {
+  return (
+    <span className={on ? "rounded border border-foreground/40 px-1.5 py-px text-foreground" : ""}>
+      {label} <b className="font-semibold text-foreground">{typeof value === "number" ? value.toLocaleString("ko-KR") : value}</b>
+    </span>
+  );
+}
+
 /** 비례대표만 표시한다. 지역구는 옆에 지역명이 이미 있어 배지가 중복이다. */
 function ElectBadge({ type }: { type?: string | null }) {
   if (!type?.includes("비례")) return null;
   return (
-    <span className="shrink-0 rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+    <span className="shrink-0 rounded bg-violet-600 px-1.5 py-0.5 text-xs font-medium text-white">
       비례
     </span>
   );
@@ -304,14 +336,14 @@ function ElectBadge({ type }: { type?: string | null }) {
 /** 사진이 없거나 못 불러오면 이름이 뒤에서 드러난다. 클라이언트 스크립트 없이 처리한다. */
 export function Photo({ src, name }: { src?: string | null; name: string }) {
   return (
-    <span className="relative grid h-12 w-10 shrink-0 place-items-center overflow-hidden rounded bg-line text-xs text-muted">
+    <span className="relative grid h-14 w-12 shrink-0 place-items-center overflow-hidden rounded bg-line text-xs text-muted">
       {name.slice(-2)}
       {src && (
         <Image
           src={src}
           alt=""
-          width={40}
-          height={48}
+          width={48}
+          height={56}
           loading="lazy"
           className="absolute inset-0 h-full w-full object-cover"
         />
