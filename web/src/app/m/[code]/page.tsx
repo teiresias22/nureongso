@@ -825,6 +825,7 @@ export default async function MemberPage({
               statuses={list.map((p) =>
                 ((p.pledge_status as unknown as { status: string } | null)?.status) ?? "판단불가")}
             />
+            <MoreDetails label={`공약 ${list.length}건 하나씩 보기`}>
             <ul className="divide-y divide-line">
             {list.map((p) => {
               const st = p.pledge_status as unknown as
@@ -905,6 +906,7 @@ export default async function MemberPage({
               );
             })}
             </ul>
+            </MoreDetails>
           </Section>
         );
         });
@@ -1394,6 +1396,7 @@ function AssetSection({ rows, stats }: {
           </div>
         )}
       </div>
+      <MoreDetails label={`신고 ${rows.length}건 상세 보기 (증감·고지거부·공보 원문)`}>
       <ul className="divide-y divide-line">
         {rows.map((r) => {
           const diff = r.total_prev_k == null ? null : r.total_now_k - r.total_prev_k;
@@ -1425,7 +1428,30 @@ function AssetSection({ rows, stats }: {
           );
         })}
       </ul>
+      </MoreDetails>
     </Section>
+  );
+}
+
+/** 구획 안의 세부 목록을 접어 둔다. 요약(그래프·분포)은 늘 보이고, 한 건 한 건은 눌러야
+ *  펼쳐진다 — 공약 수십 건·재산 신고 여러 해가 늘 펼쳐져 있으면 그 아래 구획까지 한참
+ *  내려가야 했다. 스크립트 없는 details 라 검색 엔진·화면낭독기도 내용을 읽는다.
+ *  누르는 줄 전체가 44px 이상이다. */
+function MoreDetails({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    // 이름 붙은 그룹(group/more)이다. 그냥 group 이면 안쪽 공약 한 건의 접기(Fold, 역시
+    // group-open)가 바깥이 열리는 순간 전부 '접기' 로 바뀌었다 — group-open 은 열린 조상
+    // 아무거나에 반응한다(실측).
+    <details className="group/more border-t border-line">
+      <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-4 text-sm font-medium marker:content-none hover:bg-background/40 [&::-webkit-details-marker]:hidden">
+        <span>{label}</span>
+        <span className="shrink-0 text-xs font-normal text-muted">
+          <span className="group-open/more:hidden">펼치기 ▾</span>
+          <span className="hidden group-open/more:inline">접기 ▴</span>
+        </span>
+      </summary>
+      <div className="border-t border-line">{children}</div>
+    </details>
   );
 }
 
@@ -1504,11 +1530,13 @@ function Fold({
 }: { open: boolean; hint: string; head: React.ReactNode; children: React.ReactNode }) {
   if (!canOpen) return <>{head}</>;
   return (
-    <details className="group">
+    // group/fold: 자기 상태에만 반응하게 이름을 붙인다. 그냥 group 이면 바깥의 열린 구획
+    // (지난 임기 공약의 Section, 목록 접기)에 반응해 닫힌 항목이 '접기' 로 보였다.
+    <details className="group/fold">
       <summary className="flex cursor-pointer items-start marker:content-none hover:bg-background/40 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 flex-1">{head}</span>
-        <span className="shrink-0 py-2 pr-3 text-xs text-muted group-open:hidden">+{hint}</span>
-        <span className="hidden shrink-0 py-2 pr-3 text-xs text-muted group-open:inline">접기</span>
+        <span className="shrink-0 py-2 pr-3 text-xs text-muted group-open/fold:hidden">+{hint}</span>
+        <span className="hidden shrink-0 py-2 pr-3 text-xs text-muted group-open/fold:inline">접기</span>
       </summary>
       {children}
     </details>
