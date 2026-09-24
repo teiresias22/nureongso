@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { REPORT_URL } from "@/lib/site";
 
 export const metadata = {
   title: "판정 기준",
@@ -27,14 +28,17 @@ const TOC: [string, string][] = [
 
 export default function RulesPage() {
   return (
-    <div className="space-y-6">
+<div className="mx-auto max-w-3xl space-y-6">
+      {/* 긴 글 페이지는 칸 전체를 좁힌다(max-w-3xl, 한국어 한 줄 45자 안팎). 예전엔 문단마다
+          max-w-prose 를 걸었더니 상자는 넓은 채 글만 왼쪽에 몰려 오른쪽이 비었고, 작은 글씨 주석은
+          ch 단위가 작아 본문보다 더 좁게 꺾였다(실측). */}
       <Link href="/" className="text-xs text-muted hover:underline">
         ← 전체 목록
       </Link>
 
       <header>
         <h1 className="text-xl font-bold">판정 기준</h1>
-        <p className="mt-2 max-w-prose text-[15px] leading-7 text-muted">
+        <p className="mt-2 text-[15px] leading-7 text-muted">
           공약 이행 여부는 어느 기관도 공식으로 발표하지 않습니다. 이 서비스가 공개된
           자료를 모아 내린 판정이며, 아래 규칙을 그대로 적용합니다. 규칙을 공개하는 이유는
           같은 자료로 누구나 같은 결과에 이를 수 있어야 하기 때문입니다.
@@ -66,7 +70,7 @@ export default function RulesPage() {
             ["방향 제시", "구체적 대상과 수단이 없다", "확인 불가"],
           ]}
         />
-        <p className="text-xs text-muted">
+        <p className="text-sm leading-6 text-muted">
           실제 집계에서 국회의원 공약의 약 10%만 법률로 잴 수 있고, 60%는 지역 사업입니다.
           지금 잴 수 있는 것은 <b>법률·조례·공사 발주</b> 셋입니다. 조례와 발주는
           단체장·교육감만 해당합니다 — 국회의원은 조례를 만들 수 없고, 예산 편성권도
@@ -126,7 +130,7 @@ export default function RulesPage() {
           이 기록이 같은 일인가&rsquo; 만 판단하고, 판정은 위의 규칙표가 합니다. 규칙표는
           사람 판단이 아니라 표를 따르므로 몇 번을 돌려도 같은 결과가 나옵니다.
         </p>
-        <p className="text-xs text-muted">
+        <p className="text-sm leading-6 text-muted">
           한계: 이름만으로 판단하므로 이름이 포괄적인 개정안은 놓칠 수 있습니다.
           실제보다 적게 잡히는 쪽을 택했습니다. 없는 근거를 붙이는 것이 더 해롭기 때문입니다.
         </p>
@@ -172,10 +176,10 @@ export default function RulesPage() {
           두기 위해 댓글·평점·추천을 두지 않습니다. 여기 있는 모든 숫자는 위 규칙과 아래
           출처로 누구나 다시 계산해 확인할 수 있어야 하는데, 이용자 의견은 그럴 수 없습니다.
         </p>
-        <p className="text-xs text-muted">
+        <p className="text-sm leading-6 text-muted">
           이용자 평가를 모아 공개하지도 않습니다. 그것은 공직선거법이 선거일 전 공표를
           제한하는 여론조사에 해당할 소지가 있습니다. 사실과 다른 내용을 발견하셨다면
-          아래 출처와 함께 알려주세요. 고치는 것은 저희 몫입니다.
+          아래 출처와 함께 <a href={REPORT_URL} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">알려주세요</a>. 고치는 것은 저희 몫입니다.
         </p>
       </Box>
 
@@ -422,12 +426,12 @@ export default function RulesPage() {
           그래서 인물 페이지의 공약 구획마다 <b>선거공보 원문(PDF)</b> 링크를 함께
           걸어 두었습니다. 정리가 미덥지 않으면 원문을 바로 확인하실 수 있습니다.
         </p>
-        <p className="text-xs text-muted">
+        <p className="text-sm leading-6 text-muted">
           대표공약(선거공약서)은 선거관리위원회가 API 로 제공하는 자료라 PDF 원문이
           없습니다. 원문 링크는 선거공보에만 붙습니다.
         </p>
-        <p className="text-xs text-muted">
-          모든 수치는 수집 시점 기준입니다. 사실과 다른 내용을 발견하시면 알려주세요.
+        <p className="text-sm leading-6 text-muted">
+          모든 수치는 수집 시점 기준입니다. 사실과 다른 내용을 발견하시면 <a href={REPORT_URL} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">알려주세요</a>.
         </p>
       </Box>
     </div>
@@ -438,8 +442,7 @@ function Box({ id, title, children }: { id?: string; title: string; children: Re
   return (
     <section id={id} className="scroll-mt-14 rounded-lg border border-line bg-card p-4">
       <h2 className="text-base font-semibold">{title}</h2>
-      {/* 글은 한 줄 65자 안팎으로 자른다 — 화면 폭을 다 쓰면 110자가 넘어 줄을 잃는다. 표는 넓게 둔다. */}
-      <div className="mt-3 space-y-3 text-[15px] leading-7 [&_p]:max-w-prose [&_ul]:max-w-prose">{children}</div>
+      <div className="mt-3 space-y-3 text-[15px] leading-7">{children}</div>
     </section>
   );
 }

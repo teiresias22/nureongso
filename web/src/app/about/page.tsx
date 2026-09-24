@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { REPORT_URL } from "@/lib/site";
 
 export const metadata = {
   title: "프로젝트 소개",
@@ -10,7 +11,10 @@ export const metadata = {
 
 export default function AboutPage() {
   return (
-    <div className="space-y-6">
+<div className="mx-auto max-w-3xl space-y-6">
+      {/* 긴 글 페이지는 칸 전체를 좁힌다(max-w-3xl, 한국어 한 줄 45자 안팎). 예전엔 문단마다
+          max-w-prose 를 걸었더니 상자는 넓은 채 글만 왼쪽에 몰려 오른쪽이 비었고, 작은 글씨 주석은
+          ch 단위가 작아 본문보다 더 좁게 꺾였다(실측). */}
       <Link href="/" className="text-xs text-muted hover:underline">
         ← 전체 목록
       </Link>
@@ -115,8 +119,8 @@ export default function AboutPage() {
         </ul>
       </Section>
 
-      <p className="text-xs text-muted">
-        사실과 다른 내용을 발견하시면 출처와 함께 알려주세요. 고치는 것은 저희 몫입니다.
+      <p className="text-sm leading-6 text-muted">
+        사실과 다른 내용을 발견하시면 출처와 함께 <a href={REPORT_URL} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">알려주세요</a>. 고치는 것은 저희 몫입니다.
       </p>
     </div>
   );
@@ -126,8 +130,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <section className="rounded-lg border border-line bg-card p-4">
       <h2 className="text-base font-semibold">{title}</h2>
-      {/* 이 페이지의 본문이라 흐린 글자로 두지 않는다. 한 줄 65자 안팎으로 자른다. */}
-      <div className="mt-3 space-y-3 text-[15px] leading-7 [&_p]:max-w-prose">{children}</div>
+      {/* 이 페이지의 본문이라 흐린 글자로 두지 않는다. */}
+      <div className="mt-3 space-y-3 text-[15px] leading-7">{children}</div>
     </section>
   );
 }

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { SITE } from "@/lib/site";
+import { REPO, REPORT_URL, SITE } from "@/lib/site";
 import "./globals.css";
 
 /** 헤더에는 찾아보는 길만 둔다. */
@@ -13,9 +13,41 @@ const NAV = [
 
 /** 푸터에는 읽는 문서 둘만. 왜 만들었는지(about)가 먼저고, 무엇을 근거로
  *  판정했는지(rules)가 다음이다 — 처음 온 사람이 읽는 순서다. */
-const FOOTER_NAV = [
-  { href: "/about", label: "프로젝트 소개" },
-  { href: "/rules", label: "판정 기준" },
+/** 바닥글 칸. 헤더에 있는 길(내 지역·통계·비교)도 되풀이한다 — 긴 페이지 끝에서 다시
+ *  위로 올라가지 않아도 되게. 읽어야 할 두 문서(소개·판정 기준)는 '알아두기' 첫 줄에 둔다. */
+const FOOTER_COLS: { title: string; links: { href: string; label: string; ext?: boolean }[] }[] = [
+  {
+    title: "둘러보기",
+    links: [
+      { href: "/", label: "전체 목록" },
+      { href: "/my", label: "내 지역 대표 찾기" },
+      { href: "/stats", label: "정당·지역별 통계" },
+      { href: "/compare", label: "의원 비교" },
+    ],
+  },
+  {
+    title: "알아두기",
+    links: [
+      { href: "/about", label: "프로젝트 소개" },
+      { href: "/rules", label: "판정 기준" },
+      { href: "/rules#not-shown", label: "싣지 않는 정보" },
+      { href: "/rules#sources", label: "데이터 출처" },
+    ],
+  },
+  {
+    title: "데이터 출처",
+    links: [
+      { href: "https://open.assembly.go.kr", label: "열린국회정보", ext: true },
+      { href: "https://www.data.go.kr", label: "중앙선거관리위원회 공공데이터", ext: true },
+      { href: "https://www.assembly.go.kr", label: "국회공보 (재산공개)", ext: true },
+      { href: "https://www.law.go.kr", label: "국가법령정보센터 (조례)", ext: true },
+      { href: "https://www.g2b.go.kr", label: "조달청 나라장터 (발주)", ext: true },
+    ],
+  },
+];
+const OPERATOR = [
+  { href: "https://www.linkedin.com/in/joonhwan-jeon-9009ba320/", label: "LinkedIn" },
+  { href: "https://joon-dev-995ba.web.app/", label: "다른 프로젝트" },
 ];
 
 const TITLE = "누렁소검은소 — 선출직 공약·의정활동 기록";
@@ -115,21 +147,83 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
-        <footer className="mt-10 border-t border-line">
-          <div className="mx-auto max-w-5xl space-y-3 px-4 py-8 text-xs text-muted">
-            {/* 찾아보는 길(내 지역·통계·비교)은 헤더에 있다. 여기 두면 같은 링크가
-                두 번 나와 정작 읽어야 할 두 문서가 묻힌다. */}
-            <nav className="-my-2 flex flex-wrap gap-x-4 text-sm">
-              {FOOTER_NAV.map(({ href, label }) => (
-                <Link key={href} href={href} className="inline-block py-2 hover:text-foreground">
-                  {label}
+        <footer className="mt-12 border-t border-line bg-card">
+          <div className="mx-auto max-w-5xl px-4 py-10 text-sm text-muted">
+            {/* 모바일은 두 칸: 소개와 데이터 출처는 한 줄 전체, 둘러보기·알아두기는 나란히.
+                한 칸으로 쌓으면 바닥글만 한 화면이 넘었다. */}
+            <div className="grid grid-cols-2 gap-x-6 gap-y-8 lg:grid-cols-[1.4fr_1fr_1fr_1.3fr]">
+              <div className="col-span-2 space-y-3 lg:col-span-1">
+                <Link href="/" className="flex items-center gap-2 text-base font-bold text-foreground">
+                  <Image src="/logo.png" alt="" width={24} height={24} className="rounded" />
+                  누렁소검은소
                 </Link>
+                <p className="leading-6">
+                  선출직이 약속한 것과 실제로 한 일을 공개 기록으로 나란히 봅니다. 판단은 보는 분의 몫입니다.
+                </p>
+                <p className="text-xs leading-5">
+                  개인이 운영하는 비영리 프로젝트이며 광고를 싣지 않습니다. 특정 정당·후보를 지지하거나
+                  반대하지 않고, 의견 없이 기록만 싣습니다.
+                </p>
+                <p className="text-xs">
+                  만든 사람 ·{" "}
+                  {OPERATOR.map(({ href, label }, i) => (
+                    <span key={href}>
+                      {i > 0 && " · "}
+                      <a href={href} target="_blank" rel="noopener noreferrer"
+                         className="inline-block py-1.5 underline underline-offset-2 hover:text-foreground">
+                        {label} <span aria-hidden>↗</span>
+                      </a>
+                    </span>
+                  ))}
+                </p>
+              </div>
+              {FOOTER_COLS.map((col, i) => (
+                <nav key={col.title} aria-label={col.title}
+                     className={i === FOOTER_COLS.length - 1 ? "col-span-2 lg:col-span-1" : ""}>
+                  <h2 className="text-xs font-semibold text-foreground">{col.title}</h2>
+                  <ul className="mt-2">
+                    {col.links.map(({ href, label, ext }) => (
+                      <li key={href}>
+                        {ext ? (
+                          <a href={href} target="_blank" rel="noopener noreferrer"
+                             className="inline-block py-1.5 hover:text-foreground">
+                            {label} <span aria-hidden>↗</span>
+                          </a>
+                        ) : (
+                          <Link href={href} className="inline-block py-1.5 hover:text-foreground">{label}</Link>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
               ))}
-            </nav>
-            <p>
-              출처: 열린국회정보 Open API, 중앙선거관리위원회 공공데이터, 법제처
-              국가법령정보. 수치는 수집 시점 기준이며 집계 방식은 서비스가 정한 것입니다.
-            </p>
+            </div>
+
+            {/* 판정 기준 6번('사실과 다른 내용을 발견하셨다면 알려주세요')이 가리킬 곳.
+                GitHub 이슈는 공개 게시판이라 그렇게 적는다. */}
+            <div className="mt-8 rounded-lg border border-line bg-background px-4 py-3 leading-6">
+              <b className="text-foreground">틀린 내용을 보셨나요?</b> 근거(원문 링크)와 함께{" "}
+              <a href={REPORT_URL} target="_blank" rel="noopener noreferrer"
+                 className="text-foreground underline underline-offset-2">
+                GitHub 이슈
+              </a>
+              로 알려 주세요(GitHub 계정 필요). 공개 게시판이라 누구나 볼 수 있으니 개인 연락처는 적지 마세요.
+              확인되면 고치고 이슈에 고친 기록을 남깁니다.
+            </div>
+
+            <div className="mt-8 flex flex-col gap-2 border-t border-line pt-5 text-xs sm:flex-row sm:items-center sm:justify-between">
+              <p>
+                수치는 수집 시점 기준이며, 집계 방식은 이 서비스가 정한 것입니다(
+                <Link href="/rules" className="underline underline-offset-2 hover:text-foreground">판정 기준</Link>).
+                공공데이터는 각 기관의 이용 조건에 따라 출처를 밝혀 씁니다.
+              </p>
+              <p className="shrink-0">
+                © {new Date().getFullYear()} 누렁소검은소 ·{" "}
+                <a href={REPO} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                  소스 코드
+                </a>
+              </p>
+            </div>
           </div>
         </footer>
       </body>

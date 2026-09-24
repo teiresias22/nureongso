@@ -1,0 +1,37 @@
+name: 데이터 오류 제보
+description: 사이트에 실린 내용이 원문(공공데이터·선거공보 등)과 다를 때
+title: "[오류] "
+labels: ["데이터 오류"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        이 게시판은 **공개**입니다. 이름·연락처 같은 개인 정보는 적지 마세요.
+        판정에 대한 의견이 아니라 **원문과 다른 사실**을 알려 주세요. 판정 규칙은 [판정 기준](https://nureongso-puce.vercel.app/rules)에 있습니다.
+  - type: input
+    id: page
+    attributes:
+      label: 틀린 내용이 있는 페이지 주소
+      placeholder: https://nureongso-puce.vercel.app/m/...
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: 사이트에 적힌 내용
+      description: 어느 항목(공약·표결·재산·출결·겸직 등)의 무엇이 틀렸는지
+    validations:
+      required: true
+  - type: textarea
+    id: right
+    attributes:
+      label: 원문에 적힌 내용
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: 근거 원문 링크
+      description: 국회·선관위·지자체 등 원래 기관의 페이지나 파일 주소
+    validations:
+      required: true

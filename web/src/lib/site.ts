@@ -9,3 +9,8 @@ export const SITE =
   (process.env.VERCEL_PROJECT_PRODUCTION_URL
     ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
     : "http://localhost:3000");
+
+export const REPO = "https://github.com/teiresias22/nureongso";
+/** 오류 제보는 이슈 양식(.github/ISSUE_TEMPLATE/data-error.yml)으로 받는다.
+ *  바닥글과 판정 기준·소개의 '알려주세요' 가 모두 여기를 가리킨다. */
+export const REPORT_URL = `${REPO}/issues/new?template=data-error.yml`;
