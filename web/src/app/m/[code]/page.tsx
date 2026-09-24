@@ -10,6 +10,7 @@ import {
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
+import { Columns, StackBar, Strip, type Part } from "./charts";
 
 export const revalidate = 3600;
 
@@ -224,12 +225,11 @@ export default async function MemberPage({
       .eq("member_code", code)
       .order("notice_date", { ascending: false }),
     db.from("member_party_line").select("*").eq("code", code).maybeSingle(),
-    // 출결은 대수마다 한 줄. 지금은 22대만 있지만 가장 최근 대수를 고른다.
+    // 출결은 대수마다 한 줄(21대·22대). 최근 대수가 위.
     db.from("attendance")
       .select("age, session_no, as_of, days, present, absent, leave, trip, absence_report, source_url")
       .eq("member_code", code)
-      .order("age", { ascending: false })
-      .limit(1),
+      .order("age", { ascending: false }),
     db.from("member_sidejob")
       .select("id, age, opened_at, org, position, decision, decision_kind")
       .eq("member_code", code)
@@ -408,7 +408,19 @@ export default async function MemberPage({
   // 법안 목록이 없다) 화면을 그리는 조건과 같은 기준으로 여기서 한 번 만든다.
   // 둘이 어긋나면 눌러도 안 움직이는 줄이 생긴다.
   const assets = (assetRows ?? []) as AssetReport[];
-  const att = ((attRows ?? []) as Attendance[])[0];
+  const atts = (attRows ?? []) as Attendance[];
+  const att = atts[0];
+  const line = partyLine as PartyLine | null;
+  // 비교 띠에 쓸 다른 의원들. 출결은 그 대수 전원(21대 322·22대 299 — 1000행 상한 아래),
+  // 정당 표는 비교가 100표 이상인 사람만(재보궐로 막 들어온 몇 표짜리가 끝에 몰린다).
+  const [{ data: attPeers }, { data: linePeers }] = await Promise.all([
+    att
+      ? db.from("attendance").select("age, present, days").eq("age", att.age)
+      : Promise.resolve({ data: [] }),
+    line?.party_counted
+      ? db.from("member_party_line").select("party_counted, against_party").gte("party_counted", 100)
+      : Promise.resolve({ data: [] }),
+  ]);
   const sidejobs = (sidejobRows ?? []) as Sidejob[];
   const nav: { id: string; label: string }[] = [{ id: "runs", label: "출마 이력" }];
   if (assets.length) nav.push({ id: "asset", label: "재산" });
@@ -590,22 +602,22 @@ export default async function MemberPage({
       {/* 출결은 표결이 없어도 있을 수 있어(임기 중 들어온 의원은 표결 API 명부에 없다)
           구획은 둘 중 하나만 있어도 연다. */}
       {(s.vote_total > 0 || att) && (
-        <section className="rounded-lg border border-line bg-card p-4">
+        <section className="space-y-5 rounded-lg border border-line bg-card p-4">
           <h2 className="text-sm font-semibold">본회의 출결과 표결</h2>
-          {att && <AttendanceLine a={att} />}
-          {s.vote_total > 0 && (<>
-          <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm text-muted">
-            <span className="w-8 shrink-0 text-xs">표결</span>
-            {([["찬성", s.vote_yes], ["반대", s.vote_no], ["기권", s.vote_blank], ["불참", s.vote_absent]] as const).map(
-              ([k, v]) => (
-                <span key={k}>
-                  {k} <b className="text-foreground">{v}</b>
-                </span>
-              ),
-            )}
-          </div>
-          <PartyLineNote line={partyLine as PartyLine | null} party={lastPart(m.party)} />
-          </>)}
+          {atts.length > 0 && (
+            <AttendanceBlock
+              rows={atts}
+              peers={((attPeers ?? []) as Pick<Attendance, "present" | "days">[])}
+            />
+          )}
+          {s.vote_total > 0 && (
+            <VoteBlock
+              s={s}
+              line={line}
+              party={lastPart(m.party)}
+              peers={(linePeers ?? []) as Pick<PartyLine, "party_counted" | "against_party">[]}
+            />
+          )}
         </section>
       )}
 
@@ -1117,37 +1129,103 @@ function PartyLineNote({ line, party }: { line: PartyLine | null; party: string 
   );
 }
 
-/** 본회의 출결 누적. 무단 결석과 사유 있는 결석을 가르는 것이 표결 '불참' 과 다른 점이다.
- *  결석은 0 이어도 적는다 — 그게 이 줄에서 가장 궁금한 숫자다. 나머지는 있을 때만 적는다. */
-function AttendanceLine({ a }: { a: Attendance }) {
-  const extra = ([["청가", a.leave], ["출장", a.trip], ["결석신고서", a.absence_report]] as const)
-    .filter(([, v]) => v > 0);
+/** 출결 다섯 칸. 쌓는 순서는 출석 → 사유 있는 결석 → 무단 결석이고, 색은 이 순서로
+ *  이웃할 때 색맹 검증을 통과한 조합이다(globals.css 주석). 순서를 바꾸면 다시 검증한다. */
+const attParts = (a: Attendance): Part[] => [
+  { key: "present", label: "출석", value: a.present, color: "var(--viz-1)" },
+  { key: "report", label: "결석신고서", value: a.absence_report, color: "var(--viz-5)" },
+  { key: "leave", label: "청가", value: a.leave, color: "var(--viz-4)" },
+  { key: "trip", label: "출장", value: a.trip, color: "var(--viz-3)" },
+  { key: "absent", label: "결석", value: a.absent, color: "var(--viz-2)" },
+];
+
+/** 본회의 출결 누적 — 대수마다 막대 하나, 최근 대수에는 다른 의원들 사이 위치를 붙인다.
+ *  무단 결석과 사유 있는 결석을 가르는 것이 표결 '불참' 과 다른 점이다. */
+function AttendanceBlock({ rows, peers }: {
+  rows: Attendance[]; peers: Pick<Attendance, "present" | "days">[];
+}) {
+  const cur = rows[0];
+  // 임기 중에 들어온 의원은 회의일수가 적어 비율이 튄다. 전체 회의일의 절반 이상인 사람만.
+  const full = Math.max(...peers.map((p) => p.days), cur.days);
+  const rates = peers.filter((p) => p.days >= full / 2).map((p) => p.present / p.days);
+  const pctFmt = (v: number) => `${(v * 100).toFixed(1)}%`;
   return (
-    <div className="mt-2 text-sm text-muted">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <span className="w-8 shrink-0 text-xs">출결</span>
-        <span>
-          출석 <b className="text-foreground">{a.present}</b>/{a.days}일
-        </span>
-        <span>
-          결석 <b className={a.absent > 0 ? "text-foreground" : ""}>{a.absent}</b>
-        </span>
-        {extra.map(([k, v]) => (
-          <span key={k}>
-            {k} <b className="text-foreground">{v}</b>
-          </span>
+    <div>
+      <h3 className="text-xs font-semibold text-muted">출결 · 본회의 회의일 기준</h3>
+      <div className="mt-2 space-y-3">
+        {rows.map((a, i) => (
+          <div key={a.age}>
+            <p className="mb-1 flex justify-between text-xs">
+              <span>
+                제{a.age}대 <span className="text-muted">· 제{a.session_no}회{a.as_of ? `(${a.as_of.replaceAll("-", ".")})` : ""}까지 {a.days}일</span>
+              </span>
+              <span className="text-muted">
+                출석률 <b className="text-foreground">{pctFmt(a.present / (a.days || 1))}</b>
+              </span>
+            </p>
+            <StackBar parts={attParts(a)} unit="일" ariaLabel={`제${a.age}대 본회의 출결`} />
+            {i === 0 && rates.length > 10 && (
+              <Strip
+                values={rates}
+                mine={a.present / (a.days || 1)}
+                domain={[Math.min(...rates, a.present / (a.days || 1)), 1]}
+                format={pctFmt}
+                caption={`제${a.age}대 의원 ${rates.length}명의 출석률`}
+                lowLabel="낮음"
+                highLabel="높음"
+              />
+            )}
+          </div>
         ))}
       </div>
-      <p className="mt-1 text-[11px]">
-        제{a.age}대 개원부터 제{a.session_no}회 국회{a.as_of ? `(${a.as_of.replaceAll("-", ".")})` : ""}까지
-        본회의 회의일 기준입니다.{" "}
-        {a.source_url && (
-          <a href={a.source_url} className="underline underline-offset-2 hover:text-foreground">원문 엑셀</a>
+      <p className="mt-2 text-[11px] text-muted">
+        {cur.source_url && (
+          <a href={cur.source_url} className="underline underline-offset-2 hover:text-foreground">원문</a>
         )}{" "}
         <Link href="/rules#attendance" className="underline underline-offset-2 hover:text-foreground">
           청가·출장·결석신고서란
         </Link>
       </p>
+    </div>
+  );
+}
+
+/** 본회의 표결 네 칸(찬성·반대·기권·불참)과, 정당 다수와 다른 표의 위치.
+ *  색 순서는 재산 구성 막대와 같은 검증된 네 색이다. */
+function VoteBlock({ s, line, party, peers }: {
+  s: MemberStats; line: PartyLine | null; party: string;
+  peers: Pick<PartyLine, "party_counted" | "against_party">[];
+}) {
+  const rates = peers.map((p) => p.against_party / p.party_counted);
+  const mine = line?.party_counted ? line.against_party / line.party_counted : null;
+  const pctFmt = (v: number) => `${(v * 100).toFixed(1)}%`;
+  return (
+    <div>
+      <h3 className="text-xs font-semibold text-muted">표결 · 본회의 표결 {s.vote_total.toLocaleString("ko-KR")}건</h3>
+      <div className="mt-2">
+        <StackBar
+          unit="번"
+          ariaLabel="본회의 표결"
+          parts={[
+            { key: "yes", label: "찬성", value: s.vote_yes, color: "var(--viz-1)" },
+            { key: "no", label: "반대", value: s.vote_no, color: "var(--viz-2)" },
+            { key: "blank", label: "기권", value: s.vote_blank, color: "var(--viz-3)" },
+            { key: "absent", label: "불참", value: s.vote_absent, color: "var(--viz-4)" },
+          ]}
+        />
+      </div>
+      <PartyLineNote line={line} party={party} />
+      {mine != null && rates.length > 10 && (
+        <Strip
+          values={rates}
+          mine={mine}
+          domain={[0, Math.max(...rates, mine)]}
+          format={pctFmt}
+          caption={`의원 ${rates.length}명의 '정당 다수와 다른 표' 비율`}
+          lowLabel="당과 같이"
+          highLabel="당과 다르게"
+        />
+      )}
     </div>
   );
 }
@@ -1191,27 +1269,48 @@ function SidejobSection({ rows }: { rows: Sidejob[] }) {
   );
 }
 
-/** 공보의 재산 종류 이름. 두 개가 문장만큼 길어 칩에 안 들어간다. */
-const ASSET_LABEL: Record<string, string> = {
-  "부동산에 관한 규정이 준용되는 권리와 자동차·건설기계·선박 및 항공기": "자동차 등",
-  "정치자금법에 따른 정치자금의 수입 및 지출을 위한 예금계좌의 예금": "정치자금 계좌",
-  "합명·합자·유한회사 출자지분": "출자지분",
-};
 const ASSET_KIND: Record<string, string> = {
   정기: "정기 변동신고", 최초: "최초 등록", 재등록: "재등록", 퇴직: "퇴직 신고",
 };
 
-/** 국회공보 재산공개. 해마다 한 줄, 최근이 위.
+/** 재산 종류 → 구성 막대의 네 묶음. 공보는 열다섯 가지로 나누는데 색을 열다섯 개 쓸 수는
+ *  없다(검증된 색은 이웃 기준 네 개까지). 채무는 자산이 아니라 따로 적는다. */
+const ASSET_GROUP: Record<string, string> = {
+  토지: "부동산", 건물: "부동산",
+  예금: "예금·현금", 현금: "예금·현금",
+  "정치자금법에 따른 정치자금의 수입 및 지출을 위한 예금계좌의 예금": "예금·현금",
+  증권: "증권", 가상자산: "증권", "합명·합자·유한회사 출자지분": "증권",
+};
+const GROUPS = [
+  { key: "부동산", color: "var(--viz-1)" },
+  { key: "예금·현금", color: "var(--viz-2)" },
+  { key: "증권", color: "var(--viz-3)" },
+  { key: "기타", color: "var(--viz-4)" },
+];
+
+/** 천원 → '12.3억' / '4,500만'. 막대 라벨은 짧아야 한다. 긴 표기는 wonK. */
+const eok = (k: number) => {
+  const man = k / 10;
+  return Math.abs(man) >= 10000
+    ? `${(man / 10000).toFixed(1)}억`
+    : `${Math.round(man).toLocaleString("ko-KR")}만`;
+};
+
+/** 국회공보 재산공개.
  *
+ *  위에서부터: 연도별 순재산 막대 → 최근 신고의 구성 → 신고별 목록(증감·고지거부·원문).
  *  금액은 '순재산' 이다 — 공보의 총계가 이미 채무를 뺀 값이라 음수도 나온다(실측: 2026년 공개
- *  기준 22대 현직 285명 중 2명). 막대는 그래서 0 을 기준으로 좌우가 아니라 절댓값 길이만 쓰고
- *  음수는 색으로 가른다. 항목 내역은 가장 최근 신고 것만 펼친다. */
+ *  기준 22대 현직 285명 중 2명). 음수는 기준선 아래로 빨갛게 그린다. */
 function AssetSection({ rows }: { rows: AssetReport[] }) {
-  const max = Math.max(...rows.map((r) => Math.abs(r.total_now_k)), 1);
   const latest = rows[0];
-  const parts = Object.entries(latest.breakdown ?? {})
-    .filter(([, v]) => v !== 0)
-    .sort((a, b) => (a[0] === "채무" ? 1 : b[0] === "채무" ? -1 : b[1] - a[1]));
+  const chrono = [...rows].reverse();
+  const byGroup = new Map<string, number>();
+  let debt = 0;
+  for (const [k, v] of Object.entries(latest.breakdown ?? {})) {
+    if (k === "채무") debt += v;
+    else byGroup.set(ASSET_GROUP[k] ?? "기타", (byGroup.get(ASSET_GROUP[k] ?? "기타") ?? 0) + v);
+  }
+  const gross = [...byGroup.values()].reduce((a, v) => a + v, 0);
   return (
     <Section id="asset" title="재산 공개" count={rows.length}>
       <p className="border-b border-line px-4 py-2 text-[11px] text-muted">
@@ -1219,6 +1318,39 @@ function AssetSection({ rows }: { rows: AssetReport[] }) {
         재산에서 채무를 뺀 값이고, 고지를 거부한 가족의 재산은 빠져 있습니다. 신고한 가액이라
         시세와 다를 수 있습니다.
       </p>
+      <div className="space-y-4 border-b border-line px-4 py-3">
+        {chrono.length > 1 && (
+          <div>
+            <h3 className="text-xs font-semibold text-muted">순재산 추이</h3>
+            <Columns
+              format={eok}
+              points={chrono.map((r) => ({
+                key: String(r.pdf_id),
+                label: r.notice_date.slice(2, 7).replace("-", "."),
+                value: r.total_now_k,
+                tip: `${r.notice_date.slice(0, 7).replace("-", ".")} ${ASSET_KIND[r.kind] ?? r.kind} · ${wonK(r.total_now_k)}`,
+              }))}
+            />
+          </div>
+        )}
+        {gross > 0 && (
+          <div>
+            <h3 className="mb-2 text-xs font-semibold text-muted">
+              {latest.notice_date.slice(0, 4)}년 신고 구성 · 자산 {wonK(gross)}
+            </h3>
+            <StackBar
+              ariaLabel="최근 신고 재산 구성"
+              format={wonK}
+              parts={GROUPS.map((g) => ({ key: g.key, label: g.key, value: byGroup.get(g.key) ?? 0, color: g.color }))
+                .filter((p) => p.value > 0)}
+            />
+            <p className="mt-1.5 text-xs text-muted">
+              채무 <b className="font-semibold text-foreground">{wonK(debt)}</b>
+              {" "}→ 순재산 <b className="font-semibold text-foreground">{wonK(latest.total_now_k)}</b>
+            </p>
+          </div>
+        )}
+      </div>
       <ul className="divide-y divide-line">
         {rows.map((r) => {
           const diff = r.total_prev_k == null ? null : r.total_now_k - r.total_prev_k;
@@ -1228,17 +1360,11 @@ function AssetSection({ rows }: { rows: AssetReport[] }) {
                 <span className="shrink-0 text-xs text-muted">
                   {r.notice_date.slice(0, 7).replace("-", ".")} · {ASSET_KIND[r.kind] ?? r.kind}
                 </span>
-                <span className={`font-semibold tabular-nums ${r.total_now_k < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
+                <span className={`font-semibold ${r.total_now_k < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
                   {wonK(r.total_now_k)}
                 </span>
               </div>
-              <div className="mt-1 h-1.5 rounded bg-foreground/5">
-                <div
-                  className={`h-1.5 rounded ${r.total_now_k < 0 ? "bg-red-500/60" : "bg-foreground/30"}`}
-                  style={{ width: `${(Math.abs(r.total_now_k) / max) * 100}%` }}
-                />
-              </div>
-              <p className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-muted">
+              <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-muted">
                 {diff != null && (
                   <span>
                     직전 신고보다 {diff >= 0 ? "+" : "-"}{wonK(Math.abs(diff))}
@@ -1256,23 +1382,6 @@ function AssetSection({ rows }: { rows: AssetReport[] }) {
           );
         })}
       </ul>
-      {parts.length > 0 && (
-        <div className="border-t border-line px-4 py-2">
-          <p className="text-[11px] text-muted">
-            {latest.notice_date.slice(0, 4)}년 신고 내역
-          </p>
-          <ul className="mt-1 flex flex-wrap gap-1.5">
-            {parts.map(([k, v]) => (
-              <li key={k} className="rounded-full border border-line px-2 py-0.5 text-xs">
-                {ASSET_LABEL[k] ?? k}{" "}
-                <span className="tabular-nums text-muted">
-                  {k === "채무" ? "-" : ""}{wonK(v)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </Section>
   );
 }
