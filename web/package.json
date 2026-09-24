@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "dotenvx run -f .env.local -- next dev",
-    "build": "next build",
+    "build": "dotenvx run -f .env.local -- next build",
     "start": "next start",
     "lint": "eslint"
   },
@@ -15,6 +15,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@dotenvx/dotenvx": "^2.30.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
