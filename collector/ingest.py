@@ -339,16 +339,40 @@ HANJA = re.compile(r"^[一-鿿]+$")
 
 
 def people_of(cur, age: int) -> list[tuple]:
-    """그 대수에 재직한 사람. (code, name, name_hanja, district, elect_type, party).
+    """그 대수에 재직한 사람. (code, name, name_hanja, district, elect_type, party, 지역구당선).
+
+    지역구당선 = 그 대수 총선~임기 끝 사이에 지역구(sg 2)로 당선된 기록이 있는가.
+    member.district·elect_type 은 최신 값만 있어서 21대 비례였다가 22대 지역구로 옮긴
+    이수진(성남중원)은 '비례' 로 안 잡힌다. '(비)' 단서는 이 칸으로 가른다.
 
     name_hanja 는 NFC 로 편다. 열린국회정보가 준 한자가 호환용 코드로 들어 있다 — 李 가
     U+674E 가 아니라 U+F9E1 이다(실측 790명). 겸직 API 는 표준 코드로 보내서 그대로
     비교하면 같은 글자가 안 맞는다.
     """
-    cur.execute("select code, name, name_hanja, district, elect_type, party from member"
-                " where terms like %s", (f"%제{age}대%",))
+    y = 2016 + 4 * (age - 20)  # 그 대수를 뽑은 총선 해
+    cur.execute(
+        "select code, name, name_hanja, district, elect_type, party,"
+        " exists (select 1 from candidacy c where c.member_code = m.code and c.elected"
+        "   and c.sg_typecode = '2' and c.election_id between %s and %s)"
+        " from member m where terms like %s",
+        # 끝은 다음 총선 해 1월 1일. 5월 29일까지 잡으면 다음 총선(4월)이 들어온다.
+        (f"{y}0101", f"{y + 4}0101", f"%제{age}대%"))
     return [(c, n, unicodedata.normalize("NFC", h) if h else h, *rest)
             for c, n, h, *rest in cur.fetchall()]
+
+
+# 개명·합당 계보. member.party 는 수집 당시 이름으로 굳어 있고('미래통합당'), 출결표는
+# 그 회기 이름('국민의힘')으로 적는다. 21대 김병욱 둘은 한자까지 같아 정당으로만 갈린다.
+PARTY_LINE = {
+    "자유한국당": "국민의힘", "미래통합당": "국민의힘", "미래한국당": "국민의힘", "국민의미래": "국민의힘",
+    "더불어시민당": "더불어민주당", "더불어민주연합": "더불어민주당",
+}
+
+
+def same_party(member_party: str | None, party: str) -> bool:
+    """member.party 는 'A/B' 이력일 수 있다. 계보로 펴서 하나라도 같으면 같은 당."""
+    norm = lambda v: PARTY_LINE.get(v.strip(), v.strip())
+    return norm(party) in {norm(v) for v in (member_party or "").split("/") if v.strip()}
 
 
 def match_person(people: list[tuple], raw: str, party: str | None = None,
@@ -372,11 +396,12 @@ def match_person(people: list[tuple], raw: str, party: str | None = None,
         if HANJA.match(hint):
             hits = [p for p in hits if p[2] == hint]
         elif hint.startswith("비"):
-            hits = [p for p in hits if "비례" in f"{p[3]}{p[4]}"]
+            hits = ([p for p in hits if "비례" in f"{p[3]}{p[4]}"]
+                    or [p for p in hits if len(p) > 6 and not p[6]])
         else:
             hits = [p for p in hits if hint.split()[-1] in (p[3] or "")]
     if len(hits) > 1 and party:
-        hits = [p for p in hits if (p[5] or "").endswith(party)] or hits
+        hits = [p for p in hits if same_party(p[5], party)] or hits
     if len(hits) > 1 and used:
         hits = [p for p in hits if p[0] not in used]
     return hits[0][0] if len(hits) == 1 else None
@@ -444,15 +469,80 @@ ATT_DOWN = "https://open.assembly.go.kr/portal/data/file/downloadFileData.do"
 ATT_COLS = ("회의일수", "출석", "결석", "청가", "출장", "결석신고서")
 
 
-def latest_attendance_file(c: httpx.Client) -> dict:
+ATT_PAGE = f"https://open.assembly.go.kr/portal/data/service/selectServicePage.do?infId={ATT_INF}&infSeq=1"
+
+
+def attendance_files(c: httpx.Client) -> list[dict]:
+    """출결 파일 목록. 회기 번호(no)를 붙여 오래된 순으로."""
     r = c.post(ATT_LIST, data={"infId": ATT_INF, "infSeq": 1},
                headers={"X-Requested-With": "XMLHttpRequest"})
     r.raise_for_status()
     files = (r.json() or {}).get("data")
     if not files:
         raise RuntimeError("출결 파일 목록 형태가 바뀌었습니다")
-    xlsx = [f for f in files if f.get("fileExt") == "xlsx" and re.search(r"제(\d+)회", f.get("viewFileNm", ""))]
-    return max(xlsx, key=lambda f: int(re.search(r"제(\d+)회", f["viewFileNm"]).group(1)))
+    out = []
+    for f in files:
+        m = re.search(r"제(\d+)회", f.get("viewFileNm", ""))
+        if m:
+            out.append({**f, "no": int(m.group(1))})
+    return sorted(out, key=lambda f: f["no"])
+
+
+def age_at(day: str) -> int:
+    """그 날짜의 국회 대수 (asset.py 의 age_at 과 같은 규칙: 제20대가 2016-05-30 시작)."""
+    y, m, dd = (int(x) for x in day.split("-"))
+    return 20 + (y - 2016 - (1 if (m, dd) < (5, 30) else 0)) // 4
+
+
+ATT_LINE = re.compile(r"^(\S+)\s+(\S+)\s+(.*?)\s*(\d+) (\d+) (\d+) (\d+) (\d+) (\d+)$")
+
+
+def parse_attendance_pdf(text: str) -> tuple[list[tuple], list[str]]:
+    """21대까지의 회기별 PDF → [(이름, 정당, 회의일수, 출석, 결석, 청가, 출장, 결석신고서)], 회의일들.
+
+    엑셀과 달리 **그 회기 것만** 있고 누적이 없다. 줄은 '이름 정당 상태… 여섯 숫자'.
+    동명이인 괄호 뒤에 정당이 붙어 나오는 줄이 있다: '이수진(비)더불어민주당 출석 …'.
+    """
+    days = sorted({f"{y}-{m}-{dd}" for y, m, dd in re.findall(r"(\d{4})년(\d{2})월(\d{2})일", text)})
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        fused = re.match(r"^(\S+?\))(\S+)\s+(.*)$", line)
+        if fused and not fused.group(2)[0].isdigit():
+            line = f"{fused.group(1)} {fused.group(2)} {fused.group(3)}"
+        m = ATT_LINE.match(line)
+        if m:
+            out.append((m.group(1), m.group(2), *(int(m.group(k)) for k in range(4, 10))))
+    return out, days
+
+
+def attendance_from_pdfs(c: httpx.Client, files: list[dict], age: int) -> tuple[list[tuple], int, str | None]:
+    """그 대수 회기 PDF 를 전부 읽어 이름별로 더한다. 회기는 PDF 안 회의 날짜로 가른다
+    (파일 목록에는 대수가 없다). 정당은 마지막으로 나온 회기 것을 쓴다."""
+    import pdfplumber  # 무거워서 필요할 때만
+
+    total: dict[str, list] = {}
+    last_no, last_day = 0, None
+    for f in files:
+        if f.get("fileExt") != "pdf":
+            continue
+        r = c.get(ATT_DOWN, params={"infId": ATT_INF, "infSeq": 1, "fileSeq": f["fileSeq"]})
+        r.raise_for_status()
+        with pdfplumber.open(io.BytesIO(r.content)) as doc:
+            text = "\n".join((pg.extract_text() or "") for pg in doc.pages)
+        rows, days = parse_attendance_pdf(text)
+        if not days or age_at(days[0]) != age:
+            continue
+        if not rows:
+            raise RuntimeError(f"{f['viewFileNm']}: 출결 줄을 하나도 못 읽었습니다")
+        for name, party, *v in rows:
+            t = total.setdefault(name, [party, 0, 0, 0, 0, 0, 0])
+            t[0] = party
+            for k in range(6):
+                t[k + 1] += v[k]
+        last_no, last_day = max(last_no, f["no"]), max(filter(None, [last_day, days[-1]]))
+        print(f"  {f['viewFileNm']}: {len(rows)}명, 회의 {len(days)}일", file=sys.stderr)
+    return [(n, t[0], *t[1:]) for n, t in total.items()], last_no, last_day
 
 
 def parse_attendance(rows: list[tuple]) -> tuple[list[tuple], str | None]:
@@ -476,25 +566,38 @@ def parse_attendance(rows: list[tuple]) -> tuple[list[tuple], str | None]:
 
 
 def ingest_attendance(cur, age: int) -> int:
+    """그 대수 본회의 출결 누적.
+
+    22대(제415회~)는 회기마다 엑셀이고 최신 파일에 대수 누적 '총 계' 가 있어 하나면 된다.
+    21대까지는 PDF 이고 누적이 없어 그 대수 회기 PDF 를 전부 더한다(21대 34개).
+    """
     import openpyxl  # 이 단계에서만 쓴다
 
     with httpx.Client(timeout=120, headers={"User-Agent": "nureongso/0.1"}) as c:
-        f = latest_attendance_file(c)
+        files = attendance_files(c)
+        f = max((x for x in files if x.get("fileExt") == "xlsx"), key=lambda x: x["no"])
         url = f"{ATT_DOWN}?infId={ATT_INF}&infSeq=1&fileSeq={f['fileSeq']}"
         r = c.get(url)
         r.raise_for_status()
-    wb = openpyxl.load_workbook(io.BytesIO(r.content), data_only=True, read_only=True)
-    ws = next((w for w in wb.worksheets if w.title.strip() == f"{age}대"), None)
-    if ws is None:
-        raise RuntimeError(f"{f['viewFileNm']} 에 '{age}대' 시트가 없습니다: {wb.sheetnames}")
-    rows, as_of = parse_attendance(list(ws.iter_rows(values_only=True)))
-    session = int(re.search(r"제(\d+)회", f["viewFileNm"]).group(1))
+        wb = openpyxl.load_workbook(io.BytesIO(r.content), data_only=True, read_only=True)
+        ws = next((w for w in wb.worksheets if w.title.strip() == f"{age}대"), None)
+        if ws is not None:
+            rows, as_of = parse_attendance(list(ws.iter_rows(values_only=True)))
+            session = f["no"]
+            print(f"  {f['viewFileNm']} (마지막 회의 {as_of})", file=sys.stderr)
+        else:
+            rows, session, as_of = attendance_from_pdfs(c, files, age)
+            url = ATT_PAGE  # 여러 파일을 더했으니 목록 화면으로 보낸다
+            if not rows:
+                raise RuntimeError(f"{age}대 출결 파일이 없습니다 (엑셀 시트: {wb.sheetnames})")
 
-    # 한자 이름부터 붙여야 같은 이름의 한글 쪽이 '이미 붙은 사람 제외' 로 갈린다.
+    # 단서가 있는 이름(한자, 괄호)부터 붙여야 같은 이름의 맨 한글 쪽이 '이미 붙은 사람
+    # 제외' 로 갈린다 — 21대 김병욱·金炳旭, 이수진(비)·이수진.
     people = people_of(cur, age)
     used: set[str] = set()
     code_of: dict[str, str | None] = {}
-    for name, party, *_ in sorted(rows, key=lambda x: not HANJA.match(x[0].replace(" ", ""))):
+    plain = lambda n: not (HANJA.match(n.replace(" ", "")) or "(" in n)
+    for name, party, *_ in sorted(rows, key=lambda x: plain(x[0])):
         code_of[name] = match_person(people, name, party, used)
         if code_of[name]:
             used.add(code_of[name])
@@ -511,7 +614,6 @@ def ingest_attendance(cur, age: int) -> int:
         " present, absent, leave, trip, absence_report, source_url)"
         " values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         [(age, n, p, code_of[n], session, as_of, *v, url) for n, p, *v in rows])
-    print(f"  {f['viewFileNm']} (마지막 회의 {as_of})", file=sys.stderr)
     return len(rows)
 
 
