@@ -286,5 +286,31 @@ export type BidNotice = {
   url: string | null;
 };
 
+/** 국회공보 재산공개 한 번. 금액은 원문 그대로 천원 단위다.
+ *  정기공개는 종전가액이 있고, 총선 뒤 신규등록(최초·재등록)은 현재가액만 있다. */
+export type AssetReport = {
+  pdf_id: number;
+  kind: string;                    // 정기 | 최초 | 재등록 | 퇴직
+  notice_date: string;
+  issue: string | null;
+  page: number | null;
+  source_url: string | null;
+  total_prev_k: number | null;
+  total_now_k: number;
+  breakdown: Record<string, number> | null;
+  refused: string[] | null;
+};
+
 /** 소속 정당 다수와 다르게 던진 표. 규칙은 schema.sql 의 member_party_line 과 /rules. */
 export type PartyLine = { code: string; party_counted: number; against_party: number };
+
+/** 천원 단위 금액 → '12억 3,400만 원'. 재산은 억 단위로 읽히지만 1억 미만도 흔하다. */
+export function wonK(k: number) {
+  const man = Math.round(k / 10);            // 만원
+  const sign = man < 0 ? "-" : "";
+  const a = Math.abs(man);
+  const eok = Math.floor(a / 10000);
+  const rest = a % 10000;
+  if (!eok) return `${sign}${rest.toLocaleString("ko-KR")}만 원`;
+  return `${sign}${eok.toLocaleString("ko-KR")}억${rest ? ` ${rest.toLocaleString("ko-KR")}만` : ""} 원`;
+}

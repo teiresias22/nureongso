@@ -4,8 +4,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
-  partyColor, pct, shortDistrict, termText,
-  type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
+  partyColor, pct, shortDistrict, termText, wonK,
+  type AssetReport, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
   type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
@@ -197,6 +197,7 @@ export default async function MemberPage({
     { data: terms },
     { data: docLinks },
     { data: pledges },
+    { data: assetRows },
     { data: partyLine },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
@@ -215,6 +216,11 @@ export default async function MemberPage({
       )
       .eq("member_code", code)
       .order("order_no"),
+    // 국회공보 재산공개. 한 사람에 해마다 한 줄이라 많아야 열 줄 남짓이다.
+    db.from("asset_report")
+      .select("pdf_id, kind, notice_date, issue, page, source_url, total_prev_k, total_now_k, breakdown, refused")
+      .eq("member_code", code)
+      .order("notice_date", { ascending: false }),
     db.from("member_party_line").select("*").eq("code", code).maybeSingle(),
   ]);
 
@@ -389,7 +395,9 @@ export default async function MemberPage({
   // 목차. 사람마다 있는 구획이 달라(N선 의원은 지난 임기 공약이 여럿, 단체장은
   // 법안 목록이 없다) 화면을 그리는 조건과 같은 기준으로 여기서 한 번 만든다.
   // 둘이 어긋나면 눌러도 안 움직이는 줄이 생긴다.
+  const assets = (assetRows ?? []) as AssetReport[];
   const nav: { id: string; label: string }[] = [{ id: "runs", label: "출마 이력" }];
+  if (assets.length) nav.push({ id: "asset", label: "재산" });
   for (const eid of pledgeElections) {
     const isCur = eid === pledgeElections[0];
     for (const { key, title } of PLEDGE_SOURCES) {
@@ -705,6 +713,8 @@ export default async function MemberPage({
           <p className="px-4 py-3 text-sm text-muted">아직 출마 이력이 없습니다.</p>
         )}
       </Section>
+
+      {assets.length > 0 && <AssetSection rows={assets} />}
 
       {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
           '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
@@ -1082,6 +1092,92 @@ function PartyLineNote({ line, party }: { line: PartyLine | null; party: string 
         어떻게 세나
       </Link>
     </p>
+  );
+}
+
+/** 공보의 재산 종류 이름. 두 개가 문장만큼 길어 칩에 안 들어간다. */
+const ASSET_LABEL: Record<string, string> = {
+  "부동산에 관한 규정이 준용되는 권리와 자동차·건설기계·선박 및 항공기": "자동차 등",
+  "정치자금법에 따른 정치자금의 수입 및 지출을 위한 예금계좌의 예금": "정치자금 계좌",
+  "합명·합자·유한회사 출자지분": "출자지분",
+};
+const ASSET_KIND: Record<string, string> = {
+  정기: "정기 변동신고", 최초: "최초 등록", 재등록: "재등록", 퇴직: "퇴직 신고",
+};
+
+/** 국회공보 재산공개. 해마다 한 줄, 최근이 위.
+ *
+ *  금액은 '순재산' 이다 — 공보의 총계가 이미 채무를 뺀 값이라 음수도 나온다(실측: 2026년 공개
+ *  기준 22대 현직 285명 중 2명). 막대는 그래서 0 을 기준으로 좌우가 아니라 절댓값 길이만 쓰고
+ *  음수는 색으로 가른다. 항목 내역은 가장 최근 신고 것만 펼친다. */
+function AssetSection({ rows }: { rows: AssetReport[] }) {
+  const max = Math.max(...rows.map((r) => Math.abs(r.total_now_k)), 1);
+  const latest = rows[0];
+  const parts = Object.entries(latest.breakdown ?? {})
+    .filter(([, v]) => v !== 0)
+    .sort((a, b) => (a[0] === "채무" ? 1 : b[0] === "채무" ? -1 : b[1] - a[1]));
+  return (
+    <Section id="asset" title="재산 공개" count={rows.length}>
+      <p className="border-b border-line px-4 py-2 text-[11px] text-muted">
+        국회공직자윤리위원회가 국회공보로 공개한 신고액입니다. 본인·배우자·직계존비속의
+        재산에서 채무를 뺀 값이고, 고지를 거부한 가족의 재산은 빠져 있습니다. 신고한 가액이라
+        시세와 다를 수 있습니다.
+      </p>
+      <ul className="divide-y divide-line">
+        {rows.map((r) => {
+          const diff = r.total_prev_k == null ? null : r.total_now_k - r.total_prev_k;
+          return (
+            <li key={r.pdf_id} className="px-4 py-2 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="shrink-0 text-xs text-muted">
+                  {r.notice_date.slice(0, 7).replace("-", ".")} · {ASSET_KIND[r.kind] ?? r.kind}
+                </span>
+                <span className={`font-semibold tabular-nums ${r.total_now_k < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
+                  {wonK(r.total_now_k)}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 rounded bg-foreground/5">
+                <div
+                  className={`h-1.5 rounded ${r.total_now_k < 0 ? "bg-red-500/60" : "bg-foreground/30"}`}
+                  style={{ width: `${(Math.abs(r.total_now_k) / max) * 100}%` }}
+                />
+              </div>
+              <p className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-muted">
+                {diff != null && (
+                  <span>
+                    직전 신고보다 {diff >= 0 ? "+" : "-"}{wonK(Math.abs(diff))}
+                  </span>
+                )}
+                {!!r.refused?.length && <span>고지거부 {r.refused.join(", ")}</span>}
+                {r.source_url && (
+                  <a href={r.source_url} target="_blank" rel="noopener noreferrer"
+                     className="underline underline-offset-2 hover:text-foreground">
+                    {r.issue ?? "국회공보"}{r.page ? ` · PDF ${r.page}쪽` : ""}
+                  </a>
+                )}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+      {parts.length > 0 && (
+        <div className="border-t border-line px-4 py-2">
+          <p className="text-[11px] text-muted">
+            {latest.notice_date.slice(0, 4)}년 신고 내역
+          </p>
+          <ul className="mt-1 flex flex-wrap gap-1.5">
+            {parts.map(([k, v]) => (
+              <li key={k} className="rounded-full border border-line px-2 py-0.5 text-xs">
+                {ASSET_LABEL[k] ?? k}{" "}
+                <span className="tabular-nums text-muted">
+                  {k === "채무" ? "-" : ""}{wonK(v)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Section>
   );
 }
 

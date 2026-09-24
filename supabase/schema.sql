@@ -274,6 +274,37 @@ join (
 ) b on b.region = s.region;
 grant select on member_district_bid to anon, authenticated;
 
+-- 국회의원 재산공개. asset.py 가 국회공보 재산공개 호(號) PDF 에서 뽑는다.
+--
+-- 선거공보의 재산신고는 공직선거법 제49조제12항에 따라 선거가 끝나면 비공개가 되고,
+-- 공보에 실은 후보도 5~12% 뿐이다. 이것은 공직자윤리법 제10조의 정기 공개라
+-- 내려가지 않고 전원이 실린다. 금액 단위는 원문 그대로 천원이다.
+--
+-- kind: 정기(3월 정기변동) | 최초·재등록(총선 뒤 8월 신규등록) | 퇴직.
+-- 최초·재등록은 원문에 종전가액이 없어 total_prev_k 등이 null 이다.
+-- member_code 는 이름 + 그 대수 재직 여부로 붙인다. 동명이인이면 비워 둔다.
+create table if not exists asset_report (
+  pdf_id       int not null,               -- 국회공보 호 고유번호
+  seq          int not null,               -- 호 안에서 의원 순서
+  member_code  text references member(code) on delete set null,
+  name         text not null,
+  position     text,                       -- 국회의원 / 국회의장 / (전)국회의원 ...
+  kind         text not null,
+  age          int,                        -- 대수
+  notice_date  date not null,
+  issue        text,                       -- '국회공보 제2025-51호(정기재산공개)'
+  page         int,                        -- PDF 쪽 (공보 하단 쪽번호와 다르다)
+  source_url   text,
+  total_prev_k bigint,
+  total_inc_k  bigint,
+  total_dec_k  bigint,
+  total_now_k  bigint not null,
+  breakdown    jsonb,                      -- {재산 종류: 현재가액}. 채무는 양수로 들어 있다
+  refused      text[],                     -- 고지거부한 가족 관계 (장남, 모 ...)
+  primary key (pdf_id, seq)
+);
+create index if not exists asset_report_member_idx on asset_report (member_code, notice_date);
+
 -- 수집 로그
 create table if not exists ingest_run (
   id         bigserial primary key,
@@ -551,11 +582,12 @@ alter table ordinance enable row level security;
 alter table bid_notice enable row level security;
 alter table member_sigungu enable row level security;
 alter table pledge_overlap enable row level security;
+alter table asset_report enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);
