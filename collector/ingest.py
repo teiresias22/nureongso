@@ -386,6 +386,7 @@ def main():
         if args.step in ("refresh", "all"):
             with conn.cursor() as cur:
                 cur.execute("refresh materialized view concurrently member_stats")
+                cur.execute("refresh materialized view concurrently member_party_line")
                 # 매일 도는 수집이 단체장·교육감의 정당·지역구를 의원 시절로 되돌린
                 # 적이 있다. 조용히 틀리면 아무도 모르니 매번 세어서 찍는다.
                 cur.execute("""
@@ -401,7 +402,7 @@ def main():
                 """)
                 stale = cur.fetchone()[0]
             conn.commit()
-            print("[refresh] member_stats 갱신", file=sys.stderr)
+            print("[refresh] member_stats · member_party_line 갱신", file=sys.stderr)
             if stale:
                 print(f"[refresh] 경고: 현직 {stale}명의 정당·지역구가 당선 기록과"
                       " 다릅니다. `nec.py winners` 를 돌리세요.", file=sys.stderr)

@@ -363,8 +363,45 @@ select s.member_code, s.role, b.bill_id, b.bill_no, b.name, b.committee,
        b.proposed_at, b.proc_result, b.proposer, b.detail_link
 from bill_sponsor s join bill b on b.bill_id = s.bill_id;
 
+-- 소속 정당 다수와 다르게 던진 표. `ingest.py refresh` 가 member_stats 와 함께 갱신한다.
+--
+-- member_stats 에 컬럼으로 넣지 않은 건 party_stats·region_stats 가 그 위에 서 있어서
+-- 고치려면 셋을 같이 지웠다 다시 만들어야 하기 때문이다.
+--
+-- 규칙 (/rules 에 같은 문장이 있어야 한다):
+-- - 의안마다 정당별로 찬성·반대·기권 중 가장 많은 쪽을 그 당의 다수로 본다. 불참은 표가 아니다.
+-- - 그 당에서 표를 던진 사람이 3명 미만이거나 1위가 동률이면 다수가 없다고 보고 세지 않는다.
+-- - 무소속은 '당' 이 아니라서 세지 않는다.
+-- - 정당은 **지금** 정당이다. 표결 당시 정당 기록이 없다. 22대에서 당적이 바뀐 34명 중
+--   27명은 위성정당 합당(국민의미래→국민의힘 등)이라 영향이 없지만, 나머지는 옮기기 전
+--   표가 옮긴 당 기준으로 세진다. 화면에 이 한계를 적는다.
+create materialized view if not exists member_party_line as
+with v as (
+  select v.bill_id, v.member_code, v.result,
+         -- 역대 정당이 '/' 로 이어져 오면 가장 최근 것 (party_stats 와 같다)
+         split_part(m.party, '/', array_length(string_to_array(m.party, '/'), 1)) as party
+  from vote v join member m on m.code = v.member_code
+  where v.result in ('찬성', '반대', '기권')
+), tally as (
+  select bill_id, party, result,
+         sum(count(*)) over (partition by bill_id, party)           as total,
+         rank()        over (partition by bill_id, party order by count(*) desc) as rk,
+         count(*)      over (partition by bill_id, party, count(*))  as tied
+  from v where party is not null and party <> '무소속'
+  group by bill_id, party, result
+), line as (
+  select bill_id, party, result from tally where rk = 1 and tied = 1 and total >= 3
+)
+select v.member_code as code,
+       count(*)                                  as party_counted,
+       count(*) filter (where v.result <> l.result) as against_party
+from v join line l on l.bill_id = v.bill_id and l.party = v.party
+group by v.member_code;
+create unique index if not exists member_party_line_code_idx on member_party_line (code);
+
 -- materialized view 는 RLS 대상이 아니라 직접 권한 부여
 grant select on member_stats to anon, authenticated;
+grant select on member_party_line to anon, authenticated;
 grant select on member_bill to anon, authenticated;
 
 -- 시도는 선관위 sd_name 이 정확하다. member.district 는 '서울 강서구병' 처럼

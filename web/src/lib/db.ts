@@ -285,3 +285,6 @@ export type BidNotice = {
   notice_at: string | null;
   url: string | null;
 };
+
+/** 소속 정당 다수와 다르게 던진 표. 규칙은 schema.sql 의 member_party_line 과 /rules. */
+export type PartyLine = { code: string; party_counted: number; against_party: number };

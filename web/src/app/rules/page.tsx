@@ -250,6 +250,28 @@ export default function RulesPage() {
         </ul>
       </Box>
 
+      <Box id="party-line" title="10. 소속 정당 다수와 다른 표">
+        <p className="text-muted">
+          본회의 표결 하나하나에서, 같은 정당 의원들이 찬성·반대·기권 중 가장 많이 던진 쪽을
+          그 당의 다수로 봅니다. 그리고 그와 다르게 던진 표를 셉니다. <b>불참은 표가 아니라서
+          세지 않습니다.</b>
+        </p>
+        <ul className="list-disc space-y-1.5 pl-4 text-muted">
+          <li>그 의안에서 같은 당 의원이 3명 미만으로 표를 던졌거나 1위가 동률이면 다수가 없다고 보고 뺍니다.</li>
+          <li>무소속은 정당이 아니라서 세지 않습니다.</li>
+          <li>
+            <b>정당은 지금 소속 정당입니다.</b> 국회 표결 기록에 표결 당시 정당이 없어서입니다.
+            22대에서 당적이 바뀐 34명 가운데 27명은 위성정당 합당(국민의미래→국민의힘,
+            더불어민주연합→더불어민주당 등)이라 영향이 없지만, 나머지는 옮기기 전 표도 옮긴 당
+            기준으로 세집니다.
+          </li>
+        </ul>
+        <p className="text-muted">
+          이 숫자는 <b>좋고 나쁨이 아닙니다.</b> 당과 다르게 던진 것이 소신인지 이탈인지는
+          의안마다 다르고, 그 판단은 보는 분의 몫입니다.
+        </p>
+      </Box>
+
       <Box title="출처">
         <ul className="list-disc space-y-1 pl-4 text-muted">
           <li>법안·발의·본회의 표결: 국회 열린국회정보 Open API</li>
@@ -280,9 +302,9 @@ export default function RulesPage() {
   );
 }
 
-function Box({ title, children }: { title: string; children: React.ReactNode }) {
+function Box({ id, title, children }: { id?: string; title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-line bg-card p-4">
+    <section id={id} className="scroll-mt-14 rounded-lg border border-line bg-card p-4">
       <h2 className="text-sm font-semibold">{title}</h2>
       <div className="mt-2 space-y-2 text-sm">{children}</div>
     </section>

@@ -6,7 +6,7 @@ import {
   db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText,
   type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type BidNotice, type Ordinance, type PledgeOverlap, type Rival, type RivalPledge,
+  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -197,6 +197,7 @@ export default async function MemberPage({
     { data: terms },
     { data: docLinks },
     { data: pledges },
+    { data: partyLine },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
@@ -214,6 +215,7 @@ export default async function MemberPage({
       )
       .eq("member_code", code)
       .order("order_no"),
+    db.from("member_party_line").select("*").eq("code", code).maybeSingle(),
   ]);
 
   if (!member) notFound();
@@ -574,6 +576,7 @@ export default async function MemberPage({
               ),
             )}
           </div>
+          <PartyLineNote line={partyLine as PartyLine | null} party={lastPart(m.party)} />
         </section>
       )}
 
@@ -1047,6 +1050,38 @@ export default async function MemberPage({
         </Section>
       )}
     </div>
+  );
+}
+
+/** 소속 정당 다수와 다른 표. 판정이 아니라 셈이다 — 당과 달리 던진 게 좋은지
+ *  나쁜지는 의안마다 다르다. 그래서 '이탈' 같은 말을 쓰지 않는다.
+ *  셀 수 없는 경우를 0 으로 두지 않고 이유를 적는다. 0 은 '늘 당과 같이 던졌다' 로 읽힌다. */
+function PartyLineNote({ line, party }: { line: PartyLine | null; party: string }) {
+  let body: React.ReactNode;
+  if (!party || party === "무소속") {
+    body = "무소속이라 정당 다수와 견주지 않습니다.";
+  } else if (!line || !line.party_counted) {
+    body = `${party}에서 함께 표를 던진 의원이 3명 미만이라 정당 다수를 정할 수 없습니다.`;
+  } else {
+    body = (
+      <>
+        {party} 다수와 다른 표{" "}
+        <b className="text-foreground">{line.against_party.toLocaleString("ko-KR")}</b>번
+        <span className="ml-1">
+          (견줄 수 있었던 {line.party_counted.toLocaleString("ko-KR")}표 중{" "}
+          {/* 소수 첫째 자리까지. 3/1,751 이 '0%' 로 보이면 한 번도 안 달랐다로 읽힌다. */}
+          {((line.against_party / line.party_counted) * 100).toFixed(1)}%)
+        </span>
+      </>
+    );
+  }
+  return (
+    <p className="mt-2 text-xs text-muted">
+      {body}{" "}
+      <Link href="/rules#party-line" className="underline underline-offset-2 hover:text-foreground">
+        어떻게 세나
+      </Link>
+    </p>
   );
 }
 
