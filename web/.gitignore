@@ -39,3 +39,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# 값이 없는 빈 서식이라 올린다
+!.env.example
