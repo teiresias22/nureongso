@@ -93,11 +93,42 @@ export default function AboutPage() {
         </p>
       </Section>
 
+      <Section title="여기서 볼 수 있는 것">
+        <p>
+          한 사람의 페이지에 아래 기록을 모았습니다. 모두 기관이 공개한 원문을 옮긴 것이고,
+          판정이 들어가는 것은 공약 이행 하나뿐입니다.
+        </p>
+        <h3 className="pt-1 text-sm font-semibold">국회의원</h3>
+        <ul className="list-disc space-y-1.5 pl-4">
+          <li><b>공약</b> — 선거공보 원문, 법으로 이룰 공약은 본인 발의 법안과 대조한 이행 판정</li>
+          <li><b>법안</b> — 대표발의·공동발의, 가결 여부, 본회의 표결 참여와 찬반</li>
+          <li><b>본회의 출결</b> — 출석·청가·출장·결석신고서·결석 (21·22대)</li>
+          <li><b>소속 정당 다수와 다른 표</b> — 좋고 나쁨이 아니라 사실로</li>
+          <li><b>재산</b> — 국회공보 재산공개, 같은 때 공개된 의원들의 중간값과 나란히</li>
+          <li><b>겸직 신고</b> — 국회의장의 허용·불가·사직 권고 결정</li>
+          <li><b>직무상 국외활동</b> — 행선지·목적, 경비를 누가 댔는지</li>
+          <li><b>의원 연구단체</b>와 <b>연구용역 결과보고서</b> — 어떤 분야를 공부하고 무엇을 연구시켰는지</li>
+        </ul>
+        <h3 className="pt-1 text-sm font-semibold">시도지사·구청장·시장·군수·교육감</h3>
+        <ul className="list-disc space-y-1.5 pl-4">
+          <li><b>공약</b> — 선거공보와 선거공약서 원문, 공약마다 이행 판정과 근거</li>
+          <li><b>조례와 공사 발주</b> — 취임 뒤 그 지자체가 만든 조례, 나라장터에 낸 공사</li>
+          <li><b>재산</b> — 관보 재산공개, 같은 해 같은 직위 전원의 중간값과 나란히</li>
+        </ul>
+        <p>
+          여러 사람을 한꺼번에 보려면{" "}
+          <Link href="/my" className="underline underline-offset-2">내 지역</Link>(우리 동네 대표 전원),{" "}
+          <Link href="/compare" className="underline underline-offset-2">의원 비교</Link>(두 사람 나란히),{" "}
+          <Link href="/stats" className="underline underline-offset-2">통계</Link>(정당·지역별)를 쓰시면 됩니다.
+        </p>
+      </Section>
+
       <Section title="지키는 것">
         <ul className="list-disc space-y-1.5 pl-4">
           <li>
-            <b>공식 기록만 씁니다.</b> 국회·선거관리위원회·법제처가 공개한 자료만 쓰고,
-            언론 보도나 본인 홍보는 근거로 삼지 않습니다.
+            <b>공식 기록만 씁니다.</b> 국회(열린국회정보·국회공보)·중앙선거관리위원회·
+            법제처·조달청·관보(정부공직자윤리위원회)가 공개한 자료만 쓰고, 언론 보도나 본인
+            홍보는 근거로 삼지 않습니다.
           </li>
           <li>
             <b>모르는 것은 모른다고 적습니다.</b> 확인할 수단이 없는 공약은 억지로 판정하지
@@ -114,7 +145,17 @@ export default function AboutPage() {
           </li>
           <li>
             <b>숫자가 크다고 잘한 것은 아닙니다.</b> 발의가 많은 것이 좋은 의정이라는 뜻은
-            아닙니다. 이 서비스는 순위를 매기지 않고, 숫자를 보여줄 뿐입니다.
+            아닙니다. 국외활동·연구용역 건수도 마찬가지입니다. 이 서비스는 순위를 매기지 않고,
+            숫자를 보여줄 뿐입니다.
+          </li>
+          <li>
+            <b>공개돼 있어도 싣지 않는 것이 있습니다.</b> 선거가 끝나면 비공개로 바뀌는
+            전과·병역·납세, 법이 인터넷 게시를 막는 정치자금 기부내역, 자동으로 모을 수 없는
+            정치자금 지출내역 등입니다. 이유는{" "}
+            <Link href="/rules#not-shown" className="underline underline-offset-2">
+              판정 기준
+            </Link>
+            에 적어 두었습니다.
           </li>
         </ul>
       </Section>
