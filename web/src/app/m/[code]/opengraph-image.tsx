@@ -12,11 +12,14 @@ export const contentType = OG_TYPE;
 
 export default async function Image({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
-  const [{ data: member }, { data: stats }, { data: terms }] = await Promise.all([
+  const [{ data: member }, { data: stats }, { data: terms }, { data: rec }] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
     db.from("member_office_term").select("*").eq("member_code", code),
+    // 출석·순재산. 현직만 있다(member_record) — 역대 인물은 비어 있어 그 칸을 뺀다.
+    db.from("member_record").select("present, days, net_k").eq("code", code).maybeSingle(),
   ]);
+  const r = rec as { present: number | null; days: number | null; net_k: number | null } | null;
 
   const m = member as Member | null;
   const s = stats as MemberStats | null;
@@ -32,21 +35,24 @@ export default async function Image({ params }: { params: Promise<{ code: string
     : "";
 
   // 법안 기록이 있으면 의정활동을, 없으면 공약을 보여준다. 직위가 아니라 데이터로 가른다.
+  // 공동발의는 싣지 않는다 — 남의 법안에 이름을 올린 것이라 대표발의와 같은 무게로 세지
+  // 않는다는 원칙이 카드에서 거꾸로 보였다. 그 자리는 본회의 출석이다.
   const facts: [string, string][] = s && hasBills(s)
-    ? [
+    ? ([
         ["대표발의", `${s.rep_count.toLocaleString()}건`],
-        ["공동발의", `${s.co_count.toLocaleString()}건`],
         s.vote_total > 0
           ? ["표결 참여", `${pct(s.vote_total - s.vote_absent, s.vote_total)}%`]
           : ["대표발의 가결", `${s.rep_passed.toLocaleString()}건`],
-      ]
+        r?.days ? ["본회의 출석", `${pct(r.present ?? 0, r.days)}%`] : null,
+      ].filter(Boolean) as [string, string][])
     : // 법안 기록이 없는 단체장·교육감. 공약 말고는 '법률로 재는 공약 0건 / 발의
       // 0건' 이 나가서 한 일이 아무것도 없는 사람처럼 보였다. 그 자리에 있는 값을
       // 넣는다 — 당선 횟수와 득표율은 '지난 임기' 를 가리키는 수치다.
+      // 당선 횟수는 이름 아래 줄(termLabel)에 이미 있어 칸에서는 순재산으로 바꾼다.
       ([
         ["공약", `${s?.pledge_count.toLocaleString() ?? 0}건`],
-        term?.wins ? ["당선", `${term.wins}회`] : null,
         term?.last_vote_rate != null ? ["득표율", `${term.last_vote_rate}%`] : null,
+        r?.net_k != null ? ["순재산", `${(r.net_k / 100000).toFixed(1)}억`] : null,
       ].filter(Boolean) as [string, string][]);
 
   const title = "누렁소검은소 선출직이 실제로 한 일 기준일";
@@ -87,7 +93,7 @@ export default async function Image({ params }: { params: Promise<{ code: string
         </div>
 
         <div style={{ display: "flex", alignItems: "center", fontSize: 26, color: "#71717a" }}>
-          <img src={LOGO} width={44} height={44} style={{ borderRadius: 8 }} />
+          <img src={LOGO} alt="" width={44} height={44} style={{ borderRadius: 8 }} />
           <span style={{ marginLeft: 12 }}>누렁소검은소</span>
           <span style={{ marginLeft: "auto" }}>선출직이 실제로 한 일</span>
         </div>

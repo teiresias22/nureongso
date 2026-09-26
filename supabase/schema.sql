@@ -600,9 +600,9 @@ left join lateral (
 create or replace view party_stats
 with (security_invoker = true) as
 select r.office,
-  -- 역대 정당이 '/' 로 이어져 오면 가장 최근 것만 쓴다.
+  -- 역대 정당이 '/' 로 이어져 오면 가장 최근 것만 쓴다(party_line, 위성정당은 모당).
   -- 안 그러면 '더불어민주당', '더불어민주당/더불어민주당' 이 따로 집계된다.
-  split_part(r.party, '/', array_length(string_to_array(r.party, '/'), 1)) as name,
+  party_line(r.party) as name,
   count(*) as members,
   sum(s.rep_count) as rep_count, sum(s.co_count) as co_count,
   sum(s.rep_passed) as rep_passed, sum(s.vote_total) as vote_total,
@@ -611,7 +611,7 @@ select r.office,
   sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed
 from member_region r join member_stats s on s.code = r.code
 where r.is_incumbent and r.party is not null
-group by r.office, split_part(r.party, '/', array_length(string_to_array(r.party, '/'), 1));
+group by r.office, party_line(r.party);
 
 create or replace view region_stats
 with (security_invoker = true) as
