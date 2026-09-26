@@ -284,7 +284,8 @@ grant select on member_district_bid to anon, authenticated;
 -- 최초·재등록은 원문에 종전가액이 없어 total_prev_k 등이 null 이다.
 -- member_code 는 이름 + 그 대수 재직 여부로 붙인다. 동명이인이면 비워 둔다.
 create table if not exists asset_report (
-  pdf_id       int not null,               -- 국회공보 호 고유번호
+  pdf_id       bigint not null,            -- 국회공보 호 번호, 관보는 절(목차) 번호
+  source       text not null default '국회공보', -- 국회공보 | 관보
   seq          int not null,               -- 호 안에서 의원 순서
   member_code  text references member(code) on delete set null,
   name         text not null,
@@ -301,24 +302,38 @@ create table if not exists asset_report (
   total_now_k  bigint not null,
   breakdown    jsonb,                      -- {재산 종류: 현재가액}. 채무는 양수로 들어 있다
   refused      text[],                     -- 고지거부한 가족 관계 (장남, 모 ...)
+  -- 비교 집단. 국회공보는 호 하나(pdf_id), 관보는 '그해 정기공개의 같은 직위 전원'
+  -- ('관보:2026:정기:구시군의장'). 관보는 시도별로 절이 갈리고 한 절에 부지사·국장까지
+  -- 섞여 있어 절 단위로 세면 비교가 안 된다. 수시 공개(최초·퇴직)는 몇 명뿐이라 비운다.
+  peer         text,
   primary key (pdf_id, seq)
 );
 create index if not exists asset_report_member_idx on asset_report (member_code, notice_date);
 
--- 공보 호마다 의원 재산의 평균·중간값. 의원 페이지 순재산 막대 옆 비교 눈금에 쓴다.
+-- 관보에서 받아 본 절. 단체장이 한 명도 없는 절(수시 공개의 대부분)도 적어 두어 다시 받지 않는다.
+-- 화면이 읽지 않는 수집 장부라 공개 읽기 권한을 주지 않는다.
+create table if not exists gwanbo_seen (
+  pdf_id  bigint primary key,
+  title   text,
+  rows    int not null,
+  seen_at timestamptz not null default now()
+);
+alter table gwanbo_seen enable row level security;
+
+-- 비교 집단(peer)마다 재산의 평균·중간값. 의원 페이지 순재산 막대 옆 비교 눈금에 쓴다.
 -- 퇴직 신고는 뺀다(그 호의 '지금 의원' 이 아니다). 둘 다 싣는 이유: 평균은 재산이 아주 많은
 -- 몇 명(2026년 최대 1,257억)이 끌어올려 중간값의 두 배 가까이 된다(2026년 35.0억 대 17.8억).
 -- 행이 2,382개라 화면에서 받아 세면 PostgREST 1000행 상한에 잘린다. 그래서 SQL 에서 센다.
 create or replace view asset_issue_stats
 with (security_invoker = true) as
-select pdf_id,
+select peer,
        count(*)::int as n,
        round(avg(total_now_k))::bigint as mean_k,
        round((percentile_cont(0.5) within group (order by total_now_k))::numeric)::bigint as median_k,
        max(total_now_k) as max_k
 from asset_report
-where kind <> '퇴직'
-group by pdf_id;
+where kind <> '퇴직' and peer is not null
+group by peer;
 grant select on asset_issue_stats to anon, authenticated;
 
 -- 본회의 출결 누적. ingest.py attendance 가 최신 회기 엑셀 하나로 통째로 바꾼다.
@@ -356,6 +371,24 @@ create table if not exists member_sidejob (
   decision_kind text
 );
 create index if not exists member_sidejob_member_idx on member_sidejob (member_code);
+
+-- 국회의원 직무상 국외활동 신고 (국회의원윤리실천규범). 열린국회정보가 신고 내역을 공개한다.
+-- 원문 한 줄에 함께 간 의원이 쉼표로 나열돼 와서 사람마다 한 줄로 편다.
+create table if not exists member_trip (
+  id           bigserial primary key,
+  age          int  not null,
+  name         text not null,
+  member_code  text references member(code) on delete set null,
+  companions   text,                             -- 원문 이름 목록 그대로(함께 간 의원)
+  destination  text,
+  purpose      text,
+  period       text,                             -- 원문 일정 ('2021. 4.11~ 4.13')
+  start_on     date,
+  end_on       date,
+  funder       text,                             -- 경비 지원 기관 원문 ('자비', '외교부(국가기관)' …)
+  reported     boolean                           -- 결과보고서 제출 여부
+);
+create index if not exists member_trip_member_idx on member_trip (member_code);
 
 -- 수집 로그
 create table if not exists ingest_run (
@@ -637,11 +670,12 @@ alter table pledge_overlap enable row level security;
 alter table asset_report enable row level security;
 alter table attendance enable row level security;
 alter table member_sidejob enable row level security;
+alter table member_trip enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

@@ -6,7 +6,7 @@ import {
   db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText, wonK,
   type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Sidejob,
+  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Sidejob, type Trip,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -203,6 +203,7 @@ export default async function MemberPage({
     { data: partyLine },
     { data: attRows },
     { data: sidejobRows },
+    { data: tripRows },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
@@ -220,9 +221,10 @@ export default async function MemberPage({
       )
       .eq("member_code", code)
       .order("order_no"),
-    // 국회공보 재산공개. 한 사람에 해마다 한 줄이라 많아야 열 줄 남짓이다.
+    // 재산공개 — 국회의원은 국회공보, 단체장·교육감은 관보. 한 사람에 해마다 한 줄이라
+    // 많아야 열 줄 남짓이다(국회의원이었다가 단체장이 된 사람은 둘이 이어진다).
     db.from("asset_report")
-      .select("pdf_id, kind, notice_date, issue, page, source_url, total_prev_k, total_now_k, breakdown, refused")
+      .select("pdf_id, source, position, peer, kind, notice_date, issue, page, source_url, total_prev_k, total_now_k, breakdown, refused")
       .eq("member_code", code)
       .order("notice_date", { ascending: false }),
     db.from("member_party_line").select("*").eq("code", code).maybeSingle(),
@@ -235,6 +237,10 @@ export default async function MemberPage({
       .select("id, age, opened_at, org, position, decision, decision_kind")
       .eq("member_code", code)
       .order("opened_at", { ascending: false }),
+    db.from("member_trip")
+      .select("id, age, companions, destination, purpose, period, start_on, end_on, funder, reported")
+      .eq("member_code", code)
+      .order("start_on", { ascending: false }),
   ]);
 
   if (!member) notFound();
@@ -421,21 +427,24 @@ export default async function MemberPage({
     line?.party_counted
       ? db.from("member_party_line").select("party_counted, against_party").gte("party_counted", 100)
       : Promise.resolve({ data: [] }),
-    // 재산 비교 눈금: 같은 공보에 실린 의원들의 평균·중간값 (asset_issue_stats, SQL 에서 셈)
-    assets.length
-      ? db.from("asset_issue_stats").select("pdf_id, n, mean_k, median_k").in("pdf_id", assets.map((a) => a.pdf_id))
+    // 재산 비교 눈금: 비교 집단(같은 공보의 의원 / 그해 정기공개의 같은 직위)의 평균·중간값.
+    // asset_issue_stats 가 SQL 에서 센다.
+    assets.some((a) => a.peer)
+      ? db.from("asset_issue_stats").select("peer, n, mean_k, median_k")
+          .in("peer", assets.flatMap((a) => (a.peer ? [a.peer] : [])))
       : Promise.resolve({ data: [] }),
   ]);
   const statOf = new Map(
-    ((issueStats ?? []) as { pdf_id: number; n: number; mean_k: number; median_k: number }[])
-      .map((r) => [r.pdf_id, r]),
+    ((issueStats ?? []) as AssetPeerStat[]).map((r) => [r.peer, r]),
   );
   const sidejobs = (sidejobRows ?? []) as Sidejob[];
+  const trips = (tripRows ?? []) as Trip[];
   const nav: { id: string; label: string }[] = [];
   if (att || s.vote_total > 0) nav.push({ id: "activity", label: "출결·표결" });
   nav.push({ id: "runs", label: "출마 이력" });
   if (assets.length) nav.push({ id: "asset", label: "재산" });
   if (sidejobs.length) nav.push({ id: "sidejob", label: "겸직" });
+  if (trips.length) nav.push({ id: "trip", label: "국외활동" });
   for (const eid of pledgeElections) {
     const isCur = eid === pledgeElections[0];
     for (const { key, title } of PLEDGE_SOURCES) {
@@ -765,6 +774,7 @@ export default async function MemberPage({
 
       {assets.length > 0 && <AssetSection rows={assets} stats={statOf} />}
       {sidejobs.length > 0 && <SidejobSection rows={sidejobs} />}
+      {trips.length > 0 && <TripSection rows={trips} name={m.name} />}
 
       {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
           '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
@@ -1291,6 +1301,46 @@ function SidejobSection({ rows }: { rows: Sidejob[] }) {
   );
 }
 
+/** 직무상 국외활동 신고(국회의원윤리실천규범). 경비를 누가 댔는지가 이 표의 핵심이라
+ *  원문 그대로 적는다 — '자비', '외교부(국가기관)', '대만 정부' 처럼 제각각이라 가르지 않는다. */
+function TripSection({ rows, name }: { rows: Trip[]; name: string }) {
+  const unreported = rows.filter((r) => r.reported === false).length;
+  return (
+    <Section id="trip" title="직무상 국외활동" count={rows.length}>
+      <p className="border-b border-line px-4 py-2 text-xs text-muted">
+        국회의원윤리실천규범에 따라 신고해 국회가 공개한 직무상 국외활동입니다. 경비를 댄 곳과
+        결과보고서 제출 여부는 공개 원문 그대로 옮겼습니다.
+        {unreported > 0 && <> 이 중 <b className="text-foreground">{unreported}건</b>은 결과보고서가 &lsquo;무&rsquo;로 공개돼 있습니다.</>}{" "}
+        <Link href="/rules#trip" className="underline underline-offset-2 hover:text-foreground">읽는 법</Link>
+      </p>
+      <ul className="divide-y divide-line">
+        {rows.map((r) => {
+          const others = (r.companions ?? "").split(",").map((v) => v.trim()).filter((v) => v && v !== name);
+          return (
+            <li key={r.id} className="px-4 py-2.5 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <span className="min-w-0 font-medium">{r.destination ?? "행선지 미기재"}</span>
+                {/* 원문 일정은 '2021. 4.11~ 4.13' 처럼 제각각이라 읽은 날짜로 적고 원문은 title 에 둔다. */}
+                <span className="shrink-0 text-xs text-muted tabular-nums" title={r.period ?? undefined}>
+                  {r.start_on
+                    ? `${r.start_on.replaceAll("-", ".")}${r.end_on && r.end_on !== r.start_on ? `–${r.end_on.slice(r.end_on.slice(0, 4) === r.start_on.slice(0, 4) ? 5 : 0).replaceAll("-", ".")}` : ""}`
+                    : r.period}
+                </span>
+              </div>
+              {r.purpose && <p className="mt-0.5 leading-6">{r.purpose}</p>}
+              <p className="mt-0.5 text-xs text-muted">
+                제{r.age}대 · 경비 <b className="font-semibold text-foreground">{r.funder ?? "미기재"}</b>
+                {" · "}결과보고서 {r.reported ? "제출" : "무"}
+                {others.length > 0 && <> · 함께: {others.join(", ")}</>}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </Section>
+  );
+}
+
 const ASSET_KIND: Record<string, string> = {
   정기: "정기 변동신고", 최초: "최초 등록", 재등록: "재등록", 퇴직: "퇴직 신고",
 };
@@ -1323,9 +1373,18 @@ const eok = (k: number) => {
  *  위에서부터: 연도별 순재산 막대 → 최근 신고의 구성 → 신고별 목록(증감·고지거부·원문).
  *  금액은 '순재산' 이다 — 공보의 총계가 이미 채무를 뺀 값이라 음수도 나온다(실측: 2026년 공개
  *  기준 22대 현직 285명 중 2명). 음수는 기준선 아래로 빨갛게 그린다. */
+type AssetPeerStat = { peer: string; n: number; mean_k: number; median_k: number };
+
+/** 비교 집단 이름. 'pdf_id' 꼴은 국회공보 한 호의 의원, '관보:2026:정기:구시군의장' 꼴은
+ *  그해 관보 정기공개의 같은 직위 전원이다. */
+function peerLabel(peer: string | null) {
+  const office = peer?.startsWith("관보:") ? peer.split(":")[3] : null;
+  return office === "구시군의장" ? "시장·군수·구청장" : office ?? "의원";
+}
+
 function AssetSection({ rows, stats }: {
   rows: AssetReport[];
-  stats: Map<number, { n: number; mean_k: number; median_k: number }>;
+  stats: Map<string, AssetPeerStat>;
 }) {
   const latest = rows[0];
   const chrono = [...rows].reverse();
@@ -1336,21 +1395,33 @@ function AssetSection({ rows, stats }: {
     else byGroup.set(ASSET_GROUP[k] ?? "기타", (byGroup.get(ASSET_GROUP[k] ?? "기타") ?? 0) + v);
   }
   const gross = [...byGroup.values()].reduce((a, v) => a + v, 0);
+  const sources = new Set(rows.map((r) => r.source));
+  const who = [
+    sources.has("국회공보") && "국회공직자윤리위원회가 국회공보로",
+    sources.has("관보") && "정부공직자윤리위원회가 관보로",
+  ].filter(Boolean).join(", ");
+  const latestStat = latest.peer ? stats.get(latest.peer) : undefined;
   return (
     <Section id="asset" title="재산 공개" count={rows.length}>
       <p className="border-b border-line px-4 py-2 text-xs text-muted">
-        국회공직자윤리위원회가 국회공보로 공개한 신고액입니다. 본인·배우자·직계존비속의
+        {who} 공개한 신고액입니다. 본인·배우자·직계존비속의
         재산에서 채무를 뺀 값이고, 고지를 거부한 가족의 재산은 빠져 있습니다. 신고한 가액이라
         시세와 다를 수 있습니다.
       </p>
       <div className="space-y-4 border-b border-line px-4 py-3">
         {chrono.length > 1 && (
           <div>
-            <h3 className="text-xs font-semibold text-muted">순재산 추이 · 같은 공보에 실린 의원들과 비교</h3>
+            <h3 className="text-xs font-semibold text-muted">순재산 추이 · 같은 때 공개된 같은 직위와 비교</h3>
             <Columns
               format={eok}
+              peer={(() => {
+                // 국회의원이었다가 단체장이 된 사람은 막대마다 비교 집단이 다르다. 범례는 하나라서
+                // 그때는 '같은 직위' 로 쓰고, 막대마다 무엇과 비교했는지는 title 에 적는다.
+                const labels = new Set(chrono.flatMap((r) => (r.peer && stats.has(r.peer) ? [peerLabel(r.peer)] : [])));
+                return labels.size === 1 ? [...labels][0] : "같은 직위";
+              })()}
               points={chrono.map((r) => {
-                const st = stats.get(r.pdf_id);
+                const st = r.peer ? stats.get(r.peer) : undefined;
                 const when = `${r.notice_date.slice(0, 7).replace("-", ".")} ${ASSET_KIND[r.kind] ?? r.kind}`;
                 return {
                   key: String(r.pdf_id),
@@ -1359,23 +1430,22 @@ function AssetSection({ rows, stats }: {
                   median: st?.median_k,
                   mean: st?.mean_k,
                   tip: st
-                    ? `${when} · 이 의원 ${wonK(r.total_now_k)} · 의원 ${st.n}명 중간값 ${wonK(st.median_k)} · 평균 ${wonK(st.mean_k)}`
+                    ? `${when} · 이 사람 ${wonK(r.total_now_k)} · ${peerLabel(r.peer)} ${st.n}명 중간값 ${wonK(st.median_k)} · 평균 ${wonK(st.mean_k)}`
                     : `${when} · ${wonK(r.total_now_k)}`,
                 };
               })}
             />
-            {(() => {
-              const st = stats.get(latest.pdf_id);
-              return st ? (
-                <p className="mt-2 text-xs leading-relaxed text-muted">
-                  {latest.notice_date.slice(0, 4)}년 공개 의원 {st.n}명의 중간값은{" "}
-                  <b className="text-foreground">{wonK(st.median_k)}</b>, 평균은{" "}
-                  <b className="text-foreground">{wonK(st.mean_k)}</b>입니다. 재산이 아주 많은 몇 명이
-                  평균을 끌어올려 둘이 크게 다르므로, 보통 의원과 견주려면 중간값을 보세요.
-                  총선 뒤 신규등록 공보는 새로 들어온 의원끼리 비교합니다.
-                </p>
-              ) : null;
-            })()}
+            {latestStat && (
+              <p className="mt-2 text-xs leading-relaxed text-muted">
+                {latest.notice_date.slice(0, 4)}년 공개 {peerLabel(latest.peer)} {latestStat.n}명의 중간값은{" "}
+                <b className="text-foreground">{wonK(latestStat.median_k)}</b>, 평균은{" "}
+                <b className="text-foreground">{wonK(latestStat.mean_k)}</b>입니다. 재산이 아주 많은 몇 명이
+                평균을 끌어올려 둘이 크게 다르므로, 보통과 견주려면 중간값을 보세요.
+                {latest.source === "국회공보"
+                  ? " 총선 뒤 신규등록 공보는 새로 들어온 의원끼리 비교합니다."
+                  : " 관보는 3월 정기공개만 비교하고, 달마다 나오는 신규·퇴직 공개는 비교하지 않습니다."}
+              </p>
+            )}
           </div>
         )}
         {gross > 0 && (
@@ -1396,12 +1466,12 @@ function AssetSection({ rows, stats }: {
           </div>
         )}
       </div>
-      <MoreDetails label={`신고 ${rows.length}건 상세 보기 (증감·고지거부·공보 원문)`}>
+      <MoreDetails label={`신고 ${rows.length}건 상세 보기 (증감·고지거부·원문)`}>
       <ul className="divide-y divide-line">
         {rows.map((r) => {
           const diff = r.total_prev_k == null ? null : r.total_now_k - r.total_prev_k;
           return (
-            <li key={r.pdf_id} className="px-4 py-2 text-sm">
+            <li key={`${r.pdf_id}`} className="px-4 py-2 text-sm">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="shrink-0 text-xs text-muted">
                   {r.notice_date.slice(0, 7).replace("-", ".")} · {ASSET_KIND[r.kind] ?? r.kind}
@@ -1420,7 +1490,7 @@ function AssetSection({ rows, stats }: {
                 {r.source_url && (
                   <a href={r.source_url} target="_blank" rel="noopener noreferrer"
                      className="underline underline-offset-2 hover:text-foreground">
-                    {r.issue ?? "국회공보"}{r.page ? ` · PDF ${r.page}쪽` : ""}
+                    {r.issue ?? r.source}{r.page ? ` · PDF ${r.page}쪽` : ""}
                   </a>
                 )}
               </p>

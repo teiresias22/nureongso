@@ -306,7 +306,7 @@ def link(rows: list[dict], members: list[tuple]) -> dict[tuple[int, int], str | 
 
 COLS = ["pdf_id", "seq", "member_code", "name", "position", "kind", "age", "notice_date",
         "issue", "page", "source_url", "total_prev_k", "total_inc_k", "total_dec_k",
-        "total_now_k", "breakdown", "refused"]
+        "total_now_k", "breakdown", "refused", "peer"]
 
 
 def to_rows(meta: dict, rows: list[dict]) -> list[tuple]:
@@ -317,6 +317,7 @@ def to_rows(meta: dict, rows: list[dict]) -> list[tuple]:
         meta["notice_date"], meta["title"], r["page"], meta["link"],
         r["total_prev_k"], r["total_inc_k"], r["total_dec_k"], r["total_now_k"],
         json.dumps(r["breakdown"], ensure_ascii=False), r["refused"],
+        str(meta["pdf_id"]),  # 비교 집단 = 같은 호에 실린 의원
     ) for r in rows]
 
 
@@ -328,7 +329,7 @@ def run_relink(conn) -> None:
             "   and c.elected and c.sg_typecode in ('2', '7')) from member m")
         members = cur.fetchall()
         cur.execute("select pdf_id, seq, name, age, kind, notice_date, total_prev_k, total_now_k"
-                    " from asset_report")
+                    " from asset_report where source = '국회공보'")
         cols = [d.name for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     code = link(rows, members)
@@ -347,7 +348,7 @@ def run_fetch(conn, redo: bool) -> None:
     from ingest import upsert
 
     with conn.cursor() as cur:
-        cur.execute("select distinct pdf_id from asset_report")
+        cur.execute("select distinct pdf_id from asset_report where source = '국회공보'")
         done = {r[0] for r in cur.fetchall()}
 
     with client() as c:

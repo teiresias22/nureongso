@@ -98,10 +98,12 @@ export function Strip({
  *  겹쳤다(실측). 막대가 많아야 여덟 개라 작은 표처럼 읽힌다.
  *  Strip 과 같은 이유(viewBox 가 넓은 화면에서 가운데로 몰림)로 퍼센트 위치 HTML 이다. */
 export function Columns({
-  points, format,
+  points, format, peer = "의원",
 }: {
   points: { key: string; label: string; value: number; tip: string; median?: number; mean?: number }[];
   format: (v: number) => string;
+  /** 범례의 비교 집단 이름. 단체장은 '시장·군수·구청장' 처럼 직위가 온다. */
+  peer?: string;
 }) {
   if (!points.length) return null;
   const all = points.flatMap((p) => [p.value, p.median ?? 0, p.mean ?? 0]);
@@ -160,27 +162,27 @@ export function Columns({
       </div>
       {hasRef && (
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-          {/* 범례는 실제로 그려진 색만 — 순재산이 늘 음수인 사람에게 파란 '이 의원' 을 보이면
+          {/* 범례는 실제로 그려진 색만 — 순재산이 늘 음수인 사람에게 파란 '이 사람' 을 보이면
               막대(빨강)와 안 맞는다. */}
           {points.some((p) => p.value >= 0) && (
             <li className="flex items-center gap-1.5">
               <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "var(--viz-1)" }} />
-              이 의원
+              이 사람
             </li>
           )}
           {minV < 0 && (
             <li className="flex items-center gap-1.5">
               <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "var(--viz-neg)" }} />
-              이 의원 (채무가 재산보다 많음)
+              이 사람 (채무가 재산보다 많음)
             </li>
           )}
           <li className="flex items-center gap-1.5">
             <span aria-hidden className="inline-block h-[4px] w-4 rounded-full" style={{ background: "var(--foreground)" }} />
-            의원 중간값
+            {peer} 중간값
           </li>
           <li className="flex items-center gap-1.5">
             <span aria-hidden className="inline-block w-4 border-t-2 border-dotted" style={{ borderColor: "var(--muted)" }} />
-            의원 평균
+            {peer} 평균
           </li>
         </ul>
       )}

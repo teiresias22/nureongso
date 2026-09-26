@@ -84,3 +84,13 @@ def test_parse_attendance_pdf() -> None:
     assert rows[1] == ("金炳旭", "국민의힘", 2, 1, 1, 0, 0, 0)
     # 괄호 뒤에 정당이 붙어 나온 줄을 떼어 읽는다
     assert rows[2] == ("이수진(비)", "더불어민주당", 2, 1, 0, 1, 0, 0)
+
+
+def test_trip_period() -> None:
+    from ingest import trip_period
+    assert trip_period("2021. 4.11~ 4.13") == ("2021-04-11", "2021-04-13")
+    assert trip_period("2022.12.28.~1.3.") == ("2022-12-28", "2023-01-03")       # 해 넘김
+    assert trip_period("2023.5.22.~5.26.(25)") == ("2023-05-22", "2023-05-26")   # 괄호는 버림
+    assert trip_period("2023.8.14.~8.17./16.") == ("2023-08-14", "2023-08-17")   # 의원마다 귀국일이 다름
+    assert trip_period("2026. 6. 21. ~ 6. 25.") == ("2026-06-21", "2026-06-25")
+    assert trip_period(None) == (None, None)

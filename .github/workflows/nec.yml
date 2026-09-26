@@ -55,4 +55,13 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python asset.py fetch
 
+      # 단체장·교육감 재산공개(관보). 3월 정기 + 달마다 수시. 받아 본 절은 gwanbo_seen 에
+      # 적혀 건너뛰므로 매주 돌아도 새 절만 받는다.
+      - name: 단체장·교육감 재산공개
+        if: always()
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python gwanbo.py fetch
+
 # 최초 등록 트리거

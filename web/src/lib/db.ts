@@ -290,6 +290,9 @@ export type BidNotice = {
  *  정기공개는 종전가액이 있고, 총선 뒤 신규등록(최초·재등록)은 현재가액만 있다. */
 export type AssetReport = {
   pdf_id: number;
+  source: string;                  // 국회공보 | 관보
+  position: string | null;         // '국회의원' / '경기도 수원시 시장' …
+  peer: string | null;             // 비교 집단 (asset_issue_stats.peer)
   kind: string;                    // 정기 | 최초 | 재등록 | 퇴직
   notice_date: string;
   issue: string | null;
@@ -330,6 +333,20 @@ export type Attendance = {
 };
 
 /** 겸직 결정 내역. decision 은 원문, decision_kind 는 허용 | 불가 | 사직권고. */
+/** 직무상 국외활동 신고. 원문 한 줄(함께 간 의원 여럿)을 사람마다 편 것. */
+export type Trip = {
+  id: number;
+  age: number;
+  companions: string | null;
+  destination: string | null;
+  purpose: string | null;
+  period: string | null;
+  start_on: string | null;
+  end_on: string | null;
+  funder: string | null;
+  reported: boolean | null;
+};
+
 export type Sidejob = {
   id: number;
   age: number;

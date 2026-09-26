@@ -9,6 +9,7 @@
     python ingest.py summaries --age 22 # 법안 제안이유·주요내용
     python ingest.py sidejobs           # 겸직 결정 내역 (20대~, 통째로 교체)
     python ingest.py attendance --age 22 # 본회의 출결 누적 (최신 회기 엑셀 하나)
+    python ingest.py trips              # 직무상 국외활동 신고 (21대~, 통째로 교체)
     python ingest.py refresh            # member_stats 갱신
     python ingest.py all --age 22
 
@@ -42,6 +43,7 @@ SERVICES = {
     "summary": "BPMBILLSUMMARY",  # 법률안 제안이유 및 주요내용 (BILL_NO 필수)
     # 목록(OPENSRVAPI)의 SRV_URL 은 설명 화면 주소다. 호출 이름은 명세서 xls 에만 있다.
     "sidejob": "nahfbzwvatmaxscwq",  # 국회의원 겸직 결정 내역 (OHAC6C000892WC13765)
+    "trips": "nasnutdbapnfphwyr",  # 국회의원 직무상 국외활동 신고 내역 (O87UNV000897E818234)
 }
 
 
@@ -457,6 +459,71 @@ def ingest_sidejobs(cur, age: int) -> int:
     return len(out)
 
 
+# --------------------------------------------------------------------------- 국외활동
+
+
+def trip_period(v: str | None) -> tuple[str | None, str | None]:
+    """'2021. 4.11~ 4.13' / '2022.12.28.~1.3.' / '2023.5.22.~5.26.(25)' → (시작일, 끝일).
+
+    끝은 월·일만 적는 게 보통이고 해를 넘기면 월이 작아진다. 괄호 안 숫자는 버린다.
+    의원마다 돌아온 날이 다르면 '8.17./16.', '3.1/2/3.' 처럼 빗금으로 잇는다 — 첫 날짜를 쓴다.
+    """
+    head, _, tail = re.sub(r"\(.*?\)", "", v or "").partition("~")
+    tail = tail.split("/")[0]
+    a = [int(x) for x in re.findall(r"\d+", head)]
+    b = [int(x) for x in re.findall(r"\d+", tail)]
+    if len(a) < 3:
+        return None, None
+    y, mo, da = a[:3]
+    start = f"{y:04d}-{mo:02d}-{da:02d}"
+    if len(b) >= 3:
+        ey, em, ed = b[:3]
+    elif len(b) == 2:
+        em, ed = b
+        ey = y + 1 if em < mo else y
+    else:
+        return start, start
+    return start, f"{ey:04d}-{em:02d}-{ed:02d}"
+
+
+# 원문 오타. 함께 간 사람이 이준석(개혁신당)이고 그 대수에 같은 이름의 의원이 없다 —
+# 개혁신당 의원 이주영·천하람이다. 새 오타는 '사람을 못 찾은 줄' 로 드러난다.
+TRIP_NAME_FIX = {(22, "이준영"): "이주영", (22, "천아람"): "천하람"}
+
+
+def ingest_trips(cur, age: int) -> int:
+    """직무상 국외활동 신고(국회의원윤리실천규범). 21·22대 합쳐 200건 남짓이라 통째로 바꾼다.
+    경비를 누가 댔는지(자비·외교부·외국 정부·민간단체)와 결과보고서 제출 여부가 함께 온다.
+
+    한 줄에 함께 간 의원 이름이 쉼표로 나열돼 온다(' 김원이, 김정호, 박지혜'). 사람마다 펴고,
+    원문 목록은 companions 에 그대로 둔다. 경비 기관은 원문이 제각각이라('자비', '자부담',
+    '외교부(국가기관)', 줄바꿈 뒤 주석까지) 가르지 않고 공백만 정리해 싣는다.
+    """
+    rows = fetch("trips")
+    people = {a: people_of(cur, a) for a in {int(re.sub(r"\D", "", r.get("UNIT_CD") or "")[-2:] or 0)
+                                             for r in rows} - {0}}
+    clean = lambda v: re.sub(r"\s+", " ", v or "").strip() or None
+    out, miss = [], []
+    for r in rows:
+        a = int(re.sub(r"\D", "", r.get("UNIT_CD") or "")[-2:] or 0)
+        names = [n.strip() for n in re.split(r"[,，、]", r.get("PN") or "") if n.strip()]
+        start, end = trip_period(r.get("SCH_DYS"))
+        for name in names:
+            code = match_person(people.get(a, []), TRIP_NAME_FIX.get((a, name), name))
+            if not code:
+                miss.append(f"{name}({a}대)")
+            out.append((a, name, code, ", ".join(names), clean(r.get("DSTN_NM")),
+                        clean(r.get("PURP_RSON")), clean(r.get("SCH_DYS")), start, end,
+                        clean(r.get("EXPNS_SUPPT_INST_NM")), (r.get("REPORT_YN") or "").strip() == "유"))
+    cur.execute("delete from member_trip")
+    cur.executemany(
+        "insert into member_trip (age, name, member_code, companions, destination, purpose, period,"
+        " start_on, end_on, funder, reported) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
+    if miss:
+        print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:20])}", file=sys.stderr)
+    return len(out)
+
+
 # --------------------------------------------------------------------------- 출결
 
 # 본회의 출결은 Open API 가 없다. 열린국회정보 '파일 데이터' 로 회기마다 엑셀 하나가
@@ -630,6 +697,7 @@ STEPS = {
     "summaries": lambda cur, age: ingest_summaries(cur, age),
     "sidejobs": lambda cur, age: ingest_sidejobs(cur, age),
     "attendance": lambda cur, age: ingest_attendance(cur, age),
+    "trips": lambda cur, age: ingest_trips(cur, age),
 }
 
 
