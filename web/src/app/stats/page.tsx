@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { db, partyColor, pct, type GroupStats } from "@/lib/db";
+import { db, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
 
 export const revalidate = 3600;
 
 export const metadata = {
   title: "정당·지역별 통계",
   alternates: { canonical: "/stats" },
-  description: "정당과 지역에 따라 의정활동이 어떻게 다른지 비교합니다.",
+  description: "정당과 지역에 따라 의정활동·출결·재산 같은 공개 기록이 어떻게 다른지 비교합니다.",
 };
 
 type SP = { office?: string; by?: string };
@@ -18,10 +18,14 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
   const { office = "국회의원", by = "party" } = await searchParams;
   const view = by === "region" ? "region_stats" : "party_stats";
 
-  const [{ data: rows }, { data: offices }] = await Promise.all([
+  const [{ data: rows }, { data: offices }, { data: recRows }] = await Promise.all([
     db.from(view).select("*").eq("office", office),
     db.from("member_region").select("office").eq("is_incumbent", true),
+    db.from("group_record_stats").select("*").eq("office", office).eq("by", by === "region" ? "region" : "party"),
   ]);
+  const records = ((recRows ?? []) as GroupRecord[])
+    .filter((r) => r.members > 0)
+    .sort((a, b) => b.members - a.members);
 
   const list = ((rows ?? []) as GroupStats[])
     .filter((r) => r.members > 0)
@@ -164,18 +168,121 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
         </div>
       )}
 
-      {list.some((r) => r.members < SMALL_GROUP) && (
+      {records.length > 0 && <RecordTable rows={records} by={by} office={office} />}
+
+      {(list.some((r) => r.members < SMALL_GROUP) || records.some((r) => r.members < SMALL_GROUP)) && (
         <p className="text-xs text-muted">
           * 인원이 {SMALL_GROUP}명 미만이라 1인당 값이 한두 사람의 기록입니다. 다른 묶음과 견줄 때 주의하세요.
         </p>
       )}
       <p className="text-xs text-muted">
         가결률은 대표발의 기준이며 분모에 계류 중인 법안이 포함됩니다. 표결참여는 (전체 표결 −
-        불참) ÷ 전체 표결입니다. 공약은 선거공보와 선거공약서를 합한 수입니다.{" "}
+        불참) ÷ 전체 표결입니다. 공약은 선거공보와 선거공약서를 합한 수입니다. 공개 기록 표의
+        비율은 사람별 비율의 평균이 아니라 묶음 전체 합계끼리 나눈 값이고, 국회 활동 항목(출석·표결·
+        국외활동·연구단체·겸직)은 제22대 현직 국회의원만 셉니다.{" "}
         <Link href="/rules" className="underline underline-offset-2">
           판정 기준
         </Link>
       </p>
     </div>
+  );
+}
+
+/** 천원 → '13.0억'. 표 칸이 좁아 억 단위 한 자리로 줄인다. */
+const eok = (k: number) => `${(k / 100000).toFixed(1)}억`;
+
+/** 의원 상세의 공개 기록을 묶음별로. 순서는 위 표와 같이 인원 순이다.
+ *  단체장·교육감은 국회 활동이 없어 재산만 남는다. */
+function RecordTable({ rows, by, office }: { rows: GroupRecord[]; by: string; office: string }) {
+  const mp = office === "국회의원";
+  const th = "px-2 py-2.5 text-right font-medium";
+  const td = "px-2 py-2.5 text-right tabular-nums";
+  const none = <span className="text-muted">—</span>;
+  const per = (n: number | null, m: number) => (n == null ? none : (n / m).toFixed(1));
+  return (
+    <section className="space-y-2">
+      <h2 className="text-base font-semibold">공개 기록으로 본 {by === "region" ? "지역" : "정당"}</h2>
+      <p className="text-sm text-muted">
+        {mp
+          ? "본회의 출결, 소속 정당 다수와 다른 표, 재산, 겸직, 국외활동, 연구단체를 묶어 봅니다."
+          : "가장 최근에 공개된 재산의 중간값입니다. 새로 취임한 사람은 첫 신고가 공개되기 전이라 빠집니다."}{" "}
+        <Link href={mp ? "/rules#attendance" : "/rules#asset"} className="underline underline-offset-2">읽는 법</Link>
+      </p>
+      <div className="overflow-x-auto rounded-lg border border-line bg-card">
+        <table className={`w-full border-collapse text-sm ${mp ? "min-w-[46rem]" : ""}`}>
+          <thead>
+            <tr className="border-b border-line text-left text-xs text-muted">
+              <th className="sticky left-0 z-10 bg-card px-4 py-2.5 font-medium">{by === "region" ? "지역" : "정당"}</th>
+              <th className={th}>인원</th>
+              {mp && (
+                <>
+                  <th className={th}>출석률</th>
+                  <th className={th}>정당 다수와 다른 표</th>
+                </>
+              )}
+              <th className={th}>순재산 중간값</th>
+              {mp && (
+                <>
+                  <th className={th}>1인당 국외활동</th>
+                  <th className={th}>1인당 연구단체</th>
+                  <th className={`${th} pr-4`}>겸직 불가·사직 권고</th>
+                </>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const few = r.members < SMALL_GROUP;
+              return (
+                <tr key={r.name} className={`border-b border-line/60 last:border-0 ${few ? "text-muted" : ""}`}>
+                  <td className="sticky left-0 z-10 bg-card px-4 py-2.5">
+                    <span className="flex items-center gap-2">
+                      {by === "party" && (
+                        <span className="h-3 w-1 shrink-0 rounded-full" style={{ background: partyColor(r.name) }} />
+                      )}
+                      <span className={few ? "" : "font-medium text-foreground"}>
+                        {r.name}{few && <span aria-label="인원 적음">*</span>}
+                      </span>
+                    </span>
+                  </td>
+                  <td className={td}>{r.members}</td>
+                  {mp && (
+                    <>
+                      <td className={td}>{r.days ? `${pct(r.present ?? 0, r.days)}%` : none}</td>
+                      <td className={td}>
+                        {/* 무소속은 '당의 다수' 가 없어 세지 않는다. */}
+                        {r.party_counted ? `${((100 * (r.against_party ?? 0)) / r.party_counted).toFixed(1)}%` : none}
+                      </td>
+                    </>
+                  )}
+                  <td className={td}>
+                    {r.net_median_k == null ? none : (
+                      <>
+                        {eok(r.net_median_k)}
+                        {r.asset_n < r.members && (
+                          <span className="ml-1 text-xs text-muted">({r.asset_n}명)</span>
+                        )}
+                      </>
+                    )}
+                  </td>
+                  {mp && (
+                    <>
+                      <td className={td}>{per(r.trips, r.members)}</td>
+                      <td className={td}>{per(r.research, r.members)}</td>
+                      <td className={`${td} pr-4`}>{r.sidejob_flagged ? `${r.sidejob_flagged}명` : "0"}</td>
+                    </>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted">
+        {mp && "출석률 = 출석 ÷ 본회의 회의일수(묶음 합계). 정당 다수와 다른 표는 의원 페이지와 같은 규칙이며 무소속은 세지 않습니다. "}
+        순재산은 가장 최근 공개분이고, 괄호는 재산이 공개된 인원입니다.
+        {mp && " 국외활동·연구단체는 제22대 신고·등록 건수, 겸직은 불가·사직 권고를 한 번이라도 받은 인원입니다."}
+      </p>
+    </section>
   );
 }

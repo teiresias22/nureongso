@@ -198,6 +198,23 @@ export type GroupStats = {
   pledge_law_passed: number;
 };
 
+/** 정당·지역 묶음의 공개 기록 (group_record_stats). 국회 활동 항목은 현직 국회의원만 센다. */
+export type GroupRecord = {
+  office: string;
+  by: "party" | "region";
+  name: string;
+  members: number;
+  present: number | null;
+  days: number | null;
+  against_party: number | null;
+  party_counted: number | null;
+  asset_n: number;
+  net_median_k: number | null;
+  trips: number | null;
+  research: number | null;
+  sidejob_flagged: number;
+};
+
 /** 선수와 득표율. 국회의원은 열린국회정보가 term_count 를 주지만 단체장·교육감은
  *  없어서 선관위 당선 이력을 센다. */
 /** 출마 이력 한 줄. 낙선자도 들어 있다 (선관위 후보자 정보).

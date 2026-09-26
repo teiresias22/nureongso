@@ -592,6 +592,56 @@ from member_region r join member_stats s on s.code = r.code
 where r.is_incumbent
 group by r.office, r.region;
 
+-- 공개 기록(출결·정당 다수와 다른 표·재산·겸직·국외활동·연구단체)을 현직 한 사람당 한 줄로.
+-- 국회 활동 항목은 **지금 국회의원인 사람만** 센다. 22대 의원이었다가 시도지사가 된 사람의
+-- 표결·출장이 시도지사 묶음에 섞였다(실측). 대수는 22대로 고정 — 현직 국회의원의 대수다.
+-- 재산은 가장 최근 공개(퇴직 신고 제외). 단체장은 관보, 국회의원은 국회공보다.
+create or replace view member_record
+with (security_invoker = true) as
+select r.code, r.office, r.region,
+  split_part(r.party, '/', array_length(string_to_array(r.party, '/'), 1)) as party,
+  a.present, a.days,
+  pl.party_counted, pl.against_party,
+  ast.total_now_k as net_k,
+  case when r.office = '국회의원' then
+    (select count(*) from member_trip t where t.member_code = r.code and t.age = 22)::int end as trips,
+  case when r.office = '국회의원' then
+    (select count(*) from member_research x where x.member_code = r.code and x.age = 22)::int end as research,
+  case when r.office = '국회의원' then
+    (select count(*) from member_sidejob j where j.member_code = r.code and j.age = 22
+       and j.decision_kind <> '허용')::int end as sidejob_flagged
+from member_region r
+left join attendance a on a.member_code = r.code and a.age = 22 and r.office = '국회의원'
+left join member_party_line pl on pl.code = r.code and r.office = '국회의원'
+left join lateral (
+  select total_now_k from asset_report x
+  where x.member_code = r.code and x.kind <> '퇴직'
+  order by x.notice_date desc limit 1
+) ast on true
+where r.is_incumbent;
+
+-- 정당별·지역별 묶음. 비율은 합계끼리 나눈다(1인당 비율의 평균이 아니다) — 출석률 =
+-- 출석 합 ÷ 회의일수 합. 재산은 평균이 몇 명에게 끌려가서 중간값이다.
+create or replace view group_record_stats
+with (security_invoker = true) as
+select office, by, name,
+  count(*)::int                                   as members,
+  sum(present)::int                               as present,
+  sum(days)::int                                  as days,
+  sum(against_party)::int                         as against_party,
+  sum(party_counted)::int                         as party_counted,
+  count(net_k)::int                               as asset_n,
+  round((percentile_cont(0.5) within group (order by net_k))::numeric)::bigint as net_median_k,
+  sum(trips)::int                                 as trips,
+  sum(research)::int                              as research,
+  count(*) filter (where sidejob_flagged > 0)::int as sidejob_flagged
+from (
+  select 'party' as by, party as name, * from member_record where party is not null
+  union all
+  select 'region', region, * from member_record
+) g
+group by office, by, name;
+
 -- 선수(몇 선)와 득표율. 국회의원은 열린국회정보가 term_count 를 주지만
 -- 단체장·교육감은 없어서 선관위 당선 이력을 센다.
 -- is_current 가 없으면 역대 당선인까지 2,400행이 넘어 PostgREST 1000행 상한에 걸린다.
@@ -623,7 +673,7 @@ from candidacy c join member m on m.code = c.member_code and m.is_incumbent
 where c.elected and c.office = coalesce(m.office, c.office)
 order by c.member_code, c.election_id desc;
 
-grant select on member_region, party_stats, region_stats, member_office_term, member_area
+grant select on member_region, party_stats, region_stats, member_record, group_record_stats, member_office_term, member_area
   to anon, authenticated;
 
 
