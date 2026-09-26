@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       step:
-        description: "members | bills | plenary | votes | refresh | all"
+        description: "members | bills | plenary | votes | summaries | sidejobs | attendance | trips | research | studies | refresh | all"
         default: all
       age:
         description: "국회 대수"
