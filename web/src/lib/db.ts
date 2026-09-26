@@ -347,6 +347,18 @@ export type Trip = {
   reported: boolean | null;
 };
 
+/** 의원 연구단체. 단체 한 줄을 의원마다 편 것. role: 대표 | 연구책임 | 구성 */
+export type Research = {
+  id: number;
+  age: number;
+  group_name: string;
+  topic: string | null;
+  objective: string | null;
+  role: string;
+  member_cnt: string | null;
+  link_url: string | null;
+};
+
 export type Sidejob = {
   id: number;
   age: number;

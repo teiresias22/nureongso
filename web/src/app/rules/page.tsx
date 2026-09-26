@@ -23,7 +23,8 @@ const TOC: [string, string][] = [
   ["attendance", "12. 본회의 출결"],
   ["sidejob", "13. 겸직 신고"],
   ["trip", "14. 직무상 국외활동"],
-  ["not-shown", "15. 공개돼 있어도 싣지 않는 것"],
+  ["research", "15. 의원 연구단체"],
+  ["not-shown", "16. 공개돼 있어도 싣지 않는 것"],
   ["sources", "출처"],
 ];
 
@@ -413,7 +414,21 @@ export default function RulesPage() {
         </ul>
       </Box>
 
-      <Box id="not-shown" title="15. 공개돼 있어도 싣지 않는 것">
+      <Box id="research" title="15. 의원 연구단체">
+        <p className="text-muted">
+          의원들이 정책 분야별로 모여 국회에 등록한 연구단체의 명단을 열린국회정보에서 옮깁니다
+          (20대부터). 단체마다 대표의원, 연구책임의원, 구성의원이 나뉘어 옵니다.
+        </p>
+        <ul className="list-disc space-y-1.5 pl-4 text-muted">
+          <li>분야와 연구목적은 등록 원문 그대로입니다. 연구단체가 실제로 무엇을 했는지는 담지 않습니다.</li>
+          <li>
+            정당은 등록 명단에 적힌 당명입니다. 이름과 정당으로 의원을 잇고, 같은 당 동명이인이라
+            가를 수 없는 줄은 어느 의원 페이지에도 싣지 않습니다(2026년 9월 기준 13줄).
+          </li>
+        </ul>
+      </Box>
+
+      <Box id="not-shown" title="16. 공개돼 있어도 싣지 않는 것">
         <ul className="list-disc space-y-1.5 pl-4 text-muted">
           <li>
             <b>전과·병역·납세·체납.</b> 후보자 정보공개자료로 선거 기간에 공개되지만,
@@ -450,6 +465,7 @@ export default function RulesPage() {
           <li>본회의 출결: 열린국회정보 &lsquo;국회의원 본회의 출결현황&rsquo; 회기별 엑셀</li>
           <li>겸직: 열린국회정보 &lsquo;국회의원 겸직 결정 내역&rsquo; Open API</li>
           <li>국외활동: 열린국회정보 &lsquo;국회의원 직무상 국외활동 신고 내역&rsquo; Open API</li>
+          <li>연구단체: 열린국회정보 &lsquo;국회의원 연구단체 등록현황&rsquo; Open API</li>
         </ul>
         <p className="text-muted">
           <b>공약 원문은 PDF 를 AI 가 읽어 정리했습니다.</b> 선거공보는 기계가 읽을 수 있는

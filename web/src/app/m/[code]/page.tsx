@@ -6,7 +6,7 @@ import {
   db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText, wonK,
   type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Sidejob, type Trip,
+  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Trip,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -204,6 +204,7 @@ export default async function MemberPage({
     { data: attRows },
     { data: sidejobRows },
     { data: tripRows },
+    { data: researchRows },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
@@ -241,6 +242,11 @@ export default async function MemberPage({
       .select("id, age, companions, destination, purpose, period, start_on, end_on, funder, reported")
       .eq("member_code", code)
       .order("start_on", { ascending: false }),
+    db.from("member_research")
+      .select("id, age, group_name, topic, objective, role, member_cnt, link_url")
+      .eq("member_code", code)
+      .order("age", { ascending: false })
+      .order("group_name"),
   ]);
 
   if (!member) notFound();
@@ -439,12 +445,14 @@ export default async function MemberPage({
   );
   const sidejobs = (sidejobRows ?? []) as Sidejob[];
   const trips = (tripRows ?? []) as Trip[];
+  const research = (researchRows ?? []) as Research[];
   const nav: { id: string; label: string }[] = [];
   if (att || s.vote_total > 0) nav.push({ id: "activity", label: "출결·표결" });
   nav.push({ id: "runs", label: "출마 이력" });
   if (assets.length) nav.push({ id: "asset", label: "재산" });
   if (sidejobs.length) nav.push({ id: "sidejob", label: "겸직" });
   if (trips.length) nav.push({ id: "trip", label: "국외활동" });
+  if (research.length) nav.push({ id: "research", label: "연구단체" });
   for (const eid of pledgeElections) {
     const isCur = eid === pledgeElections[0];
     for (const { key, title } of PLEDGE_SOURCES) {
@@ -775,6 +783,7 @@ export default async function MemberPage({
       {assets.length > 0 && <AssetSection rows={assets} stats={statOf} />}
       {sidejobs.length > 0 && <SidejobSection rows={sidejobs} />}
       {trips.length > 0 && <TripSection rows={trips} name={m.name} />}
+      {research.length > 0 && <ResearchSection rows={research} />}
 
       {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
           '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
@@ -1336,6 +1345,49 @@ function TripSection({ rows, name }: { rows: Trip[]; name: string }) {
             </li>
           );
         })}
+      </ul>
+    </Section>
+  );
+}
+
+const RESEARCH_ROLE: Record<string, string> = { 대표: "대표의원", 연구책임: "연구책임의원" };
+
+/** 의원 연구단체. 어느 정책 분야를 함께 공부하겠다고 국회에 등록했는지 — 분야와 연구목적은
+ *  등록 원문 그대로다. 대표·연구책임을 맡은 단체를 위로 올린다. */
+function ResearchSection({ rows }: { rows: Research[] }) {
+  const led = rows.filter((r) => r.role !== "구성").length;
+  const sorted = [...rows].sort((a, b) => b.age - a.age || Number(a.role === "구성") - Number(b.role === "구성"));
+  return (
+    <Section id="research" title="의원 연구단체" count={rows.length}>
+      <p className="border-b border-line px-4 py-2 text-xs text-muted">
+        의원들이 정책 분야별로 모여 국회에 등록한 연구단체입니다.
+        {led > 0 && <> 이 중 <b className="text-foreground">{led}곳</b>에서 대표 또는 연구책임을 맡았습니다.</>}{" "}
+        <Link href="/rules#research" className="underline underline-offset-2 hover:text-foreground">읽는 법</Link>
+      </p>
+      <ul className="divide-y divide-line">
+        {sorted.map((r) => (
+          <li key={r.id} className="px-4 py-2.5 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <span className="min-w-0 font-medium">
+                {r.link_url ? (
+                  <a href={r.link_url} target="_blank" rel="noopener noreferrer"
+                     className="underline-offset-2 hover:underline">
+                    {r.group_name} <span aria-hidden className="text-xs text-muted">↗</span>
+                  </a>
+                ) : r.group_name}
+              </span>
+              {RESEARCH_ROLE[r.role] && (
+                <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-xs text-muted">
+                  {RESEARCH_ROLE[r.role]}
+                </span>
+              )}
+            </div>
+            {r.objective && <p className="mt-0.5 line-clamp-3 leading-6 text-muted" title={r.objective}>{r.objective}</p>}
+            <p className="mt-0.5 text-xs text-muted">
+              제{r.age}대{r.topic ? ` · ${r.topic}` : ""}{r.member_cnt ? ` · ${r.member_cnt}` : ""}
+            </p>
+          </li>
+        ))}
       </ul>
     </Section>
   );

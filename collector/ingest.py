@@ -10,6 +10,7 @@
     python ingest.py sidejobs           # 겸직 결정 내역 (20대~, 통째로 교체)
     python ingest.py attendance --age 22 # 본회의 출결 누적 (최신 회기 엑셀 하나)
     python ingest.py trips              # 직무상 국외활동 신고 (21대~, 통째로 교체)
+    python ingest.py research           # 의원 연구단체 (20~22대, 통째로 교체)
     python ingest.py refresh            # member_stats 갱신
     python ingest.py all --age 22
 
@@ -19,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import io
 import json
 import os
@@ -44,6 +46,7 @@ SERVICES = {
     # 목록(OPENSRVAPI)의 SRV_URL 은 설명 화면 주소다. 호출 이름은 명세서 xls 에만 있다.
     "sidejob": "nahfbzwvatmaxscwq",  # 국회의원 겸직 결정 내역 (OHAC6C000892WC13765)
     "trips": "nasnutdbapnfphwyr",  # 국회의원 직무상 국외활동 신고 내역 (O87UNV000897E818234)
+    "research": "numwhtqhavaqssfle",  # 국회의원 연구단체 등록현황 (O78HKE0010099W15881, REGDAESU 필수)
 }
 
 
@@ -368,6 +371,8 @@ def people_of(cur, age: int) -> list[tuple]:
 PARTY_LINE = {
     "자유한국당": "국민의힘", "미래통합당": "국민의힘", "미래한국당": "국민의힘", "국민의미래": "국민의힘",
     "더불어시민당": "더불어민주당", "더불어민주연합": "더불어민주당",
+    # 20대 최경환(광주 북구을)은 국민의당→민주평화당→대안신당. 연구단체 명단이 마지막 당명으로 적는다.
+    "민주평화당": "국민의당", "대안신당": "국민의당",
 }
 
 
@@ -502,7 +507,7 @@ def ingest_trips(cur, age: int) -> int:
     rows = fetch("trips")
     people = {a: people_of(cur, a) for a in {int(re.sub(r"\D", "", r.get("UNIT_CD") or "")[-2:] or 0)
                                              for r in rows} - {0}}
-    clean = lambda v: re.sub(r"\s+", " ", v or "").strip() or None
+    clean = lambda v: re.sub(r"\s+", " ", html.unescape(v or "")).strip() or None
     out, miss = [], []
     for r in rows:
         a = int(re.sub(r"\D", "", r.get("UNIT_CD") or "")[-2:] or 0)
@@ -519,6 +524,50 @@ def ingest_trips(cur, age: int) -> int:
     cur.executemany(
         "insert into member_trip (age, name, member_code, companions, destination, purpose, period,"
         " start_on, end_on, funder, reported) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
+    if miss:
+        print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:20])}", file=sys.stderr)
+    return len(out)
+
+
+# --------------------------------------------------------------------------- 연구단체
+
+RESEARCH_AGES = (20, 21, 22)
+RESEARCH_ROLES = (("MAIN_MEM", "대표"), ("RE_MEM", "연구책임"), ("OBJ_MEM", "구성"))
+
+
+def research_people(v: str | None) -> list[tuple[str, str]]:
+    """'김기현(국민의힘), 이준석(개혁신당)' → [('김기현', '국민의힘'), ('이준석', '개혁신당')].
+    대표·연구책임도 공동이면 쉼표로 여럿 온다."""
+    return [(n.strip(), p.strip()) for n, p in re.findall(r"([^,()]+)\(([^()]+)\)", v or "")]
+
+
+def ingest_research(cur, age: int) -> int:
+    """의원 연구단체. 대수마다 70개 남짓이라 20~22대를 통째로 바꾼다.
+
+    구성인원('21명 : …')이 대표 + 연구책임 + 구성의원 수와 같다 — 구성의원 목록에 대표와
+    연구책임은 들어 있지 않다(실측). 이름에 정당이 붙어 와서 동명이인은 정당으로 가른다.
+    """
+    out, miss = [], []
+    for a in RESEARCH_AGES:
+        people = people_of(cur, a)
+        # 원문에 '&lsquo;', '&middot;' 같은 HTML 문자 참조가 섞여 온다.
+        clean = lambda v: re.sub(r"\s+", " ", html.unescape(v or "")).strip() or None
+        for r in fetch("research", REGDAESU=str(a)):
+            for col, role in RESEARCH_ROLES:
+                for name, party in research_people(r.get(col)):
+                    # 20대 김성태 둘은 '김성태-지'·'김성태-비' 로 적혀 온다(지역구·비례).
+                    base, tag = (name[:-2], name[-1]) if re.search(r"-[지비]$", name) else (name, None)
+                    pool = [p for p in people if tag is None or p[6] == (tag == "지")]
+                    code = match_person(pool, base, party)
+                    if not code:
+                        miss.append(f"{name}({a}대)")
+                    out.append((a, clean(r.get("RE_NAME")), clean(r.get("RE_TOPIC_NAME")),
+                                clean(r.get("RE_OBJECTIVE")), role, name, party, code,
+                                clean(r.get("MEMBER_CNT")), clean(r.get("LINK_URL"))))
+    cur.execute("delete from member_research")
+    cur.executemany(
+        "insert into member_research (age, group_name, topic, objective, role, name, party,"
+        " member_code, member_cnt, link_url) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
     if miss:
         print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:20])}", file=sys.stderr)
     return len(out)
@@ -698,6 +747,7 @@ STEPS = {
     "sidejobs": lambda cur, age: ingest_sidejobs(cur, age),
     "attendance": lambda cur, age: ingest_attendance(cur, age),
     "trips": lambda cur, age: ingest_trips(cur, age),
+    "research": lambda cur, age: ingest_research(cur, age),
 }
 
 

@@ -390,6 +390,23 @@ create table if not exists member_trip (
 );
 create index if not exists member_trip_member_idx on member_trip (member_code);
 
+-- 국회의원 연구단체 (열린국회정보 등록현황). 단체 한 줄에 대표·연구책임·구성의원이
+-- '이름(정당), 이름(정당)' 목록으로 와서 의원마다 한 줄로 편다. role: 대표 | 연구책임 | 구성
+create table if not exists member_research (
+  id           bigserial primary key,
+  age          int  not null,
+  group_name   text not null,
+  topic        text,                             -- 분야 ('정치·행정', '경제·산업' …)
+  objective    text,                             -- 연구목적 원문
+  role         text not null,
+  name         text not null,
+  party        text,                             -- 등록 당시 원문의 정당
+  member_code  text references member(code) on delete set null,
+  member_cnt   text,                             -- '16명 : 더불어민주당 14, 국민의힘 2'
+  link_url     text
+);
+create index if not exists member_research_member_idx on member_research (member_code);
+
 -- 수집 로그
 create table if not exists ingest_run (
   id         bigserial primary key,
@@ -671,11 +688,12 @@ alter table asset_report enable row level security;
 alter table attendance enable row level security;
 alter table member_sidejob enable row level security;
 alter table member_trip enable row level security;
+alter table member_research enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip','member_research']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

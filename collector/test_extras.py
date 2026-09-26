@@ -94,3 +94,10 @@ def test_trip_period() -> None:
     assert trip_period("2023.8.14.~8.17./16.") == ("2023-08-14", "2023-08-17")   # 의원마다 귀국일이 다름
     assert trip_period("2026. 6. 21. ~ 6. 25.") == ("2026-06-21", "2026-06-25")
     assert trip_period(None) == (None, None)
+
+
+def test_research_people() -> None:
+    from ingest import research_people
+    assert research_people("김성태-지(자유한국당), 이준석(개혁신당)") == [
+        ("김성태-지", "자유한국당"), ("이준석", "개혁신당")]
+    assert research_people(None) == []
