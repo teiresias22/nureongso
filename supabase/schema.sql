@@ -609,7 +609,7 @@ from member_region r join member_stats s on s.code = r.code
 where r.is_incumbent
 group by r.office, r.region;
 
--- 공개 기록(출결·정당 다수와 다른 표·재산·겸직·국외활동·연구단체)을 현직 한 사람당 한 줄로.
+-- 공개 기록(출결·정당 다수와 다른 표·재산·겸직·국외활동·연구단체·연구용역)을 현직 한 사람당 한 줄로.
 -- 국회 활동 항목은 **지금 국회의원인 사람만** 센다. 22대 의원이었다가 시도지사가 된 사람의
 -- 표결·출장이 시도지사 묶음에 섞였다(실측). 대수는 22대로 고정 — 현직 국회의원의 대수다.
 -- 재산은 가장 최근 공개(퇴직 신고 제외). 단체장은 관보, 국회의원은 국회공보다.
@@ -626,7 +626,9 @@ select r.code, r.office, r.region,
     (select count(*) from member_research x where x.member_code = r.code and x.age = 22)::int end as research,
   case when r.office = '국회의원' then
     (select count(*) from member_sidejob j where j.member_code = r.code and j.age = 22
-       and j.decision_kind <> '허용')::int end as sidejob_flagged
+       and j.decision_kind <> '허용')::int end as sidejob_flagged,
+  case when r.office = '국회의원' then
+    (select count(*) from member_study y where y.member_code = r.code and y.age = 22)::int end as studies
 from member_region r
 left join attendance a on a.member_code = r.code and a.age = 22 and r.office = '국회의원'
 left join member_party_line pl on pl.code = r.code and r.office = '국회의원'
@@ -651,7 +653,8 @@ select office, by, name,
   round((percentile_cont(0.5) within group (order by net_k))::numeric)::bigint as net_median_k,
   sum(trips)::int                                 as trips,
   sum(research)::int                              as research,
-  count(*) filter (where sidejob_flagged > 0)::int as sidejob_flagged
+  count(*) filter (where sidejob_flagged > 0)::int as sidejob_flagged,
+  sum(studies)::int                               as studies
 from (
   select 'party' as by, party as name, * from member_record where party is not null
   union all

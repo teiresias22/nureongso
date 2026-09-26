@@ -213,6 +213,7 @@ export type GroupRecord = {
   trips: number | null;
   research: number | null;
   sidejob_flagged: number;
+  studies: number | null;
 };
 
 /** 선수와 득표율. 국회의원은 열린국회정보가 term_count 를 주지만 단체장·교육감은

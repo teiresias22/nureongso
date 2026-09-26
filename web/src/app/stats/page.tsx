@@ -179,7 +179,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
         가결률은 대표발의 기준이며 분모에 계류 중인 법안이 포함됩니다. 표결참여는 (전체 표결 −
         불참) ÷ 전체 표결입니다. 공약은 선거공보와 선거공약서를 합한 수입니다. 공개 기록 표의
         비율은 사람별 비율의 평균이 아니라 묶음 전체 합계끼리 나눈 값이고, 국회 활동 항목(출석·표결·
-        국외활동·연구단체·겸직)은 제22대 현직 국회의원만 셉니다.{" "}
+        국외활동·연구단체·연구용역·겸직)은 제22대 현직 국회의원만 셉니다.{" "}
         <Link href="/rules" className="underline underline-offset-2">
           판정 기준
         </Link>
@@ -204,12 +204,12 @@ function RecordTable({ rows, by, office }: { rows: GroupRecord[]; by: string; of
       <h2 className="text-base font-semibold">공개 기록으로 본 {by === "region" ? "지역" : "정당"}</h2>
       <p className="text-sm text-muted">
         {mp
-          ? "본회의 출결, 소속 정당 다수와 다른 표, 재산, 겸직, 국외활동, 연구단체를 묶어 봅니다."
+          ? "본회의 출결, 소속 정당 다수와 다른 표, 재산, 겸직, 국외활동, 연구단체, 연구용역을 묶어 봅니다."
           : "가장 최근에 공개된 재산의 중간값입니다. 새로 취임한 사람은 첫 신고가 공개되기 전이라 빠집니다."}{" "}
         <Link href={mp ? "/rules#attendance" : "/rules#asset"} className="underline underline-offset-2">읽는 법</Link>
       </p>
       <div className="overflow-x-auto rounded-lg border border-line bg-card">
-        <table className={`w-full border-collapse text-sm ${mp ? "min-w-[46rem]" : ""}`}>
+        <table className={`w-full border-collapse text-sm ${mp ? "min-w-[52rem]" : ""}`}>
           <thead>
             <tr className="border-b border-line text-left text-xs text-muted">
               <th className="sticky left-0 z-10 bg-card px-4 py-2.5 font-medium">{by === "region" ? "지역" : "정당"}</th>
@@ -225,6 +225,7 @@ function RecordTable({ rows, by, office }: { rows: GroupRecord[]; by: string; of
                 <>
                   <th className={th}>1인당 국외활동</th>
                   <th className={th}>1인당 연구단체</th>
+                  <th className={th}>1인당 연구용역</th>
                   <th className={`${th} pr-4`}>겸직 불가·사직 권고</th>
                 </>
               )}
@@ -269,6 +270,7 @@ function RecordTable({ rows, by, office }: { rows: GroupRecord[]; by: string; of
                     <>
                       <td className={td}>{per(r.trips, r.members)}</td>
                       <td className={td}>{per(r.research, r.members)}</td>
+                      <td className={td}>{per(r.studies, r.members)}</td>
                       <td className={`${td} pr-4`}>{r.sidejob_flagged ? `${r.sidejob_flagged}명` : "0"}</td>
                     </>
                   )}
@@ -281,7 +283,7 @@ function RecordTable({ rows, by, office }: { rows: GroupRecord[]; by: string; of
       <p className="text-xs text-muted">
         {mp && "출석률 = 출석 ÷ 본회의 회의일수(묶음 합계). 정당 다수와 다른 표는 의원 페이지와 같은 규칙이며 무소속은 세지 않습니다. "}
         순재산은 가장 최근 공개분이고, 괄호는 재산이 공개된 인원입니다.
-        {mp && " 국외활동·연구단체는 제22대 신고·등록 건수, 겸직은 불가·사직 권고를 한 번이라도 받은 인원입니다."}
+        {mp && " 국외활동·연구단체·연구용역은 제22대 신고·등록·결과보고서 건수(연구용역은 금액 비공개, 공동 발주는 의원마다 한 건), 겸직은 불가·사직 권고를 한 번이라도 받은 인원입니다."}
       </p>
     </section>
   );
