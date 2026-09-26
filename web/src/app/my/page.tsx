@@ -46,14 +46,17 @@ export default async function MyPage({
   let wiw = q.wiw || aWiw;
 
   // 셋 다 현직만이라 550행 안쪽이다. PostgREST 1000행 상한에 닿지 않는다.
-  const [{ data: areas }, { data: members }, { data: stats }] = await Promise.all([
+  const [{ data: areas }, { data: members }, { data: stats }, { data: records }] = await Promise.all([
     db.from("member_area").select("member_code, office, sd_name, wiw_name"),
     db.from("member").select(CARD_COLS).eq("is_incumbent", true),
     db.from("member_stats").select(CARD_STAT_COLS).eq("is_incumbent", true),
+    // 출결·재산·겸직 등 공개 기록. 현직 한 사람당 한 줄이다(member_record).
+    db.from("member_record").select("code, present, days, net_k, trips, studies, sidejob_flagged"),
   ]);
 
   const areaBy = new Map(((areas ?? []) as Area[]).map((a) => [a.member_code, a]));
   const statBy = new Map((stats ?? []).map((s: CardStats) => [s.code, s]));
+  const recBy = new Map(((records ?? []) as Rec[]).map((r) => [r.code, r]));
 
   // 시도 → 시군구 목록. 통째로 클라이언트에 넘겨 시도를 고르는 즉시 채운다.
   const byRegion = new Map<string, Set<string>>();
@@ -99,7 +102,8 @@ export default async function MyPage({
       <header>
         <h1 className="text-xl font-bold">내 지역 대표</h1>
         <p className="mt-1 text-sm text-muted">
-          선거공보에는 다음 임기에 뭘 하겠다는 말만 있습니다. 지난 임기에 무엇을 했는지 봅니다.
+          선거공보에는 다음 임기에 뭘 하겠다는 말만 있습니다. 지난 임기에 무엇을 했는지, 출석·재산·겸직
+          같은 공개 기록과 함께 봅니다.
         </p>
       </header>
 
@@ -123,11 +127,13 @@ export default async function MyPage({
           <ul className="grid gap-2 sm:grid-cols-2">
             {picked.map((m: Member) => (
               <li key={m.code}>
-                <Card m={m} s={statBy.get(m.code)} />
+                <Card m={m} s={statBy.get(m.code)} r={recBy.get(m.code)} />
               </li>
             ))}
           </ul>
           <p className="text-xs text-muted">
+            출석률·국외활동·연구용역·겸직은 제22대 국회 기록, 순재산은 가장 최근 공개분입니다.
+            새로 취임한 단체장·교육감은 첫 재산 신고가 공개되기 전입니다.{" "}
             비례대표 의원은 지역구가 없어 여기서는 찾을 수 없습니다.{" "}
             <Link href="/" className="underline underline-offset-2">
               이름으로 검색
@@ -140,8 +146,17 @@ export default async function MyPage({
   );
 }
 
-function Card({ m, s }: { m: Member; s?: CardStats }) {
-  const area = (m.office ?? "국회의원") === "국회의원" ? districtArea(m.district) : "";
+type Rec = {
+  code: string; present: number | null; days: number | null; net_k: number | null;
+  trips: number | null; studies: number | null; sidejob_flagged: number | null;
+};
+
+/** 천원 → '16.6억'. 카드 칸이 좁아 억 한 자리로 줄인다. */
+const eok = (k: number) => `${(k / 100000).toFixed(1)}억`;
+
+function Card({ m, s, r }: { m: Member; s?: CardStats; r?: Rec }) {
+  const mp = (m.office ?? "국회의원") === "국회의원";
+  const area = mp ? districtArea(m.district) : "";
   return (
     <Link
       href={`/m/${m.code}`}
@@ -185,6 +200,24 @@ function Card({ m, s }: { m: Member; s?: CardStats }) {
             </span>
           ) : (
             <span>수집된 활동 기록 없음</span>
+          )}
+        </div>
+        {/* 공개 기록. 의원 페이지 '한눈에 보기' 와 같은 값이다. 값이 없는 칸은 빼고,
+            겸직 불가·사직 권고는 있을 때만 적는다(없음을 굳이 늘어놓지 않는다). */}
+        <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
+          {mp && r?.days ? (
+            <span>
+              출석 <b className="text-foreground">{pct(r.present ?? 0, r.days)}%</b>
+            </span>
+          ) : null}
+          <span>
+            순재산{" "}
+            {r?.net_k != null ? <b className="text-foreground">{eok(r.net_k)}</b> : "공개 전"}
+          </span>
+          {mp && !!r?.trips && <span>국외활동 <b className="text-foreground">{r.trips}</b></span>}
+          {mp && !!r?.studies && <span>연구용역 <b className="text-foreground">{r.studies}</b></span>}
+          {!!r?.sidejob_flagged && (
+            <span className="text-red-700 dark:text-red-400">겸직 불가·사직 권고 {r.sidejob_flagged}건</span>
           )}
         </div>
       </div>
