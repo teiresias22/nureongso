@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { db, lastPart, partyColor, type Bill } from "@/lib/db";
+import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
 
@@ -89,7 +89,8 @@ export default async function BillPage({
     .map((m) => [m.code, m]));
   const byParty = new Map<string, Record<string, number>>();
   for (const v of vrows) {
-    const party = lastPart(who.get(v.member_code)?.party) || "정당 정보 없음";
+    // 위성정당으로 남은 사람은 모당에 넣는다(partyLine). 표결 당시엔 이미 합당해 같은 당이다.
+    const party = partyLine(who.get(v.member_code)?.party) || "정당 정보 없음";
     const t = byParty.get(party) ?? {};
     t[v.result] = (t[v.result] ?? 0) + 1;
     byParty.set(party, t);
@@ -103,6 +104,25 @@ export default async function BillPage({
     vrows.filter((v) => v.result === k)
       .map((v) => ({ code: v.member_code, ...who.get(v.member_code) }))
       .sort((a, c) => (a.name ?? "").localeCompare(c.name ?? "", "ko"));
+  // 소속 정당 다수와 다르게 던진 표. 규칙은 member_party_line 뷰·/rules#party-line 과 같다 —
+  // 불참은 표가 아니고, 그 당에서 표를 던진 사람이 3명 미만이거나 1위가 동률이면 다수가 없다.
+  // 무소속은 당이 아니라 세지 않는다. 정당은 지금 소속 정당이다.
+  const majority = new Map<string, string>();
+  for (const { party, t } of partyRows) {
+    if (party === "무소속" || party === "정당 정보 없음") continue;
+    const cast = (["찬성", "반대", "기권"] as const).map((k) => [k, t[k] ?? 0] as const)
+      .sort((a, c) => c[1] - a[1]);
+    const n = cast.reduce((a, [, x]) => a + x, 0);
+    if (n >= 3 && cast[0][1] > cast[1][1]) majority.set(party, cast[0][0]);
+  }
+  const offLine = vrows
+    .filter((v) => v.result !== "불참")
+    .map((v) => ({ code: v.member_code, result: v.result, ...who.get(v.member_code) }))
+    .filter((m) => {
+      const line = majority.get(partyLine(m.party));
+      return line && line !== m.result;
+    })
+    .sort((a, c) => partyLine(a.party).localeCompare(partyLine(c.party), "ko") || (a.name ?? "").localeCompare(c.name ?? "", "ko"));
   // 국회 원문 첫 줄이 제목('제안이유 및 주요내용')을 되풀이한다. 그 줄만 뗀다. 나머지는 원문 그대로.
   const summary = b.summary?.replace(/^\s*제안이유\s*및\s*주요내용\s*/, "").trim() ?? null;
 
@@ -225,10 +245,42 @@ export default async function BillPage({
                   </details>
                 );
               })}
+              {majority.size > 0 && (
+                <details className="mt-4 rounded-md border border-line" open={offLine.length > 0 && offLine.length <= 30}>
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                    소속 정당 다수와 다르게 표결한 의원{" "}
+                    <span className="font-normal text-muted">{offLine.length}명</span>
+                  </summary>
+                  <div className="border-t border-line p-3">
+                    <p className="text-xs leading-relaxed text-muted">
+                      이 법안에서 각 당 다수는{" "}
+                      {[...majority].map(([p, k]) => `${p} ${k}`).join(" · ")}입니다. 좋고 나쁨이 아니라
+                      사실입니다.{" "}
+                      <Link href="/rules#party-line" className="underline underline-offset-2 hover:text-foreground">어떻게 세나</Link>
+                    </p>
+                    {offLine.length > 0 ? (
+                      <ul className="mt-2 flex flex-wrap gap-1.5">
+                        {offLine.map((m) => (
+                          <li key={m.code}>
+                            <Link href={`/m/${m.code}`} className="flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-sm hover:border-muted">
+                              <span className="h-2 w-2 rounded-full" style={{ background: partyColor(m.party) }} />
+                              {m.name ?? m.code}
+                              <span className="text-xs text-muted">{partyLine(m.party)} · {m.result}</span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-sm text-muted">모두 소속 정당 다수와 같게 표결했습니다.</p>
+                    )}
+                  </div>
+                </details>
+              )}
               <p className="mt-3 text-xs leading-relaxed text-muted">
                 막대는 의원별 표결 기록 {vrows.length}명을 센 것입니다. 임기 중에 들어온 의원 등은 의원별
                 기록 명부에 없어 위의 국회 집계와 조금 다를 수 있습니다. 정당은 지금 소속 정당이라 표결
-                당시와 다를 수 있습니다.
+                당시와 다를 수 있고, 위성정당(더불어민주연합·국민의미래) 이름으로 남은 의원은 모당에
+                넣었습니다.
               </p>
             </>
           ) : plenary && (

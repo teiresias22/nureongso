@@ -157,6 +157,18 @@ export function lastPart(v?: string | null) {
   return v ? v.split("/").pop()!.trim() : "";
 }
 
+/** 위성정당 → 모당. 22대 도중에 떠난 비례의원 일부가 합당 전 이름으로 남아 있어, 표결을
+ *  정당별로 묶을 때 따로 한 '당' 이 됐다. DB 의 party_line() 과 같은 표다 — 둘이 어긋나면
+ *  법안 페이지와 의원 페이지의 '정당 다수와 다른 표' 가 서로 다른 수를 낸다. */
+const SATELLITE: Record<string, string> = {
+  더불어민주연합: "더불어민주당", 더불어시민당: "더불어민주당",
+  국민의미래: "국민의힘", 미래한국당: "국민의힘",
+};
+export function partyLine(v?: string | null) {
+  const p = lastPart(v);
+  return SATELLITE[p] ?? p;
+}
+
 /** 지역구가 어느 동으로 이뤄지는지. 유권자는 자기가 강남구에 산다는 건 알아도
  *  갑·을·병이 어디서 갈리는지는 모른다. 출처는 공직선거법 [별표 1] 선거구구역표.
  *  '종로구 일원' 처럼 구 전체가 한 선거구인 곳은 나눌 게 없어 빠져 있다.

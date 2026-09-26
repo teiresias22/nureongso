@@ -525,11 +525,27 @@ from bill_sponsor s join bill b on b.bill_id = s.bill_id;
 -- - 정당은 **지금** 정당이다. 표결 당시 정당 기록이 없다. 22대에서 당적이 바뀐 34명 중
 --   27명은 위성정당 합당(국민의미래→국민의힘 등)이라 영향이 없지만, 나머지는 옮기기 전
 --   표가 옮긴 당 기준으로 세진다. 화면에 이 한계를 적는다.
+-- - 위성정당 이름으로 남은 사람(합당 전에 떠난 비례의원)은 party_line 으로 모당에 넣는다.
+-- 정당 계보. 여러 당적이 '/' 로 이어져 오면 가장 최근 것을 쓰고, 위성정당은 모당으로 묶는다.
+-- 22대 도중에 떠난 비례의원 일부는 합당 전 위성정당 이름(더불어민주연합·국민의미래)으로 남아
+-- 있어서, 그대로 두면 표결 집계에서 따로 한 '당' 이 됐다(실측 5명). 화면의 web/src/lib/db.ts
+-- partyLine 과 같은 표다.
+create or replace function party_line(p text) returns text
+language sql immutable as $$
+  select case v
+    when '더불어민주연합' then '더불어민주당'
+    when '더불어시민당'   then '더불어민주당'
+    when '국민의미래'     then '국민의힘'
+    when '미래한국당'     then '국민의힘'
+    else v end
+  from (select nullif(trim(split_part(p, '/', array_length(string_to_array(p, '/'), 1))), '') as v) x
+$$;
+
 create materialized view if not exists member_party_line as
 with v as (
   select v.bill_id, v.member_code, v.result,
-         -- 역대 정당이 '/' 로 이어져 오면 가장 최근 것 (party_stats 와 같다)
-         split_part(m.party, '/', array_length(string_to_array(m.party, '/'), 1)) as party
+         -- 역대 정당이 '/' 로 이어져 오면 가장 최근 것, 위성정당은 모당 (party_line)
+         party_line(m.party) as party
   from vote v join member m on m.code = v.member_code
   where v.result in ('찬성', '반대', '기권')
 ), tally as (
@@ -616,7 +632,7 @@ group by r.office, r.region;
 create or replace view member_record
 with (security_invoker = true) as
 select r.code, r.office, r.region,
-  split_part(r.party, '/', array_length(string_to_array(r.party, '/'), 1)) as party,
+  party_line(r.party) as party,
   a.present, a.days,
   pl.party_counted, pl.against_party,
   ast.total_now_k as net_k,
