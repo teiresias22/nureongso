@@ -18,9 +18,10 @@ const OFFICES = ["국회의원", "시도지사", "구시군의장", "교육감"]
  *  첫 항목이 그 탭의 기본 정렬이다. */
 const SORTS: Record<string, [string, string][]> = {
   국회의원: [["rep", "대표발의 많은 순"], ["co", "공동발의 많은 순"],
-           ["vote", "표결참여 높은 순"], ["name", "이름순"]],
+           ["vote", "표결참여 높은 순"], ["attend", "본회의 출석률 높은 순"],
+           ["asset", "순재산 많은 순"], ["name", "이름순"]],
   기본: [["pledge", "공약 많은 순"], ["rate", "득표율 높은 순"],
-        ["wins", "당선 많은 순"], ["name", "이름순"]],
+        ["wins", "당선 많은 순"], ["asset", "순재산 많은 순"], ["name", "이름순"]],
   // 직위가 섞인 화면에서 순위를 매기면 비교가 성립하지 않는다. 찾아보는 용도라
   //  정렬 메뉴를 아예 안 띄운다.
   전체: [["name", "이름순"]],
@@ -38,7 +39,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
   // 현직 전원을 받아 클라이언트에서 거른다. PostgREST 상한이 1000행이라
   // 지방의원(약 3,900명)까지 넣으면 여기서 조용히 잘린다. 그때는 검색·필터를
   // 서버 쿼리로 내리고 페이지네이션을 붙여야 한다.
-  const [{ data: members }, { data: stats }, { data: terms }, { data: vacant }] =
+  const [{ data: members }, { data: stats }, { data: terms }, { data: vacant }, { data: records }] =
     await Promise.all([
     db.from("member").select(CARD_COLS).eq("is_incumbent", true).order("name"),
     db.from("member_stats").select(CARD_STAT_COLS).eq("is_incumbent", true),
@@ -51,12 +52,17 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
     // 정원과 현직 수가 다른 이유를 화면에 적기 위한 것. 선관위 당선 기록과 국회
     // 현역 명부를 대조해 비어 있는 지역구를 센다 (뷰 vacant_seat).
     db.from("vacant_seat").select("sd_name, district, last_name"),
+    // 출결·재산·겸직 등 공개 기록. 현직 한 사람당 한 줄(member_record, 560행 안쪽).
+    db.from("member_record").select("code, present, days, net_k, trips, studies, sidejob_flagged"),
   ]);
 
   if (!members?.length) return <Empty />;
 
   const vacancies = (vacant ?? []) as { sd_name: string; district: string; last_name: string }[];
   const statById = new Map((stats ?? []).map((s: CardStats) => [s.code, s]));
+  const recById = new Map(((records ?? []) as Rec[]).map((r) => [r.code, r]));
+  // 출석률. 기록이 없으면 -1 로 뒤에 둔다(0% 와 '기록 없음' 은 다르다).
+  const attendOf = (r?: Rec) => (r?.days ? (r.present ?? 0) / r.days : -1);
   // 단체장·교육감은 국회 선수가 없다. 그 직위로 몇 번 당선됐는지로 대신한다.
   const termBy = new Map(
     ((terms ?? []) as OfficeTerm[]).map((t) => [`${t.member_code}|${t.office}`, t]),
@@ -101,6 +107,17 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
       if (sort === "rate")
         return (tb?.last_vote_rate ?? -1) - (ta?.last_vote_rate ?? -1);
       return (tb?.wins ?? 0) - (ta?.wins ?? 0);
+    }
+    if (sort === "attend") {
+      const ra = recById.get(a.code), rb = recById.get(b.code);
+      // 비율이 같으면 회의일수가 많은 쪽을 위에 — 임기 중 들어온 사람이 몇 번 출석으로
+      // 100% 가 돼 앞에 서지 않게 한다(표결참여와 같은 이유).
+      return attendOf(rb) - attendOf(ra) || (rb?.days ?? 0) - (ra?.days ?? 0);
+    }
+    if (sort === "asset") {
+      // 재산이 아직 공개되지 않은 사람(새로 취임)은 맨 뒤. 0 으로 두면 '재산 0' 으로 읽힌다.
+      const va = recById.get(a.code)?.net_k, vb = recById.get(b.code)?.net_k;
+      return (vb ?? -Infinity) - (va ?? -Infinity) || a.name.localeCompare(b.name, "ko");
     }
     if (sort === "name") return a.name.localeCompare(b.name, "ko");
     return (sb?.rep_count ?? 0) - (sa?.rep_count ?? 0);
@@ -211,6 +228,16 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
           </>
         )}
       </div>
+      {(sort === "attend" || sort === "asset") && (
+        <p className="-mt-3 text-xs text-muted">
+          {sort === "attend"
+            ? "제22대 본회의 출석 ÷ 회의일수. 기록이 없는 사람은 뒤에 둡니다."
+            : "가장 최근 공개된 순재산(국회의원은 국회공보, 단체장·교육감은 관보 — 국회의원 출신은 그 시절 신고일 수 있습니다). 아직 공개 전인 사람은 뒤에 둡니다."}{" "}
+          <Link href={sort === "attend" ? "/rules#attendance" : "/rules#asset"} className="underline underline-offset-2">
+            기준
+          </Link>
+        </p>
+      )}
       {/* 22대 정원은 300명인데 현역 명부는 299명이다. 이유를 안 적으면 읽는
           사람이 '1명이 어디 갔지' 에서 막힌다. 국회의원 탭에서만 보인다 —
           단체장·교육감은 현역 명부를 주는 API 가 없어 공석을 알 수 없다. */}
@@ -238,6 +265,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
       <ul className="grid gap-2 sm:grid-cols-2">
         {rows.map((m) => {
           const s = statById.get(m.code);
+          const r = recById.get(m.code);
+          const mp = (m.office ?? "국회의원") === "국회의원";
           const term = termBy.get(`${m.code}|${m.office}`);
           return (
             <li key={m.code}>
@@ -304,6 +333,19 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                       <span>수집된 활동 기록 없음</span>
                     )}
                   </div>
+                  {/* 공개 기록. 내 지역 카드와 같은 줄이다. 값이 없는 칸은 빼고, 겸직 불가·
+                      사직 권고는 있을 때만 적는다. */}
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+                    {mp && r?.days ? (
+                      <Fig on={sort === "attend"} label="출석" value={`${pct(r.present ?? 0, r.days)}%`} />
+                    ) : null}
+                    <Fig on={sort === "asset"} label="순재산" value={r?.net_k != null ? eok(r.net_k) : "공개 전"} />
+                    {mp && !!r?.trips && <Fig label="국외활동" value={r.trips} />}
+                    {mp && !!r?.studies && <Fig label="연구용역" value={r.studies} />}
+                    {!!r?.sidejob_flagged && (
+                      <span className="text-red-700 dark:text-red-400">겸직 불가·사직 권고 {r.sidejob_flagged}건</span>
+                    )}
+                  </div>
                 </div>
               </Link>
             </li>
@@ -313,6 +355,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
     </div>
   );
 }
+
+type Rec = {
+  code: string; present: number | null; days: number | null; net_k: number | null;
+  trips: number | null; studies: number | null; sidejob_flagged: number | null;
+};
+
+/** 천원 → '16.6억'. 카드 칸이 좁아 억 한 자리로 줄인다. */
+const eok = (k: number) => `${(k / 100000).toFixed(1)}억`;
 
 /** 카드의 수치 하나. on 이면 지금 정렬 기준이라 테두리를 두른다(색만으로 가르지 않는다). */
 function Fig({ label, value, on }: { label: string; value: number | string; on?: boolean }) {
