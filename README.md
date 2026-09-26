@@ -67,6 +67,12 @@ web/         Next.js (App Router) 프론트, Vercel 배포
              evidence.yml 매주 — 조례·발주 수집, judge.py 분류·대조·판정
 ```
 
+워크플로는 GitHub Actions 화면에서 수동으로도 돌린다(`ingest.yml` 은 `step` 에 단계 이름 하나).
+**`ingest.yml` 과 `nec.yml` 은 같은 동시 실행 그룹(`ingest`)이다** — 둘 다 `member` 를 쓰기 때문이다.
+이 그룹은 한 번에 하나만 돌고 대기열에도 하나만 남겨서, 수동 실행을 연달아 넣으면 앞서 넣은 대기
+실행이 **취소된다**(실측: trips·research·studies 를 연달아 넣자 뒤의 둘이 선관위 수집에 밀려 취소).
+여러 단계를 돌릴 때는 하나가 끝난 뒤 다음을 넣는다. 정기 실행은 시각이 떨어져 있어 겹치지 않는다.
+
 ## 시작하기
 
 1. Supabase 프로젝트 생성 → SQL Editor 에 `supabase/schema.sql` 실행
