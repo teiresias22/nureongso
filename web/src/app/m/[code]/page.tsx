@@ -1287,7 +1287,13 @@ function SidejobSection({ rows }: { rows: Sidejob[] }) {
     <Section id="sidejob" title="겸직 신고" count={rows.length}>
       <p className="border-b border-line px-4 py-2 text-xs text-muted">
         국회법 제29조에 따라 의원이 신고한 다른 직과, 국회의장이 정해 공개한 허용 여부입니다.
-        {flagged > 0 && <> 이 중 <b className="text-foreground">{flagged}건</b>은 겸직 불가 또는 사직 권고를 받았습니다.</>}{" "}
+        {flagged > 0 && (
+          <>
+            {" "}이 중 <b className="text-foreground">{flagged}건</b>은 겸직 불가 또는 사직 권고를 받았습니다.
+            이 경우 통보일부터 3개월 안에 그 직을 휴직하거나 사직해야 하지만(국회법 제29조 제6항),{" "}
+            <b className="text-foreground">실제로 그만뒀는지는 공개 자료에 없습니다.</b>
+          </>
+        )}{" "}
         <Link href="/rules#sidejob" className="underline underline-offset-2 hover:text-foreground">결정 내용 읽는 법</Link>
       </p>
       <ul className="divide-y divide-line">

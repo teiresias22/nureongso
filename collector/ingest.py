@@ -543,20 +543,63 @@ def research_people(v: str | None) -> list[tuple[str, str]]:
     return [(n.strip(), p.strip()) for n, p in re.findall(r"([^,()]+)\(([^()]+)\)", v or "")]
 
 
+# 칸이 비면('연구책임의원 구성의원') 사이 공백이 하나뿐이라 \s* 로 잇는다.
+ROSTER = re.compile(r"대표의원\s*(.*?)\s*연구책임의원\s*(.*?)\s*구성의원\s*(.*?)\s*구성인원\s*(\d+)명")
+
+
+def research_roster(page_html: str) -> list[tuple[str, str, str]] | None:
+    """국회 홈페이지 연구단체 화면 → [(역할, 이름, 정당)], 구성인원 글자. 못 읽으면 None.
+
+    Open API 는 역할이 바뀌거나 탈퇴해도 옛 이름을 지우지 않고 쌓아 둔다 — 22대 '약자의눈'
+    에서 강득구가 대표·연구책임·구성 셋 다에 있고 인원이 16명인데, 홈페이지는 대표 강득구,
+    구성 10명 등 13명이다(실측, 22대 70곳 중 22곳에서 한 사람이 두 역할 이상). 홈페이지는
+    표본 18곳 모두 명단 수와 구성인원이 맞았다. 그래서 역할은 홈페이지를 따른다.
+    명단 칸이 전부 빈 화면도 있다(22대 '국회 검찰개혁포럼' 등) — 그때는 None.
+    """
+    t = re.sub(r"<script.*?</script>|<style.*?</style>", "", page_html, flags=re.S)
+    t = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", t)))
+    m = ROSTER.search(t)
+    if not m:
+        return None
+    roster = [(role, n, p) for (_, role), grp in zip(RESEARCH_ROLES, m.groups()[:3])
+              for n, p in research_people(grp)]
+    total = int(m.group(4))
+    return roster if len(roster) == total else None
+
+
 def ingest_research(cur, age: int) -> int:
     """의원 연구단체. 대수마다 70개 남짓이라 20~22대를 통째로 바꾼다.
 
-    구성인원('21명 : …')이 대표 + 연구책임 + 구성의원 수와 같다 — 구성의원 목록에 대표와
-    연구책임은 들어 있지 않다(실측). 이름에 정당이 붙어 와서 동명이인은 정당으로 가른다.
+    목록·분야·연구목적은 Open API, 역할과 명단은 단체마다 국회 홈페이지 화면(LINK_URL)에서
+    읽는다(research_roster 참고). 홈페이지를 못 읽은 단체만 API 명단을 쓰되 한 사람은 가장 높은
+    역할 하나로 줄인다. 이름에 정당이 붙어 와서 동명이인은 정당으로 가른다.
     """
-    out, miss = [], []
-    for a in RESEARCH_AGES:
-        people = people_of(cur, a)
-        # 원문에 '&lsquo;', '&middot;' 같은 HTML 문자 참조가 섞여 온다.
-        clean = lambda v: re.sub(r"\s+", " ", html.unescape(v or "")).strip() or None
-        for r in fetch("research", REGDAESU=str(a)):
-            for col, role in RESEARCH_ROLES:
-                for name, party in research_people(r.get(col)):
+    out, miss, fallback = [], [], []
+    rank = {role: i for i, (_, role) in enumerate(RESEARCH_ROLES)}
+    clean = lambda v: re.sub(r"\s+", " ", html.unescape(v or "")).strip() or None
+    with httpx.Client(timeout=60, headers={"User-Agent": "Mozilla/5.0 (nureongso)"}) as c:
+        for a in RESEARCH_AGES:
+            people = people_of(cur, a)
+            for r in fetch("research", REGDAESU=str(a)):
+                roster = None
+                if r.get("LINK_URL"):
+                    try:
+                        roster = research_roster(c.get(r["LINK_URL"]).text)
+                    except httpx.HTTPError:
+                        roster = None
+                    time.sleep(0.3)  # 공개 API 가 아닌 화면이라 천천히
+                cnt = clean(r.get("MEMBER_CNT"))
+                if roster is None:
+                    fallback.append(f"{clean(r.get('RE_NAME'))}({a}대)")
+                    best: dict[str, tuple[str, str]] = {}
+                    for col, role in RESEARCH_ROLES:
+                        for n, p in research_people(r.get(col)):
+                            if n not in best or rank[role] < rank[best[n][0]]:
+                                best[n] = (role, p)
+                    roster = [(role, n, p) for n, (role, p) in best.items()]
+                else:
+                    cnt = f"{len(roster)}명"
+                for role, name, party in roster:
                     # 20대 김성태 둘은 '김성태-지'·'김성태-비' 로 적혀 온다(지역구·비례).
                     base, tag = (name[:-2], name[-1]) if re.search(r"-[지비]$", name) else (name, None)
                     pool = [p for p in people if tag is None or p[6] == (tag == "지")]
@@ -565,11 +608,14 @@ def ingest_research(cur, age: int) -> int:
                         miss.append(f"{name}({a}대)")
                     out.append((a, clean(r.get("RE_NAME")), clean(r.get("RE_TOPIC_NAME")),
                                 clean(r.get("RE_OBJECTIVE")), role, name, party, code,
-                                clean(r.get("MEMBER_CNT")), clean(r.get("LINK_URL"))))
+                                cnt, clean(r.get("LINK_URL"))))
     cur.execute("delete from member_research")
     cur.executemany(
         "insert into member_research (age, group_name, topic, objective, role, name, party,"
         " member_code, member_cnt, link_url) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
+    if fallback:
+        print(f"  ! 홈페이지 명단을 못 읽어 API 명단을 쓴 단체 {len(fallback)}: {', '.join(fallback[:20])}",
+              file=sys.stderr)
     if miss:
         print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:20])}", file=sys.stderr)
     return len(out)

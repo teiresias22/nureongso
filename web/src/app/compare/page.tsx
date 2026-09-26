@@ -53,7 +53,7 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
   const codes = [a, b].filter(Boolean) as string[];
   const [
     { data: members }, { data: stats }, { data: atts }, { data: lines }, { data: assets },
-    { data: jobs }, { data: trips }, { data: groups },
+    { data: jobs }, { data: trips }, { data: groups }, { data: studies },
   ] = codes.length
     ? await Promise.all([
         db.from("member").select("*").in("code", codes),
@@ -66,8 +66,9 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
         db.from("member_sidejob").select("member_code, decision_kind").eq("age", 22).in("member_code", codes),
         db.from("member_trip").select("member_code, funder").eq("age", 22).in("member_code", codes),
         db.from("member_research").select("member_code, role").eq("age", 22).in("member_code", codes),
+        db.from("member_study").select("member_code, kind").eq("age", 22).in("member_code", codes),
       ])
-    : Array.from({ length: 8 }, () => ({ data: [] }));
+    : Array.from({ length: 9 }, () => ({ data: [] }));
   const attBy = new Map(((atts ?? []) as { member_code: string; present: number; days: number }[])
     .map((r) => [r.member_code, r]));
   const lineBy = new Map(((lines ?? []) as { code: string; party_counted: number; against_party: number }[])
@@ -240,6 +241,15 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
                     }),
                   });
                   rows.push({
+                    label: "연구용역 결과보고서",
+                    note: "제22대. 금액은 공개되지 않는다",
+                    cells: cs.map((c) => {
+                      const r = rowsOf(studies as { member_code: string; kind: string | null }[], c);
+                      const poll = r.filter((x) => (x.kind ?? "").includes("여론조사")).length;
+                      return { num: r.length, text: r.length ? `${r.length}건${poll ? ` (여론조사 ${poll})` : ""}` : "없음" };
+                    }),
+                  });
+                  rows.push({
                     label: "순재산",
                     note: "가장 최근 공개(퇴직 신고 제외)",
                     cells: cs.map((c) => {
@@ -284,7 +294,7 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
           </div>
 
           <p className="text-xs text-muted">
-            가결률 분모에는 계류 중인 법안이 포함됩니다. 겸직·국외활동·연구단체는 건수가 많고 적음이
+            가결률 분모에는 계류 중인 법안이 포함됩니다. 겸직·국외활동·연구단체·연구용역은 건수가 많고 적음이
             좋고 나쁨을 뜻하지 않습니다 — 내용은 각 의원 페이지에 원문으로 있습니다. 공약 이행 판정 기준은{" "}
             <Link href="/rules" className="underline underline-offset-2">
               판정 기준

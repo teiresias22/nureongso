@@ -110,3 +110,15 @@ def test_study_people() -> None:
     assert study_people("김현정, 이강일, 한창민 신장식, 강준현 의원") == ["김현정", "이강일", "한창민", "신장식", "강준현"]
     assert study_people("복기왕, 김우영 의원 공동") == ["복기왕", "김우영"]
     assert study_people("이수진 의원(동작)") == ["이수진(동작)"]
+
+
+def test_research_roster() -> None:
+    from ingest import research_roster
+    page = ("<dt>대표의원</dt><dd>강득구(더불어민주당)</dd><dt>연구책임의원</dt><dd></dd>"
+            "<dt>구성의원</dt><dd>김민석(더불어민주당), 신성범(국민의힘)</dd>"
+            "<dt>구성인원</dt><dd>3명 : 더불어민주당 2, 국민의힘 1</dd>")
+    assert research_roster(page) == [("대표", "강득구", "더불어민주당"),
+                                     ("구성", "김민석", "더불어민주당"), ("구성", "신성범", "국민의힘")]
+    # 명단 수와 구성인원이 다르면 믿지 않는다
+    assert research_roster(page.replace("3명", "4명")) is None
+    assert research_roster("<dt>대표의원</dt><dt>연구책임의원</dt><dt>구성의원</dt><dt>구성인원</dt>") is None
