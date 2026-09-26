@@ -51,16 +51,23 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
     .order("name");
 
   const codes = [a, b].filter(Boolean) as string[];
-  const [{ data: members }, { data: stats }, { data: atts }, { data: lines }, { data: assets }] = codes.length
+  const [
+    { data: members }, { data: stats }, { data: atts }, { data: lines }, { data: assets },
+    { data: jobs }, { data: trips }, { data: groups },
+  ] = codes.length
     ? await Promise.all([
         db.from("member").select("*").in("code", codes),
         db.from("member_stats").select("*").in("code", codes),
         db.from("attendance").select("member_code, present, days").eq("age", 22).in("member_code", codes),
         db.from("member_party_line").select("code, party_counted, against_party").in("code", codes),
         db.from("asset_report").select("member_code, total_now_k, notice_date").in("member_code", codes)
-          .order("notice_date", { ascending: false }),
+          .neq("kind", "퇴직").order("notice_date", { ascending: false }),
+        // 겸직·국외활동·연구단체는 22대 것만. 두 사람 합쳐도 수십 줄이다.
+        db.from("member_sidejob").select("member_code, decision_kind").eq("age", 22).in("member_code", codes),
+        db.from("member_trip").select("member_code, funder").eq("age", 22).in("member_code", codes),
+        db.from("member_research").select("member_code, role").eq("age", 22).in("member_code", codes),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+    : Array.from({ length: 8 }, () => ({ data: [] }));
   const attBy = new Map(((atts ?? []) as { member_code: string; present: number; days: number }[])
     .map((r) => [r.member_code, r]));
   const lineBy = new Map(((lines ?? []) as { code: string; party_counted: number; against_party: number }[])
@@ -69,6 +76,9 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
   for (const r of (assets ?? []) as { member_code: string; total_now_k: number; notice_date: string }[]) {
     if (!assetBy.has(r.member_code)) assetBy.set(r.member_code, r); // 최근 것이 먼저 온다
   }
+
+  const rowsOf = <T extends { member_code: string }>(rows: T[] | null, c: string) =>
+    (rows ?? []).filter((r) => r.member_code === c);
 
   const byCode = new Map((members ?? []).map((m) => [m.code, m as Member]));
   const statBy = new Map((stats ?? []).map((s) => [s.code, s as MemberStats]));
@@ -201,8 +211,37 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
                     }
                   }
                   rows.push({
+                    label: "겸직 신고",
+                    note: "제22대. 불가·사직 권고는 따로 센다",
+                    cells: cs.map((c) => {
+                      const r = rowsOf(jobs as { member_code: string; decision_kind: string | null }[], c);
+                      const bad = r.filter((x) => x.decision_kind !== "허용").length;
+                      return { num: r.length, text: r.length ? `${r.length}건${bad ? ` (불가·사직 권고 ${bad})` : ""}` : "없음" };
+                    }),
+                  });
+                  rows.push({
+                    label: "직무상 국외활동",
+                    note: "제22대 신고",
+                    cells: cs.map((c) => {
+                      const r = rowsOf(trips as { member_code: string; funder: string | null }[], c);
+                      // 경비 원문이 '자비', '자부담', 'WUC(국제기구, 자비)' 처럼 제각각이라 '자비·자부담'
+                      // 으로만 적힌 것만 센다. 나머지 표기는 의원 페이지에 원문으로 있다.
+                      const self = r.filter((x) => /^(자비|자부담)$/.test((x.funder ?? "").trim())).length;
+                      return { num: r.length, text: r.length ? `${r.length}건${self ? ` (자비 ${self})` : ""}` : "없음" };
+                    }),
+                  });
+                  rows.push({
+                    label: "연구단체",
+                    note: "제22대 등록",
+                    cells: cs.map((c) => {
+                      const r = rowsOf(groups as { member_code: string; role: string }[], c);
+                      const led = r.filter((x) => x.role !== "구성").length;
+                      return { num: r.length, text: r.length ? `${r.length}곳${led ? ` (대표·연구책임 ${led})` : ""}` : "없음" };
+                    }),
+                  });
+                  rows.push({
                     label: "순재산",
-                    note: "국회공보 최근 신고",
+                    note: "가장 최근 공개(퇴직 신고 제외)",
                     cells: cs.map((c) => {
                       const r = assetBy.get(c);
                       return r
@@ -245,7 +284,8 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
           </div>
 
           <p className="text-xs text-muted">
-            가결률 분모에는 계류 중인 법안이 포함됩니다. 공약 이행 판정 기준은{" "}
+            가결률 분모에는 계류 중인 법안이 포함됩니다. 겸직·국외활동·연구단체는 건수가 많고 적음이
+            좋고 나쁨을 뜻하지 않습니다 — 내용은 각 의원 페이지에 원문으로 있습니다. 공약 이행 판정 기준은{" "}
             <Link href="/rules" className="underline underline-offset-2">
               판정 기준
             </Link>

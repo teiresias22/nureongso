@@ -6,7 +6,7 @@ import {
   db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText, wonK,
   type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Trip,
+  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
 } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -205,6 +205,7 @@ export default async function MemberPage({
     { data: sidejobRows },
     { data: tripRows },
     { data: researchRows },
+    { data: studyRows },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
@@ -247,6 +248,11 @@ export default async function MemberPage({
       .eq("member_code", code)
       .order("age", { ascending: false })
       .order("group_name"),
+    db.from("member_study")
+      .select("id, age, year, quarter, title, kind, requesters")
+      .eq("member_code", code)
+      .order("year", { ascending: false, nullsFirst: false })
+      .order("quarter", { ascending: false, nullsFirst: false }),
   ]);
 
   if (!member) notFound();
@@ -446,6 +452,7 @@ export default async function MemberPage({
   const sidejobs = (sidejobRows ?? []) as Sidejob[];
   const trips = (tripRows ?? []) as Trip[];
   const research = (researchRows ?? []) as Research[];
+  const studies = (studyRows ?? []) as Study[];
   const nav: { id: string; label: string }[] = [];
   if (att || s.vote_total > 0) nav.push({ id: "activity", label: "출결·표결" });
   nav.push({ id: "runs", label: "출마 이력" });
@@ -453,6 +460,7 @@ export default async function MemberPage({
   if (sidejobs.length) nav.push({ id: "sidejob", label: "겸직" });
   if (trips.length) nav.push({ id: "trip", label: "국외활동" });
   if (research.length) nav.push({ id: "research", label: "연구단체" });
+  if (studies.length) nav.push({ id: "study", label: "연구용역" });
   for (const eid of pledgeElections) {
     const isCur = eid === pledgeElections[0];
     for (const { key, title } of PLEDGE_SOURCES) {
@@ -784,6 +792,7 @@ export default async function MemberPage({
       {sidejobs.length > 0 && <SidejobSection rows={sidejobs} />}
       {trips.length > 0 && <TripSection rows={trips} name={m.name} />}
       {research.length > 0 && <ResearchSection rows={research} />}
+      {studies.length > 0 && <StudySection rows={studies} name={m.name} />}
 
       {/* 선거별로 먼저 나눈다. N선 의원의 지난 임기 공약이 이번 임기 공약과 섞이면
           '지난 임기에 약속한 걸 지켰나' 라는 이 서비스의 질문 자체가 성립하지 않는다. */}
@@ -1346,6 +1355,55 @@ function TripSection({ rows, name }: { rows: Trip[]; name: string }) {
           );
         })}
       </ul>
+    </Section>
+  );
+}
+
+const STUDY_SOURCE =
+  "https://open.assembly.go.kr/portal/data/service/selectServicePage.do?infId=O8685D0008489413266&infSeq=1";
+
+/** 소규모 연구용역 결과보고서. 의원실 예산으로 무엇을 연구·조사시켰는지의 목록이다.
+ *  금액은 공개되지 않아 싣지 않는다. 종류별 건수만 늘 보이고 한 건 한 건은 접는다. */
+function StudySection({ rows, name }: { rows: Study[]; name: string }) {
+  const byKind = new Map<string, number>();
+  for (const r of rows) {
+    const k = (r.kind ?? "기타").replace(/\s+/g, "");
+    byKind.set(k, (byKind.get(k) ?? 0) + 1);
+  }
+  return (
+    <Section id="study" title="연구용역 결과보고서" count={rows.length}>
+      <p className="border-b border-line px-4 py-2 text-xs text-muted">
+        의원실 예산으로 발주한 연구·조사의 결과보고서 목록입니다.
+        <b className="text-foreground"> 계약 금액은 공개되지 않습니다.</b> 보고서 원문은{" "}
+        <a href={STUDY_SOURCE} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
+          열린국회정보 ↗
+        </a>
+        에서 받을 수 있습니다.{" "}
+        <Link href="/rules#study" className="underline underline-offset-2 hover:text-foreground">읽는 법</Link>
+      </p>
+      <p className="flex flex-wrap gap-x-4 gap-y-1 px-4 py-3 text-sm">
+        {[...byKind].sort((a, b) => b[1] - a[1]).map(([k, n]) => (
+          <span key={k}>{k} <b className="font-semibold">{n}건</b></span>
+        ))}
+      </p>
+      <MoreDetails label={`보고서 ${rows.length}건 목록 보기`}>
+        <ul className="divide-y divide-line">
+          {rows.map((r) => {
+            const others = (r.requesters ?? "").replace(/의원|공동/g, "").split(/[,\s]+/)
+              .filter((v) => v && !v.startsWith(name));
+            return (
+              <li key={r.id} className="px-4 py-2 text-sm">
+                <span className="block leading-6">{r.title}</span>
+                <span className="block text-xs text-muted">
+                  제{r.age}대{r.year ? ` · ${r.year}년` : ""}{r.quarter ? ` ${r.quarter}분기` : ""}
+                  {r.kind ? ` · ${r.kind}` : ""}
+                  {others.length > 0 && ` · 공동 발주: ${others.join(", ")}`}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </MoreDetails>
     </Section>
   );
 }

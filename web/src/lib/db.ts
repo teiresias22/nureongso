@@ -376,6 +376,17 @@ export type Research = {
   link_url: string | null;
 };
 
+/** 소규모 연구용역 결과보고서. 금액은 공개되지 않는다. requesters 는 함께 발주한 의원 원문. */
+export type Study = {
+  id: number;
+  age: number;
+  year: number | null;
+  quarter: number | null;
+  title: string;
+  kind: string | null;
+  requesters: string | null;
+};
+
 export type Sidejob = {
   id: number;
   age: number;

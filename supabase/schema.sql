@@ -407,6 +407,23 @@ create table if not exists member_research (
 );
 create index if not exists member_research_member_idx on member_research (member_code);
 
+-- 국회의원 소규모 연구용역 결과보고서. 의원실 예산으로 발주한 연구·
+-- 여론조사의 결과물 목록이다. **금액은 공개되지 않는다.** 여러 의원이 함께 발주하면 한 줄에
+-- 이름이 여럿('김용민, 김영호 의원') 와서 사람마다 편다. requesters 는 원문 그대로.
+create table if not exists member_study (
+  id           bigserial primary key,
+  age          int  not null,
+  year         int,
+  quarter      int,
+  title        text not null,
+  kind         text,                             -- 정책연구 | 여론조사 | 입법연구 | 번역 …
+  requesters   text,
+  name         text not null,
+  member_code  text references member(code) on delete set null,
+  file_id      bigint
+);
+create index if not exists member_study_member_idx on member_study (member_code);
+
 -- 수집 로그
 create table if not exists ingest_run (
   id         bigserial primary key,
@@ -739,11 +756,12 @@ alter table attendance enable row level security;
 alter table member_sidejob enable row level security;
 alter table member_trip enable row level security;
 alter table member_research enable row level security;
+alter table member_study enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip','member_research']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip','member_research','member_study']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

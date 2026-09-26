@@ -11,6 +11,7 @@
     python ingest.py attendance --age 22 # 본회의 출결 누적 (최신 회기 엑셀 하나)
     python ingest.py trips              # 직무상 국외활동 신고 (21대~, 통째로 교체)
     python ingest.py research           # 의원 연구단체 (20~22대, 통째로 교체)
+    python ingest.py studies            # 소규모 연구용역 결과보고서 (20~22대, 통째로 교체)
     python ingest.py refresh            # member_stats 갱신
     python ingest.py all --age 22
 
@@ -46,6 +47,7 @@ SERVICES = {
     # 목록(OPENSRVAPI)의 SRV_URL 은 설명 화면 주소다. 호출 이름은 명세서 xls 에만 있다.
     "sidejob": "nahfbzwvatmaxscwq",  # 국회의원 겸직 결정 내역 (OHAC6C000892WC13765)
     "trips": "nasnutdbapnfphwyr",  # 국회의원 직무상 국외활동 신고 내역 (O87UNV000897E818234)
+    "studies": "nfvmtaqoaldzhobsw",  # 국회의원 소규모 연구용역 결과보고서 (O8685D0008489413266, UNIT_CD 필수)
     "research": "numwhtqhavaqssfle",  # 국회의원 연구단체 등록현황 (O78HKE0010099W15881, REGDAESU 필수)
 }
 
@@ -573,6 +575,54 @@ def ingest_research(cur, age: int) -> int:
     return len(out)
 
 
+# --------------------------------------------------------------------------- 연구용역
+
+STUDY_AGES = (20, 21, 22)
+
+
+def study_people(v: str | None) -> list[str]:
+    """발주 의원 칸 → 이름들. 실측으로 본 모양:
+    '홍석준 의원', '이혜훈의원', '박주민 의원, 맹성규 의원', '박주민,남인순,이해식 의원',
+    '김현정, 이강일, 한창민 신장식, 강준현 의원'(쉼표 빠짐), '… 의원 공동', '이수진 의원(동작)'.
+    괄호는 이름에 붙여 동명이인 단서로 넘긴다('이수진(동작)', '김병욱(국민의힘)').
+    '의언' 은 원문 오타다(20대 네 줄)."""
+    s = re.sub(r"의원|의언|공동", " ", v or "")
+    return [n + (h or "") for n, h in re.findall(r"([가-힣]{2,4})\s*(\([^)]*\))?", s)]
+
+
+def ingest_studies(cur, age: int) -> int:
+    """소규모 연구용역 결과보고서 목록. 20~22대 2천 건 남짓이라 통째로 바꾼다.
+
+    의원실 예산으로 발주한 연구의 결과물 목록일 뿐 금액은 없다. 연도 칸에 '20109' 같은
+    오타가 있어 4자리가 아니면 비운다. 분기는 '4분기' 와 '4' 가 섞여 온다.
+    """
+    out, miss = [], []
+    clean = lambda v: re.sub(r"\s+", " ", html.unescape(v or "")).strip() or None
+    for a in STUDY_AGES:
+        people = people_of(cur, a)
+        for r in fetch("studies", UNIT_CD=f"1000{a}"):
+            names = study_people(r.get("ASBLM_NM"))
+            year = r.get("YEAR") or ""
+            q = re.sub(r"\D", "", r.get("QUARTER") or "")
+            for name in names:
+                # 괄호가 정당이면('김병욱(국민의힘)') 지역 단서가 아니라 정당으로 넘긴다.
+                m = re.match(r"^(.+)\((.*(?:당|국민의힘))\)$", name)
+                code = (match_person(people, m.group(1), m.group(2)) if m
+                        else match_person(people, name))
+                if not code:
+                    miss.append(f"{name}({a}대)")
+                out.append((a, int(year) if re.fullmatch(r"\d{4}", year) else None, int(q) if q else None,
+                            clean(r.get("RPT_TITLE")), clean(r.get("DIV_NM")), clean(r.get("ASBLM_NM")),
+                            name, code, r.get("FILE_ID")))
+    cur.execute("delete from member_study")
+    cur.executemany(
+        "insert into member_study (age, year, quarter, title, kind, requesters, name, member_code, file_id)"
+        " values (%s,%s,%s,%s,%s,%s,%s,%s,%s)", [o for o in out if o[3]])
+    if miss:
+        print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:30])}", file=sys.stderr)
+    return len(out)
+
+
 # --------------------------------------------------------------------------- 출결
 
 # 본회의 출결은 Open API 가 없다. 열린국회정보 '파일 데이터' 로 회기마다 엑셀 하나가
@@ -748,6 +798,7 @@ STEPS = {
     "attendance": lambda cur, age: ingest_attendance(cur, age),
     "trips": lambda cur, age: ingest_trips(cur, age),
     "research": lambda cur, age: ingest_research(cur, age),
+    "studies": lambda cur, age: ingest_studies(cur, age),
 }
 
 

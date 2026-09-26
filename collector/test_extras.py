@@ -101,3 +101,12 @@ def test_research_people() -> None:
     assert research_people("김성태-지(자유한국당), 이준석(개혁신당)") == [
         ("김성태-지", "자유한국당"), ("이준석", "개혁신당")]
     assert research_people(None) == []
+
+
+def test_study_people() -> None:
+    from ingest import study_people
+    assert study_people("이혜훈의원") == ["이혜훈"]
+    assert study_people("박주민,남인순,이해식 의원") == ["박주민", "남인순", "이해식"]
+    assert study_people("김현정, 이강일, 한창민 신장식, 강준현 의원") == ["김현정", "이강일", "한창민", "신장식", "강준현"]
+    assert study_people("복기왕, 김우영 의원 공동") == ["복기왕", "김우영"]
+    assert study_people("이수진 의원(동작)") == ["이수진(동작)"]
