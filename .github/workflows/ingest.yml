@@ -52,7 +52,7 @@ jobs:
           with psycopg.connect(os.environ["DATABASE_URL"]) as c, c.cursor() as cur:
               cur.execute("""select source, rows, error,
                                     to_char(started_at at time zone 'Asia/Seoul','MM-DD HH24:MI')
-                             from ingest_run order by id desc limit 6""")
+                             from ingest_run order by id desc limit 12""")
               print("| 단계 | 건수 | 시각 | 오류 |")
               print("|---|---|---|---|")
               for s, n, e, t in cur.fetchall():

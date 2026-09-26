@@ -40,6 +40,7 @@ const FOOTER_COLS: { title: string; links: { href: string; label: string; ext?: 
       { href: "https://open.assembly.go.kr", label: "열린국회정보", ext: true },
       { href: "https://www.data.go.kr", label: "중앙선거관리위원회 공공데이터", ext: true },
       { href: "https://www.assembly.go.kr", label: "국회공보 (재산공개)", ext: true },
+      { href: "https://gwanbo.go.kr", label: "전자관보 (단체장 재산공개)", ext: true },
       { href: "https://www.law.go.kr", label: "국가법령정보센터 (조례)", ext: true },
       { href: "https://www.g2b.go.kr", label: "조달청 나라장터 (발주)", ext: true },
     ],
@@ -52,7 +53,7 @@ const OPERATOR = [
 
 const TITLE = "누렁소검은소 — 선출직 공약·의정활동 기록";
 const DESC =
-  "국회의원·시도지사·교육감이 무슨 공약을 했고 얼마나 지켰는지, 어떤 활동을 했는지 한눈에.";
+  "국회의원·시도지사·구청장·교육감이 무슨 공약을 했고 얼마나 지켰는지, 출석·표결·재산·겸직 같은 공개 기록과 함께 한눈에.";
 
 export const metadata: Metadata = {
   // 없으면 og:image 가 상대 경로로 나가 카카오톡·트위터에서 썸네일이 안 뜬다.

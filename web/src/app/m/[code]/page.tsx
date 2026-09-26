@@ -138,9 +138,11 @@ export async function generateMetadata(
   { params }: { params: Promise<{ code: string }> },
 ): Promise<Metadata> {
   const { code } = await params;
-  const [{ data: member }, { data: stats }] = await Promise.all([
+  const [{ data: member }, { data: stats }, { data: rec }] = await Promise.all([
     db.from("member").select("name, office, party, district").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
+    // 현직만 있다(member_record). 역대 인물은 비어 있어 수치를 빼고 쓴다.
+    db.from("member_record").select("present, days, net_k").eq("code", code).maybeSingle(),
   ]);
   if (!member) return { title: "찾을 수 없는 사람" };
 
@@ -156,10 +158,13 @@ export async function generateMetadata(
     facts.push(`대표발의 ${s!.rep_count}건(가결 ${s!.rep_passed})`, `공동발의 ${s!.co_count}건`);
   }
   if (hasPledges(s)) facts.push(`공약 ${s!.pledge_count}건`);
+  const r = rec as { present: number | null; days: number | null; net_k: number | null } | null;
+  if (r?.days) facts.push(`본회의 출석 ${pct(r.present ?? 0, r.days)}%`);
+  if (r?.net_k != null) facts.push(`순재산 ${(r.net_k / 100000).toFixed(1)}억`);
 
   const title = `${m.name} · ${who}`;
   const description = facts.length
-    ? `${title}. ${facts.join(" · ")}. 공약과 의정활동 기록을 원문 출처와 함께 봅니다.`
+    ? `${title}. ${facts.join(" · ")}. 공약·의정활동·재산 등 공개 기록을 원문 출처와 함께 봅니다.`
     : `${title}. 공약과 활동 기록을 원문 출처와 함께 봅니다.`;
 
   return {
