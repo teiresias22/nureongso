@@ -9,7 +9,9 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
       // 필터·페이지 조합은 내용이 같다. canonical 로도 정리되지만 크롤링 예산부터 아낀다.
-      disallow: ["/*?*repPage=", "/*?*coPage=", "/*?*from="],
+      // 의원 페이지는 물음표 붙은 주소를 다 막는다 — 법안 필터·연도·발주 연도·쪽 번호의
+      // 조합이 사람당 수십 개라, 크롤러가 그걸 다 열자 DB 가 멈췄다(2026-09-27).
+      disallow: ["/m/*?*", "/*?*repPage=", "/*?*coPage=", "/*?*from="],
     },
     sitemap: `${SITE}/sitemap.xml`,
     host: SITE,
