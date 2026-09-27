@@ -137,7 +137,10 @@ def run_fetch(conn, years: list[int]) -> None:
             " (id, fiscal_year, ministry, name, field, program, amount)"
             " values (%s,%s,%s,%s,%s,%s,%s)"
             " on conflict (id) do update set amount = excluded.amount,"
-            "   field = excluded.field, program = excluded.program", rows_)
+            "   field = excluded.field, program = excluded.program"
+            # 같은 값이면 다시 쓰지 않는다(ingest.upsert 주석 참고 — Disk IO Budget)
+            " where (fiscal_program.amount, fiscal_program.field, fiscal_program.program)"
+            "   is distinct from (excluded.amount, excluded.field, excluded.program)", rows_)
         cur.execute("insert into ingest_run (source, finished_at, rows)"
                     " values ('fiscal', now(), %s)", (len(rows_),))
     conn.commit()

@@ -109,18 +109,42 @@ def fetch(service: str, max_rows: int | None = None, **params) -> list[dict]:
     return out
 
 
-def upsert(cur, table: str, cols: list[str], rows: list[tuple], conflict: str, update: bool = True):
+def upsert(cur, table: str, cols: list[str], rows: list[tuple], conflict: str, update: bool = True,
+           returning: str | None = None) -> set:
+    """값이 실제로 바뀐 행만 고쳐 쓴다.
+
+    예전에는 `do update set ...` 에 조건이 없어서 같은 값이어도 매번 행을 새로 썼다.
+    Postgres 는 update 마다 새 행 버전을 만들고 WAL 을 남기므로, 매일 법안 1.9만 행 · 표결 ·
+    예산 · 발주를 통째로 다시 쓰는 셈이었다. 2026-09-27 Supabase Disk IO Budget 이 바닥나
+    API 가 멈췄을 때 pg_stat_statements 쓰기 1위가 이 upsert 들이었다(bill 만 WAL ~360MB).
+
+    returning 을 주면 새로 들어가거나 실제로 바뀐 행의 그 컬럼 값을 모아 돌려준다
+    (바뀌지 않아 건너뛴 행은 returning 에 나오지 않는다).
+    """
     if not rows:
-        return
+        return set()
     ph = ",".join(["%s"] * len(cols))
     collist = ",".join(cols)
+    keys = conflict.split(",")
     if update:
-        sets = ",".join(f"{c}=excluded.{c}" for c in cols if c not in conflict.split(","))
-        action = f"do update set {sets}" if sets else "do nothing"
+        vals = [c for c in cols if c not in keys]
+        sets = ",".join(f"{c}=excluded.{c}" for c in vals)
+        cond = (f" where ({','.join('t.' + c for c in vals)})"
+                f" is distinct from ({','.join('excluded.' + c for c in vals)})")
+        action = f"do update set {sets}{cond}" if sets else "do nothing"
     else:
         action = "do nothing"
-    sql = f"insert into {table} ({collist}) values ({ph}) on conflict ({conflict}) {action}"
-    cur.executemany(sql, rows)
+    sql = f"insert into {table} as t ({collist}) values ({ph}) on conflict ({conflict}) {action}"
+    if not returning:
+        cur.executemany(sql, rows)
+        return set()
+    cur.executemany(sql + f" returning {returning}", rows, returning=True)
+    out = set()
+    while True:
+        out.update(r[0] for r in cur.fetchall())
+        if not cur.nextset():
+            break
+    return out
 
 
 def d(v):
@@ -237,17 +261,26 @@ def ingest_bills(cur, age: int) -> int:
                 if code.strip():
                     sponsors.append((bid, code.strip(), "co"))
 
-    upsert(
+    changed = upsert(
         cur, "bill",
         ["bill_id", "age", "bill_no", "name", "committee", "proposed_at",
          "proc_result", "proc_dt", "proposer", "detail_link"],
-        bills, "bill_id",
+        bills, "bill_id", returning="bill_id",
     )
+    # 발의자 명단은 법안이 접수될 때 정해지고 바뀌지 않는다. 예전에는 매일 25만 행을 전부 다시
+    # 넣어 봤다(이미 있으니 대부분 건너뛰지만 한 행씩 유니크 인덱스를 뒤진다). 이제 새로 들어오거나
+    # 바뀐 법안, 그리고 발의자가 한 명도 없는 법안(중간에 끊긴 수집을 메우려고)만 넣는다.
+    cur.execute(
+        "select b.bill_id from bill b where b.age = %s"
+        " and not exists (select 1 from bill_sponsor s where s.bill_id = b.bill_id)",
+        (age,),
+    )
+    need = changed | {r[0] for r in cur.fetchall()}
     # 대표발의자가 공동발의 명단에도 들어간 경우 중복 제거
-    sponsors = list(dict.fromkeys(sponsors))
+    sponsors = [s for s in dict.fromkeys(sponsors) if s[0] in need]
     upsert(cur, "bill_sponsor", ["bill_id", "member_code", "role"],
            sponsors, "bill_id,member_code,role", update=False)
-    print(f"  bills={len(bills)} sponsors={len(sponsors)}", file=sys.stderr)
+    print(f"  bills={len(bills)} (새로·바뀜 {len(changed)}) sponsors={len(sponsors)}", file=sys.stderr)
     return len(bills)
 
 

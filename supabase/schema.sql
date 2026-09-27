@@ -244,6 +244,20 @@ create table if not exists bid_notice (
 create index if not exists bid_notice_org_idx on bid_notice (org);
 create index if not exists bid_notice_name_trgm on bid_notice using gin (name gin_trgm_ops);
 
+-- 같은 공사의 첫 공고만 남긴 표. 아래 bid_notice_uniq·member_district_bid 가 여기서 읽는다.
+-- 예전에는 두 뷰가 요청마다 공고 2.8만 건 전체를 distinct on 으로 정렬했다(인물 페이지를 열 때마다,
+-- 정렬이 메모리를 넘쳐 임시 파일까지 썼다). 2026-09-27 Disk IO Budget 이 바닥났을 때 원인 중 하나.
+-- 공고는 bid.py 만 바꾸므로 그 수집이 끝날 때 refresh 한다(bid.refresh_first).
+create materialized view if not exists bid_notice_first as
+select distinct on (org, name, budget)
+       id, name, org, budget, notice_at, region, url
+from bid_notice
+order by org, name, budget, notice_at;
+create unique index if not exists bid_notice_first_id on bid_notice_first (id);   -- refresh concurrently 에 필요
+create index if not exists bid_notice_first_org on bid_notice_first (org, notice_at);
+create index if not exists bid_notice_first_region on bid_notice_first (region, notice_at);
+grant select on bid_notice_first to anon, authenticated;
+
 -- 국회의원 지역구 → 공사현장 지역. bid.py link 가 채운다.
 --
 -- 지역구는 시군구보다 작거나(강남구갑/을/병) 여러 시군구를 묶는다(춘천시철원군
@@ -268,10 +282,7 @@ create or replace view member_district_bid
 with (security_invoker = true) as
 select s.member_code, b.id, b.name, b.org, b.budget, b.notice_at, b.region, b.url
 from member_sigungu s
-join (
-  select distinct on (org, name, budget) *
-  from bid_notice order by org, name, budget, notice_at
-) b on b.region = s.region;
+join bid_notice_first b on b.region = s.region;
 grant select on member_district_bid to anon, authenticated;
 
 -- 국회의원 재산공개. asset.py 가 국회공보 재산공개 호(號) PDF 에서 뽑는다.
@@ -749,10 +760,8 @@ create index if not exists pledge_overlap_b_idx on pledge_overlap (b);
 -- 지역구를 기관명으로 옮기는 과정이 필요 없다 — 기관명으로 바로 찾으면 된다.
 create or replace view bid_notice_uniq
 with (security_invoker = true) as
-select distinct on (org, name, budget)
-       id, name, org, budget, notice_at, region, url
-from bid_notice
-order by org, name, budget, notice_at;
+select id, name, org, budget, notice_at, region, url
+from bid_notice_first;
 
 -- 공개 읽기 전용
 alter table member enable row level security;

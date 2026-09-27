@@ -265,8 +265,24 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
         cur.execute("insert into ingest_run (source, finished_at, rows)"
                     " values ('bid', now(), %s)", (kept,))
         conn.commit()
+        refresh_first(conn)
     print(f"[bid] 전국 {seen:,}건 훑어 {kept:,}건 보관", file=sys.stderr)
     return kept
+
+
+def refresh_first(conn) -> None:
+    """bid_notice_first(같은 공사의 첫 공고만 남긴 표)를 다시 만든다.
+
+    예전에는 인물 페이지를 열 때마다 bid_notice_uniq·member_district_bid 뷰가 공고 2.8만 건
+    전체를 distinct on 으로 정렬했다(정렬이 메모리를 넘쳐 임시 파일까지 썼다). 공고는 이 수집기만
+    바꾸므로 여기서 한 번 계산해 두면 된다. 마이그레이션 전이라 표가 없으면 건너뛴다.
+    """
+    with conn.cursor() as cur:
+        cur.execute("select to_regclass('public.bid_notice_first')")
+        if cur.fetchone()[0] is None:
+            return
+        cur.execute("refresh materialized view concurrently bid_notice_first")
+    conn.commit()
 
 
 def main():
