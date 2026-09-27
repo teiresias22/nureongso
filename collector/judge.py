@@ -201,7 +201,9 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             if ks:
                 pairs.append((sorted(ks), it["id"]))
         with conn.cursor() as cur:
-            cur.executemany("update pledge set kinds = %s where id = %s", pairs)
+            # 분류가 그대로면 다시 쓰지 않는다(행을 새로 쓰면 WAL·디스크 쓰기가 난다)
+            cur.executemany("update pledge set kinds = %s where id = %s and kinds is distinct from %s",
+                            [(k, i, k) for k, i in pairs])
             # 이 사람의 '대조 끝났음' 기록을 지운다.
             #
             # match 단계들은 ingest_run 에 기록이 있으면 건너뛴다. classify 가 그
@@ -1036,6 +1038,9 @@ on conflict (pledge_id) do update set
   note = excluded.note, updated_at = now()
 -- 사람이 확정한 판정은 절대 덮지 않는다.
 where pledge_status.decided_by = 'auto'
+-- 판정이 그대로면 다시 쓰지 않는다. updated_at 도 '판정이 바뀐 때' 로 남는다.
+  and (pledge_status.status, pledge_status.confidence, pledge_status.note)
+      is distinct from (excluded.status, excluded.confidence, excluded.note)
 """
 
 

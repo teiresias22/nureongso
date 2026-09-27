@@ -73,6 +73,21 @@ web/         Next.js (App Router) 프론트, Vercel 배포
 실행이 **취소된다**(실측: trips·research·studies 를 연달아 넣자 뒤의 둘이 선관위 수집에 밀려 취소).
 여러 단계를 돌릴 때는 하나가 끝난 뒤 다음을 넣는다. 정기 실행은 시각이 떨어져 있어 겹치지 않는다.
 
+## 디스크 IO — 같은 값을 다시 쓰지 않는다
+
+2026-09-27 Supabase **Disk IO Budget** 이 바닥나 디스크가 기본 속도(5MB/s)로 묶였고, 같은 서버에서
+도는 REST API·인증이 멈춰 사이트 목록·통계·인물 페이지가 응답하지 않았다(DB 자체는 쿼리 0건, 잠금 0건).
+`pg_stat_statements` 로 본 원인과 지킬 것:
+
+- **upsert 는 값이 바뀐 행만 고친다.** 조건 없는 `on conflict do update` 는 같은 값이어도 새 행 버전을
+  쓰고 WAL 을 남긴다. 매일 법안·표결·예산·발주를 통째로 다시 쓰던 것이 쓰기 IO 1위였다(bill 만 WAL
+  약 360MB, budget_biz 합계 약 550MB). `ingest.upsert` 가 `where (...) is distinct from excluded(...)` 를
+  붙인다 — 직접 SQL 을 쓰는 곳도 같은 조건을 단다(fiscal·judge).
+- **발의자 명단은 새로·바뀐 법안만 넣는다.** 25만 행을 매일 다시 넣어 보지 않는다.
+- **요청마다 큰 표를 정렬하지 않는다.** 공고 중복 제거는 `bid_notice_first`(머티리얼라이즈드 뷰)에
+  미리 해 두고 `bid.py fetch` 끝에 refresh 한다.
+- **OFFSET 으로 끝까지 훑지 않는다.** 사이트맵은 기본키 기준으로 이어 읽는다(keyset).
+
 ## 시작하기
 
 1. Supabase 프로젝트 생성 → SQL Editor 에 `supabase/schema.sql` 실행
