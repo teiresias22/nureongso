@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { REPORT_URL } from "@/lib/site";
+import { Showreel } from "./Showreel";
 
 export const metadata = {
   title: "프로젝트 소개",
@@ -35,6 +36,8 @@ export default function AboutPage() {
           <p className="mt-1 text-sm text-muted">선출직이 실제로 한 일</p>
         </div>
       </header>
+
+      <Showreel />
 
       <Section title="이름의 유래 — 귓속말로 묻는 이유">
         <p>
