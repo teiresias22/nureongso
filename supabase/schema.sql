@@ -435,6 +435,22 @@ create table if not exists member_study (
 );
 create index if not exists member_study_member_idx on member_study (member_code);
 
+-- 국회의원 보좌진(보좌관·비서관·비서). 현역 의원 인적사항 API 는 지금의 명단만 주므로
+-- ingest.py staff 가 매일 받아 바뀐 것만 적는다. 한 줄이 '그 자리에 있던 한 기간' 이다.
+-- joined_on·left_on 은 명단에 처음·마지막으로 보인 날이고 실제 임용·면직일이 아니다.
+-- joined_on 이 비었으면 수집을 시작하기 전부터 있던 사람이다.
+create table if not exists member_staff (
+  id           bigserial primary key,
+  member_code  text not null references member(code) on delete cascade,
+  role         text not null,                    -- 보좌관 | 비서관 | 비서
+  name         text not null,
+  joined_on    date,
+  left_on      date
+);
+create unique index if not exists member_staff_open_uniq
+  on member_staff (member_code, role, name) where left_on is null;
+create index if not exists member_staff_member_idx on member_staff (member_code);
+
 -- 수집 로그
 create table if not exists ingest_run (
   id         bigserial primary key,
@@ -785,11 +801,12 @@ alter table member_sidejob enable row level security;
 alter table member_trip enable row level security;
 alter table member_research enable row level security;
 alter table member_study enable row level security;
+alter table member_staff enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip','member_research','member_study']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip','member_research','member_study','member_staff']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);

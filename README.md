@@ -110,10 +110,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 dotenvx run -- .venv/bin/python ingest.py all --age 22
 ```
 
-`members` → `bills` → `plenary` → `votes` → `summaries` → `sidejobs` → `attendance` → `trips` →
+`members` → `staff` → `bills` → `plenary` → `votes` → `summaries` → `sidejobs` → `attendance` → `trips` →
 `research` → `studies` 순으로 돈다(`python ingest.py <단계>` 로 하나만도 된다). votes 는 의안 1건당
 1회 호출이라 22대 기준 약 1,800회, 20~30분 걸린다. 중단해도 이미 받은 의안은 건너뛴다.
 한 단계가 실패해도 나머지는 계속 돌고, 실패는 `ingest_run` 에 남는다.
+`staff` 는 보좌진 명단을 받아 어제와 달라진 것만 `member_staff` 에 적는다(API 가 지금 명단만 준다).
 
 재산은 따로 돈다: `asset.py fetch`(국회공보), `gwanbo.py fetch`(관보). 둘 다 받은 호·절은 건너뛴다.
 

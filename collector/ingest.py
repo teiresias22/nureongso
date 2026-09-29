@@ -234,6 +234,67 @@ def ingest_members(cur) -> int:
     return len(rows)
 
 
+# --------------------------------------------------------------------------- 보좌진
+
+# 현역 의원 인적사항의 보좌진 칸. 이름을 ', ' 로 이어서 준다.
+STAFF_ROLES = {"STAFF": "보좌관", "SECRETARY": "비서관", "SECRETARY2": "비서"}
+
+
+def staff_names(raw: str | None) -> list[str]:
+    """'홍길동, 김철수' → ['홍길동', '김철수']. 한 칸 안의 같은 이름은 하나로 친다."""
+    # ponytail: 한 의원실에 동명이인 둘이면 한 사람으로 센다(2026-09-29 실측 299명 중 1곳).
+    # 이름 말고 가를 값이 API 에 없다.
+    return list(dict.fromkeys(n.strip() for n in (raw or "").split(",") if n.strip()))
+
+
+def ingest_staff(cur) -> int:
+    """보좌진 명단의 변화만 적는다.
+
+    API 는 지금 이 순간의 명단만 준다. 매일 받아 어제와 비교해서, 새로 보이면 한 줄을
+    열고(joined_on), 안 보이면 그 줄을 닫는다(left_on). 바뀐 게 없으면 아무것도 쓰지
+    않는다 — 날마다 2,600줄을 덮어쓰면 디스크 IO 한도를 또 먹는다(2026-09-27).
+
+    날짜는 **명단에 처음·마지막으로 보인 날**이지 실제 임용·면직일이 아니다. 첫 수집 때
+    이미 있던 사람은 언제 왔는지 모르므로 joined_on 을 비운다.
+    """
+    inc = fetch("incumbent")
+    now = {
+        (d(r.get("MONA_CD")), role, name)
+        for r in inc if r.get("MONA_CD")
+        for field, role in STAFF_ROLES.items()
+        for name in staff_names(r.get(field))
+    }
+    # 평소 2,600명 남짓(2026-09-29 2,628명). API 가 반쯤 비어서 오면 멀쩡한 사람을 다 '떠났다' 고 적게 된다.
+    if len(now) < 1500:
+        print(f"  보좌진 {len(now)}명뿐이라 건너뜁니다 (평소 2,600명대)", file=sys.stderr)
+        return 0
+
+    cur.execute("create temp table staff_now (member_code text, role text, name text)")
+    cur.executemany("insert into staff_now values (%s,%s,%s)", sorted(now))
+    cur.execute("select exists (select 1 from member_staff)")
+    first = not cur.fetchone()[0]
+    today = "(now() at time zone 'Asia/Seoul')::date"   # 워크플로는 UTC 19시에 돈다
+
+    cur.execute(f"""
+        update member_staff s set left_on = {today}
+        where s.left_on is null
+          and not exists (select 1 from staff_now n
+                          where (n.member_code, n.role, n.name) = (s.member_code, s.role, s.name))""")
+    left = cur.rowcount
+    cur.execute(f"""
+        insert into member_staff (member_code, role, name, joined_on)
+        select n.member_code, n.role, n.name, {"null" if first else today}
+        from staff_now n
+        join member m on m.code = n.member_code
+        where not exists (select 1 from member_staff s
+                          where s.left_on is null
+                            and (s.member_code, s.role, s.name) = (n.member_code, n.role, n.name))""")
+    joined = cur.rowcount
+    cur.execute("drop table staff_now")
+    print(f"  보좌진 {len(now):,}명 · 새로 {joined:,} · 빠짐 {left:,}", file=sys.stderr)
+    return joined + left
+
+
 # --------------------------------------------------------------------------- 법안
 
 
@@ -867,6 +928,7 @@ def ingest_attendance(cur, age: int) -> int:
 
 STEPS = {
     "members": lambda cur, age: ingest_members(cur),
+    "staff": lambda cur, age: ingest_staff(cur),
     "bills": lambda cur, age: ingest_bills(cur, age),
     "plenary": lambda cur, age: ingest_plenary(cur, age),
     "votes": lambda cur, age: ingest_votes(cur, age),
