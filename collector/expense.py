@@ -145,6 +145,107 @@ def hwpx_rows(data: bytes) -> list[list[str]]:
     return out
 
 
+def hwp_tables(data: bytes) -> list[tuple[str, list[list[str]]]]:
+    """한글(hwp 5.x, 바이너리) 문서의 표를 (표 바로 앞 본문 글, [행][칸]) 목록으로. 충남도가
+    업무추진비를 이 형식으로만 올린다. 표준 라이브러리만 쓴다.
+
+    hwp 는 OLE 복합 문서(CFB) 안에 BodyText/SectionN 스트림이 있고, 스트림은 deflate 로 눌린
+    레코드 줄이다. 표(태그 77) 다음에 칸마다 목록 머리(72)가 오고 거기 칸 주소(열@8·행@10)가
+    있다. 칸 안 문단 글(67)은 그 칸 밑(레벨이 더 깊은) 레코드로 따라온다.
+    ponytail: 표 안의 표(중첩)는 바깥 칸 글에 섞인다. 업무추진비 표에는 없다.
+    """
+    import struct
+    import zlib
+    u16 = lambda b, o: struct.unpack_from("<H", b, o)[0]
+    u32 = lambda b, o: struct.unpack_from("<I", b, o)[0]
+    ss, mss = 1 << u16(data, 30), 1 << u16(data, 32)
+    nfat, dir0, _, cutoff, minifat0, nmini, dif0, _ = struct.unpack_from("<8I", data, 44)
+    difat, sec = list(struct.unpack_from("<109I", data, 76)), dif0
+    while sec < 0xFFFFFFFA:
+        blk = struct.unpack_from(f"<{ss // 4}I", data, 512 + sec * ss)
+        difat += blk[:-1]
+        sec = blk[-1]
+    fat: list[int] = []
+    for sec in difat[:nfat]:
+        fat += struct.unpack_from(f"<{ss // 4}I", data, 512 + sec * ss)
+
+    def chain(start, table):
+        while start < 0xFFFFFFFA:
+            yield start
+            start = table[start]
+
+    big = lambda start: b"".join(data[512 + x * ss:512 + (x + 1) * ss] for x in chain(start, fat))
+    dirs = big(dir0)
+    ents = {}
+    for i in range(0, len(dirs), 128):
+        e = dirs[i:i + 128]
+        name = e[:max(u16(e, 64) - 2, 0)].decode("utf-16le", "ignore")
+        ents.setdefault(name, (u32(e, 116), u32(e, 120)))
+    mini = big(ents["Root Entry"][0])
+    mf = big(minifat0) if nmini else b""
+    mfat = list(struct.unpack(f"<{len(mf) // 4}I", mf))
+
+    def stream(name):
+        st, sz = ents[name]
+        raw = b"".join(mini[x * mss:(x + 1) * mss] for x in chain(st, mfat)) if sz < cutoff else big(st)
+        return raw[:sz]
+
+    packed = u32(stream("FileHeader"), 36) & 1
+
+    def para(b):                                     # 문단 글: UTF-16, 제어 문자는 건너뛴다
+        out, j = bytearray(), 0
+        while j + 1 < len(b):
+            ch = u16(b, j)
+            if ch < 32 and ch not in (0, 10, 13) and not 24 <= ch <= 31:
+                j += 16                              # 확장·인라인 제어는 8글자 폭
+                continue
+            if ch >= 32:
+                out += b[j:j + 2]
+            elif ch == 10:
+                out += " ".encode("utf-16le")
+            j += 2
+        return out.decode("utf-16le", "ignore")
+
+    tables: list[tuple[str, list[list[str]]]] = []
+    for n in sorted((k for k in ents if re.fullmatch(r"Section\d+", k)), key=lambda k: int(k[7:])):
+        b = stream(n)
+        b = zlib.decompress(b, -15) if packed else b
+        before, cur, cell, tlvl = "", None, None, None
+        i = 0
+        while i < len(b):
+            h = u32(b, i)
+            tag, lvl, ln = h & 0x3FF, (h >> 10) & 0x3FF, h >> 20
+            i += 4
+            if ln == 0xFFF:
+                ln = u32(b, i)
+                i += 4
+            body = b[i:i + ln]
+            i += ln
+            if cur is not None and lvl < tlvl:        # 표에서 빠져나왔다
+                tables.append(cur)
+                cur, cell = None, None
+            if tag == 77 and cur is None:              # 표
+                cur, tlvl = (before[-200:], {}), lvl
+            elif tag == 72 and cur is not None and lvl == tlvl:   # 칸 머리
+                cell = (u16(body, 10), u16(body, 8))
+                cur[1][cell] = ""
+            elif tag == 67:                            # 문단 글
+                t = para(body).strip()
+                if cur is not None and cell is not None and lvl > tlvl:
+                    cur[1][cell] = (cur[1][cell] + " " + t).strip()
+                elif cur is None:
+                    before += " " + t
+        if cur is not None:
+            tables.append(cur)
+    out = []
+    for ctx, cells in tables:
+        if not cells:
+            continue
+        nr, nc = max(r for r, _ in cells) + 1, max(c for _, c in cells) + 1
+        out.append((ctx, [[cells.get((r, c), "") for c in range(nc)] for r in range(nr)]))
+    return out
+
+
 def fill_down(rows: list[list[str]], cols: list[int]) -> list[list[str]]:
     """세로로 합친 칸은 첫 줄에만 값이 있다(경기교육청 PDF). 금액이 있는 줄에만 위 값을 채운다."""
     last: dict[int, str] = {}
@@ -260,6 +361,9 @@ def norm(org: str, table: Table, head: str | None) -> list[tuple]:
     """표 하나를 저장할 행으로. head 를 주면 '사용자' 칸이 그 직함인 줄만 남긴다."""
     url, period, header, rows = table
     m = header_map(header)
+    # '사용 일자(일시)' 한 머리가 날짜·시간 두 칸을 덮는 곳(충남 hwp·수원 PDF)은 시간 칸 머리가 비어 있다.
+    if "time" not in m and "used_at" in m and m["used_at"] + 1 < len(header) and not header[m["used_at"] + 1].strip():
+        m["time"] = m["used_at"] + 1
     out = []
     for r in rows:
         g = lambda f: r[m[f]] if f in m and m[f] < len(r) else ""
@@ -540,6 +644,37 @@ def gyeongnam(c: httpx.Client, since: str) -> Iterator[Table]:
                                      f"&dataSid={sid}&command=update&fileSid={fsid}", q_[0])
 
 
+def chungnam(c: httpx.Client, since: str) -> Iterator[Table]:
+    # 도지사·행정부지사·정무부지사가 한 hwp(바이너리)에 차례로 든다. 사람마다 '- 충청남도지사 8월중 -'
+    # 같은 한 칸짜리 제목 표가 먼저 오고, 그 뒤 세부집행내역 표가 온다. 제목이 도지사인 구간만 쓴다.
+    base = "https://www.chungnam.go.kr/cnportal"
+    page = get(c, base + "/bbs/B0000187/list.do", params={
+        "menuNo": "500122", "searchCnd": "nttSj", "searchWrd": "충청남도지사", "pageUnit": "30"}).text
+    for nid, title in re.findall(r'nttId=(\d+)[^"]*"[^>]*>(.*?)</a>', page, re.S):
+        title = text(title)
+        period = ym(title)
+        if not period or period < since[:7] or "충청남도지사" not in title:
+            continue
+        view = get(c, base + "/bbs/B0000187/view.do", params={"nttId": nid, "menuNo": "500122"}).text
+        for fid, sn in dict.fromkeys(re.findall(r"fileDown\.do\?menuNo=500122&(?:amp;)?atchFileId=(\w+)&(?:amp;)?fileSn=(\d+)", view)):
+            url = f"{base}/cmmn/file/fileDown.do?menuNo=500122&atchFileId={fid}&fileSn={sn}&bbsId=B0000187"
+            data = get(c, url).content
+            if not data.startswith(b"\xd0\xcf\x11\xe0"):         # OLE(hwp) 가 아니면 건너뛴다
+                print(f"    건너뜀(hwp 아님): {url}", file=sys.stderr)
+                continue
+            who, head = "", None
+            for _, rows in hwp_tables(data):
+                if len(rows) == 1 and len(rows[0]) == 1 and rows[0][0]:
+                    who, head = rows[0][0], None      # 사람 구간 제목
+                elif "도지사" not in who:
+                    continue
+                elif t := split(rows):
+                    head = t[0]
+                    yield url, period, *t
+                elif head and rows and len(rows[0]) == len(head):
+                    yield url, period, head, rows     # 쪽이 넘어가며 머리 없이 이어진 표
+
+
 # --------------------------------------------------------------------------- 교육감
 # 교육청 16곳. 7곳이 같은 게시판 틀(…/na/ntt/selectNttList.do)을 쓴다.
 
@@ -797,6 +932,7 @@ ADAPTERS: dict[str, tuple[Callable[[httpx.Client, str], Iterator[Table]], str | 
     "전북특별자치도": (jeonbuk, None),
     "경상북도": (gyeongbuk, None),
     "경상남도": (gyeongnam, "도지사"),
+    "충청남도": (chungnam, None),
     # 교육감. 기관 이름은 단체장 화면의 headOrg('○○교육청') 와 같게 쓴다.
     "서울특별시교육청": (edu_seoul, None),
     "부산광역시교육청": (edu_busan, None),
