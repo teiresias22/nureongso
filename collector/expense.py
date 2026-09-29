@@ -741,18 +741,29 @@ HEAD_EDU = re.compile(r"(?<!부)교육감")        # '부교육감' 은 빼고 '
 
 def edu_file(c: httpx.Client, url: str, period: str, sheet: Callable[[str], bool] | None = None,
              **kw) -> Iterator[Table]:
-    """첨부 하나를 형식에 맞게 읽어 표를 낸다. sheet 는 xlsx 시트 이름으로 고를 때."""
+    """첨부 하나를 형식에 맞게(첫 바이트로) 읽어 표를 낸다. sheet 는 엑셀 시트 이름으로 고를 때.
+    PDF · hwpx · xlsx 에 더해, OLE(D0CF11E0) 파일은 xls 로 읽어 보고 안 되면 hwp 로 읽는다."""
     data = get(c, url, **kw).content
     if data.startswith(b"%PDF"):
         if t := split(pdf_rows(data)):
             yield url, period, *t
     elif data.startswith(b"PK") and b"Contents/section" in data[:4000] + data[-4000:]:
-        if t := split(hwpx_rows(data)):
-            yield url, period, *t
+        for header, body in split_all(hwpx_rows(data)):
+            yield url, period, header, body
+    elif data.startswith(b"\xd0\xcf\x11\xe0"):
+        try:
+            sheets = xls_sheets(data)
+        except Exception:                            # xls 가 아니면 한글(hwp)
+            sheets = [("", rows) for _, rows in hwp_tables(data)]
+        for name, rows in sheets:
+            if sheet is None or sheet(name):
+                for header, body in split_all(rows):
+                    yield url, period, header, body
     else:
         for name, rows in xlsx_or_skip(data, url):
-            if (sheet is None or sheet(name)) and (t := split(rows)):
-                yield url, period, *t
+            if sheet is None or sheet(name):
+                for header, body in split_all(rows):
+                    yield url, period, header, body
 
 
 def ntt(c: httpx.Client, host: str, path: str, since: str, params: dict, post: dict | None = None,
