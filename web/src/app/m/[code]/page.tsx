@@ -104,6 +104,8 @@ const PLEDGE_SOURCES = [
 const BILL_YEAR_FROM = 2024;
 /** 국회 공개 명단의 보좌진 칸 순서(ingest.py STAFF_ROLES 와 같다). */
 const STAFF_ROLES = ["보좌관", "비서관", "비서"] as const;
+/** 업무추진비 목록에 펼칠 최근 줄 수. 한 달에 40~50건이라 한두 달치다. */
+const EXPENSE_SHOW = 60;
 const billYears = () => {
   const now = new Date().getFullYear();
   return Array.from({ length: now - BILL_YEAR_FROM + 1 }, (_, i) => String(now - i));
@@ -422,6 +424,23 @@ export default async function MemberPage({
       })()
     : { data: [], count: 0 };
 
+  // 업무추진비. 지금은 광역단체장만 모은다(collector/expense.py). 취임 전 줄은 전임자 돈이라
+  // 기관이 같아도 빼고 센다.
+  const expenseOrg = m.office === "시도지사" ? headOrg : null;
+  const [{ data: expenseMonths }, { data: expenseRows }] = expenseOrg
+    ? await Promise.all([
+        db.from("head_expense_month").select("month, n, total")
+          .eq("org", expenseOrg).gte("month", HEAD_TERM_START).order("month"),
+        db.from("head_expense")
+          .select("source_url, seq, period, used_at, place, purpose, amount, headcount")
+          .eq("org", expenseOrg).gte("used_at", HEAD_TERM_START)
+          .order("used_at", { ascending: false }).limit(EXPENSE_SHOW),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const expMonths = (expenseMonths ?? []) as { month: string; n: number; total: number }[];
+  const expCount = expMonths.reduce((a, r) => a + r.n, 0);
+  const expTotal = expMonths.reduce((a, r) => a + Number(r.total), 0);
+
   // 국회의원은 열린국회정보의 선수를, 나머지는 선관위 당선 횟수를 쓴다.
   const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m.office);
   const showPledges = hasPledges(s);
@@ -485,6 +504,7 @@ export default async function MemberPage({
   if (SHOW_RACE && raceRivals.length && myDocPledges.length)
     nav.push({ id: "race", label: "후보 공약 비교" });
   if (showBids && (districtBidTotal ?? 0) > 0) nav.push({ id: "bid", label: "발주 공사" });
+  if (expCount > 0) nav.push({ id: "expense", label: "업무추진비" });
 
   // 발주 목록의 연도·쪽을 바꿔도 법안 목록의 필터·쪽은 그대로 둔다.
   const bidKeep = { rep: repFilter, repYear, repPage: String(repPage),
@@ -1162,9 +1182,57 @@ export default async function MemberPage({
           <BidPager total={districtBidTotal ?? 0} year={bidYear} page={bidPage} keep={bidKeep} />
         </Section>
       )}
+
+      {expCount > 0 && (
+        <Section id="expense" title="취임 후 업무추진비" count={expCount} fold>
+          <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
+            {headOrg} 누리집에 공개된 {m.name}의 업무추진비 카드·현금 사용 내역을 옮겨 적었습니다.
+            취임({HEAD_TERM_START}) 전 사용분은 전임자의 것이라 뺐습니다. 판정이 아니라 사실입니다 —
+            간담회·직원 격려 자체는 정해진 용도입니다. 공개 주기가 시도마다 달라(월·분기) 최근 몇 달은
+            아직 올라오지 않았을 수 있습니다. 동석자 이름은 원문에도 없습니다.
+          </p>
+          <div className="border-b border-line px-4 py-3 text-sm">
+            <b>{expCount.toLocaleString()}건</b> · 합계 <b>{won(expTotal)}</b>
+            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+              {expMonths.map((r) => (
+                <li key={r.month}>
+                  {r.month.slice(0, 7)} · {r.n}건 · {won(Number(r.total))}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <ul className="divide-y divide-line">
+            {(expenseRows ?? []).map((e) => (
+              <li key={`${e.source_url}|${e.seq}`} className="px-4 py-2 text-sm">
+                {e.purpose ?? "(목적 미기재)"}
+                <span className="mt-0.5 block text-xs text-muted">
+                  {[
+                    // 시간을 안 적는 시도가 많다(0시로 저장). 자정으로 읽히지 않게 날짜만 쓴다.
+                    String(e.used_at).slice(0, 16).replace("T", " ").replace(/ 00:00$/, ""),
+                    e.place,
+                    e.headcount ? `${e.headcount}명` : null,
+                    `${Number(e.amount).toLocaleString()}원`,
+                  ].filter(Boolean).join(" · ")}{" "}
+                  <a href={e.source_url} target="_blank" rel="noopener noreferrer" className="underline">
+                    원문
+                  </a>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {expCount > EXPENSE_SHOW && (
+            <p className="border-t border-line px-4 py-2 text-xs text-muted">
+              최근 {EXPENSE_SHOW}건만 보여 줍니다. 나머지는 각 줄의 원문에서 볼 수 있습니다.
+            </p>
+          )}
+        </Section>
+      )}
     </div>
   );
 }
+
+/** 원 → '1,234만 원'. 업무추진비는 한 달에 수백만~수천만 원이라 만 원 단위면 충분하다. */
+const won = (n: number) => `${Math.round(n / 10000).toLocaleString()}만 원`;
 
 /** 소속 정당 다수와 다른 표. 판정이 아니라 셈이다 — 당과 달리 던진 게 좋은지
  *  나쁜지는 의안마다 다르다. 그래서 '이탈' 같은 말을 쓰지 않는다.

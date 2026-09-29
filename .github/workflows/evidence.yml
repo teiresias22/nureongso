@@ -80,6 +80,15 @@ jobs:
           # 지역구-공사현장 대응표는 새 지역이 생겼을 수 있으니 매번 다시 만든다.
           python bid.py link
 
+      # 시도지사 업무추진비. 시도 누리집 게시판을 곳마다 읽는다(collector/expense.py).
+      # 사이트가 자주 바뀌니 한 곳이 깨져도 나머지는 받고, 이 단계가 실패해도 넘어간다.
+      - name: 업무추진비
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python expense.py fetch
+
       # 아래 넷은 LLM 을 쓴다. 한도에 걸리면 QuotaExhausted 로 깨끗이 멈추고 다음
       # 주에 이어서 한다. 한 단계가 멈췄다고 판정까지 건너뛰지는 않는다.
       - name: 공약 분류
@@ -137,6 +146,9 @@ jobs:
               cur.execute("select count(*), max(notice_at) from bid_notice")
               n2, last2 = cur.fetchone()
               print(f"| 입찰공고 | {n2:,} | {last2} |")
+              cur.execute("select count(*), count(distinct org), max(used_at)::date from head_expense")
+              n3, orgs3, last3 = cur.fetchone()
+              print(f"| 업무추진비 | {n3:,} ({orgs3}개 시도) | {last3} |")
               # 자치법규가 몇 주째 안 들어오면 조용히 낡아가는 것이다. 눈에 띄게 적는다.
               #
               # 판단은 effective_at 이 아니라 **수집 기록**으로 한다. 시행일자는

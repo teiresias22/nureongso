@@ -499,7 +499,34 @@ export default function RulesPage() {
         />
       </Box>
 
-      <Box id="aggregate" title="18. 여러 사람을 모아 볼 때의 규칙">
+      <Box id="head-expense" title="18. 시도지사 업무추진비">
+        <p className="text-muted">
+          시도가 누리집에 달·분기마다 올리는 시도지사 업무추진비 집행내역을 옮겨 적습니다. 전국을
+          한 번에 주는 창구가 없어(지방재정365 는 예산 총액만 줍니다) 시도마다 게시판에서 직접
+          받습니다. 판정이 아니라 사실입니다 — 간담회·직원 격려·경조사는 정해진 용도입니다.
+        </p>
+        <ul className="list-disc space-y-1.5 pl-4 text-muted">
+          <li>
+            <b>취임(2026년 7월 1일) 뒤 사용분만</b> 그 사람의 것으로 셉니다. 같은 기관이라도 그 전은
+            전임자의 돈입니다.
+          </li>
+          <li>
+            공개 주기가 시도마다 다릅니다. 부산·경남은 분기마다 올려서 최근 몇 달이 아직 없을 수
+            있습니다. 대구는 몇 달치를 몰아 올려 이번 임기분이 아직 없습니다.
+          </li>
+          <li>
+            울산은 금액을 천원 단위로만 공개해 원 단위가 정확하지 않습니다. 부산 2026년 1분기처럼
+            문서 보안(DRM)이 걸려 올라온 파일은 읽지 못해 비어 있습니다.
+          </li>
+          <li>
+            <b>아직 싣지 못한 곳:</b> 충남(한글 hwp 파일로만 공개), 전남광주통합특별시(통합 뒤
+            특별시장 내역이 아직 올라오지 않음), 대구.
+          </li>
+          <li>동석자 이름은 원문에도 없습니다. 인원만 있습니다. 줄마다 원문 링크를 걸어 둡니다.</li>
+        </ul>
+      </Box>
+
+      <Box id="aggregate" title="19. 여러 사람을 모아 볼 때의 규칙">
         <p className="text-muted">
           전체 목록, 내 지역, 통계, 의원 비교는 한 사람의 기록을 여럿 모아 보여 줍니다. 그때
           숫자를 고르고 세는 방법입니다.
@@ -534,7 +561,7 @@ export default function RulesPage() {
         </ul>
       </Box>
 
-      <Box id="not-shown" title="19. 공개돼 있어도 싣지 않는 것">
+      <Box id="not-shown" title="20. 공개돼 있어도 싣지 않는 것">
         <ul className="list-disc space-y-1.5 pl-4 text-muted">
           <li>
             <b>전과·병역·납세·체납.</b> 후보자 정보공개자료로 선거 기간에 공개되지만,
@@ -584,6 +611,7 @@ export default function RulesPage() {
           <li>연구단체: 열린국회정보 &lsquo;국회의원 연구단체 등록현황&rsquo; Open API</li>
           <li>연구용역: 열린국회정보 &lsquo;국회의원 소규모 연구용역 결과보고서&rsquo; Open API</li>
           <li>의원실 지원경비 기준: 열린국회정보 &lsquo;의원실 지원경비 현황&rsquo; Open API</li>
+          <li>시도지사 업무추진비: 각 시도 누리집의 업무추진비 집행내역 공개 게시물(HTML 표·xlsx·PDF)</li>
         </ul>
         <p className="text-muted">
           <b>공약 원문은 PDF 를 AI 가 읽어 정리했습니다.</b> 선거공보는 기계가 읽을 수 있는

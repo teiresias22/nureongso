@@ -451,6 +451,31 @@ create unique index if not exists member_staff_open_uniq
   on member_staff (member_code, role, name) where left_on is null;
 create index if not exists member_staff_member_idx on member_staff (member_code);
 
+-- 광역단체장 업무추진비 집행내역. expense.py 가 시도 누리집 게시물에서 뽑는다(전국 API 없음).
+-- 한 줄이 카드 한 번. 게시물(source_url)마다 다시 받지 않고, 같은 기간이 고쳐 올라오면 그
+-- 기간 줄을 바꾼다. 누구 돈인지는 org + used_at 으로 가른다 — 2026-07-01 전은 전임자다.
+create table if not exists head_expense (
+  source_url   text not null,
+  seq          int  not null,
+  org          text not null,                    -- '서울특별시' (단체장 화면의 headOrg 와 같다)
+  period       text not null,                    -- '2026-08' | '2026-Q2'
+  used_at      timestamp not null,
+  place        text,
+  purpose      text,
+  amount       bigint not null,                  -- 원
+  headcount    int,
+  payment      text,
+  kind         text,                             -- 비목(기관·시책). 없는 곳이 많다
+  primary key (source_url, seq)
+);
+create index if not exists head_expense_org_idx on head_expense (org, used_at);
+-- 화면의 달별 합계. 줄을 다 내려받아 더하면 PostgREST 1000행 제한에 조용히 잘린다.
+create or replace view head_expense_month
+with (security_invoker = true) as
+select org, date_trunc('month', used_at)::date as month, count(*) as n, sum(amount) as total
+from head_expense group by 1, 2;
+grant select on head_expense_month to anon, authenticated;
+
 -- 수집 로그
 create table if not exists ingest_run (
   id         bigserial primary key,
@@ -802,11 +827,12 @@ alter table member_trip enable row level security;
 alter table member_research enable row level security;
 alter table member_study enable row level security;
 alter table member_staff enable row level security;
+alter table head_expense enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip','member_research','member_study','member_staff']
+  foreach t in array array['member','bill','bill_sponsor','vote','plenary_bill','candidacy','pledge','pledge_status','pledge_evidence','election','sg_type','ordinance','bid_notice','member_sigungu','pledge_overlap','asset_report','attendance','member_sidejob','member_trip','member_research','member_study','member_staff','head_expense']
   loop
     execute format('drop policy if exists public_read on %I', t);
     execute format('create policy public_read on %I for select using (true)', t);
