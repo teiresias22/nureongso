@@ -118,7 +118,7 @@ dotenvx run -- .venv/bin/python ingest.py all --age 22
 
 재산은 따로 돈다: `asset.py fetch`(국회공보), `gwanbo.py fetch`(관보). 둘 다 받은 호·절은 건너뛴다.
 
-시도지사 업무추진비는 `expense.py fetch` 가 시도 누리집 게시판을 곳마다 읽는다(전국 API 가 없다).
+시도지사·교육감 업무추진비는 `expense.py fetch` 가 시도·교육청 누리집 게시판을 곳마다 읽는다(전국 API 가 없다).
 받은 게시물은 건너뛰고, 같은 기간이 고쳐 올라오면 그 기간을 바꾼다. 새 시도는 `ADAPTERS` 에 어댑터 하나를
 더하면 된다 — 어댑터는 표(머리줄 + 행)만 돌려주고 칸 이름 맞추기는 `FIELDS` 가 한다.
 

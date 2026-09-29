@@ -424,9 +424,9 @@ export default async function MemberPage({
       })()
     : { data: [], count: 0 };
 
-  // 업무추진비. 지금은 광역단체장만 모은다(collector/expense.py). 취임 전 줄은 전임자 돈이라
-  // 기관이 같아도 빼고 센다.
-  const expenseOrg = m.office === "시도지사" ? headOrg : null;
+  // 업무추진비. 시도지사·교육감만 모은다(collector/expense.py). 취임 전 줄은 전임자 돈이라
+  // 기관이 같아도 빼고 센다. 기관 이름('○○교육청')은 headOrg 와 같게 저장한다.
+  const expenseOrg = m.office === "시도지사" || m.office === "교육감" ? headOrg : null;
   const [{ data: expenseMonths }, { data: expenseRows }] = expenseOrg
     ? await Promise.all([
         db.from("head_expense_month").select("month, n, total")
@@ -1188,7 +1188,7 @@ export default async function MemberPage({
           <p className="border-b border-line bg-background/40 px-4 py-2 text-xs text-muted">
             {headOrg} 누리집에 공개된 {m.name}의 업무추진비 카드·현금 사용 내역을 옮겨 적었습니다.
             취임({HEAD_TERM_START}) 전 사용분은 전임자의 것이라 뺐습니다. 판정이 아니라 사실입니다 —
-            간담회·직원 격려 자체는 정해진 용도입니다. 공개 주기가 시도마다 달라(월·분기) 최근 몇 달은
+            간담회·직원 격려 자체는 정해진 용도입니다. 공개 주기가 기관마다 달라(주·달·분기) 최근 몇 달은
             아직 올라오지 않았을 수 있습니다. 동석자 이름은 원문에도 없습니다.
           </p>
           <div className="border-b border-line px-4 py-3 text-sm">
