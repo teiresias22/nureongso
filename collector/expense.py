@@ -246,6 +246,26 @@ def hwp_tables(data: bytes) -> list[tuple[str, list[list[str]]]]:
     return out
 
 
+def xls_sheets(data: bytes) -> list[tuple[str, list[list[str]]]]:
+    """옛 엑셀(xls, BIFF). 대구시장 파일이 이 형식이다. 숫자는 정수면 정수 글자로(날짜 일련번호·
+    20250403 같은 날짜 숫자가 '45778.0' 으로 나오지 않게)."""
+    import xlrd
+    book = xlrd.open_workbook(file_contents=data)
+    cell = lambda v: str(int(v)) if isinstance(v, float) and v.is_integer() else str(v).strip()
+    return [(sh.name, [[cell(v) for v in sh.row_values(r)] for r in range(sh.nrows)])
+            for sh in book.sheets()]
+
+
+def split_all(rows: list[list[str]]) -> list[tuple[list[str], list[list[str]]]]:
+    """한 시트에 머리줄 달린 덩어리가 여럿이면(대구 옛 시트: 경조사비·업무추진) 덩어리마다 가른다."""
+    out, rest = [], rows
+    while (h := find_header(rest)) is not None:
+        nxt = next((i for i in range(h + 1, len(rest)) if find_header(rest[i:i + 1]) == 0), len(rest))
+        out.append((rest[h], rest[h + 1:nxt]))
+        rest = rest[nxt:]
+    return out
+
+
 def fill_down(rows: list[list[str]], cols: list[int]) -> list[list[str]]:
     """세로로 합친 칸은 첫 줄에만 값이 있다(경기교육청 PDF). 금액이 있는 줄에만 위 값을 채운다."""
     last: dict[int, str] = {}
@@ -326,6 +346,9 @@ def when(v: str, t: str = "") -> dt.datetime | None:
         t = "0." + t.split(".")[1]
     frac = re.fullmatch(r"0?\.\d+", t)
     hm = re.search(r"(\d{1,2}):(\d{2})", t)
+    if re.fullmatch(r"\d{8}(\.0)?", v):            # 20250109 (대구 xls)
+        v = f"{v[:4]}-{v[4:6]}-{v[6:8]}"
+        serial = None
     if serial:
         at = dt.datetime(1899, 12, 30) + dt.timedelta(days=float(v))
     else:
@@ -644,6 +667,41 @@ def gyeongnam(c: httpx.Client, since: str) -> Iterator[Table]:
                                      f"&dataSid={sid}&command=update&fileSid={fsid}", q_[0])
 
 
+def daegu(c: httpx.Client, since: str) -> Iterator[Table]:
+    # 시장·부시장이 한 게시판. 제목 끝이 '(시장)' 인 것. 몇 달치를 몰아 올린다('2025년 1~6월',
+    # 시트가 달마다 '1월'…). 달 한가운데 권한대행으로 바뀌면 '아래부터 시장 권한대행 …' 줄로
+    # 가르므로 그 줄 아래는 버린다. 파일은 옛 xls 다.
+    base = "https://www.daegu.go.kr"
+    page = get(c, base + "/index.do", params={
+        "menu_id": "00941680", "menu_link": "/icms/bbs/selectBoardList.do", "bbsId": "BBS_00040",
+        "pageIndex": "1", "postPerPage": "50"}).text
+    for row in re.findall(r"<tr>.*?</tr>", page, re.S):
+        t = re.search(r"fn_icms_navi_common\('view',\s*'(\d+)'\);return false;\">(.*?)</a>", row, re.S)
+        if not t or not text(t.group(2)).endswith("(시장)"):
+            continue
+        title = text(t.group(2))
+        m = re.search(r"(\d{4})년\s*(\d{1,2})(?:\s*~\s*(\d{1,2}))?\s*월", title)
+        if not m:
+            continue
+        year, last = m.group(1), int(m.group(3) or m.group(2))
+        if f"{year}-{last:02d}" < since[:7]:
+            continue
+        for fid, sn in dict.fromkeys(re.findall(r"fn_egov_downFile\('([^']+)','(\d+)'\)", row)):
+            url = f"{base}/icms/cmm/fms/FileDown.do?atchFileId={fid}&fileSn={sn}"
+            data = get(c, url).content
+            sheets = xls_sheets(data) if data.startswith(b"\xd0\xcf\x11\xe0") else xlsx_or_skip(data, url)
+            for name, rows in sheets:
+                mm = re.fullmatch(r"\s*(\d{1,2})\s*월\s*", name)
+                if not mm and len(sheets) > 1:
+                    continue                          # 지난 해 서식 시트('사용내역(11월)') 같은 것
+                period = f"{year}-{int(mm.group(1)):02d}" if mm else f"{year}-{last:02d}"
+                if period < since[:7]:
+                    continue
+                cut = next((i for i, r in enumerate(rows) if any("권한대행" in x for x in r)), len(rows))
+                for header, body in split_all(rows[:cut]):
+                    yield url, period, header, body
+
+
 def chungnam(c: httpx.Client, since: str) -> Iterator[Table]:
     # 도지사·행정부지사·정무부지사가 한 hwp(바이너리)에 차례로 든다. 사람마다 '- 충청남도지사 8월중 -'
     # 같은 한 칸짜리 제목 표가 먼저 오고, 그 뒤 세부집행내역 표가 온다. 제목이 도지사인 구간만 쓴다.
@@ -933,6 +991,7 @@ ADAPTERS: dict[str, tuple[Callable[[httpx.Client, str], Iterator[Table]], str | 
     "경상북도": (gyeongbuk, None),
     "경상남도": (gyeongnam, "도지사"),
     "충청남도": (chungnam, None),
+    "대구광역시": (daegu, None),
     # 교육감. 기관 이름은 단체장 화면의 headOrg('○○교육청') 와 같게 쓴다.
     "서울특별시교육청": (edu_seoul, None),
     "부산광역시교육청": (edu_busan, None),
