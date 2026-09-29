@@ -102,6 +102,8 @@ const PLEDGE_SOURCES = [
  *  ponytail: 상수 하나로 끝낸다. 지난 대수 법안을 수집하게 되면 이 범위로는 모자라니
  *  그때 의원별 최초 발의 연도를 질의해 채운다. */
 const BILL_YEAR_FROM = 2024;
+/** 국회 공개 명단의 보좌진 칸 순서(ingest.py STAFF_ROLES 와 같다). */
+const STAFF_ROLES = ["보좌관", "비서관", "비서"] as const;
 const billYears = () => {
   const now = new Date().getFullYear();
   return Array.from({ length: now - BILL_YEAR_FROM + 1 }, (_, i) => String(now - i));
@@ -211,6 +213,7 @@ export default async function MemberPage({
     { data: tripRows },
     { data: researchRows },
     { data: studyRows },
+    { data: staffRows },
   ] = await Promise.all([
     db.from("member").select("*").eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
@@ -258,6 +261,8 @@ export default async function MemberPage({
       .eq("member_code", code)
       .order("year", { ascending: false, nullsFirst: false })
       .order("quarter", { ascending: false, nullsFirst: false }),
+    // 지금 있는 보좌진. ingest.py staff 가 매일 국회 명단과 맞춰 둔다.
+    db.from("member_staff").select("role").eq("member_code", code).is("left_on", null),
   ]);
 
   if (!member) notFound();
@@ -570,6 +575,15 @@ export default async function MemberPage({
           )}
           {isMP && m.committees && (
             <p className="mt-1 text-xs text-muted">{m.committees}</p>
+          )}
+          {isMP && !!staffRows?.length && (
+            <p className="mt-1 text-xs text-muted">
+              <span className="text-muted/70">보좌진</span>{" "}
+              {STAFF_ROLES.map((r) => [r, staffRows.filter((x) => x.role === r).length] as const)
+                .filter(([, n]) => n > 0)
+                .map(([r, n]) => `${r} ${n}`)
+                .join(" · ")}
+            </p>
           )}
           {term?.last_vote_rate != null && (
             <p className="mt-1 text-xs text-muted">
