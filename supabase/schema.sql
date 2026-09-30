@@ -52,7 +52,7 @@ create table if not exists bill_sponsor (
   primary key (bill_id, member_code, role)
 );
 create index if not exists bill_sponsor_member_idx on bill_sponsor (member_code, role);
-create index if not exists bill_sponsor_bill_idx on bill_sponsor (bill_id);
+drop index if exists bill_sponsor_bill_idx;  -- 기본키 (bill_id, …) 가 같은 일을 한다
 
 -- bill_sponsor.member_code 에는 외래키가 없어(수집 순서 때문) PostgREST 가 member 를
 -- 임베드하지 못한다. 법안 상세의 발의자 목록이 비지 않도록 조인 뷰를 둔다.
@@ -163,9 +163,9 @@ create table if not exists pledge (
   -- 한국 공약은 한 항목에 여러 수단을 묶어서 배열이어야 한다.
   kinds       text[]                     -- 입법 | 예산사업 | 조례제도 | 선언 | 기타
 );
-create index if not exists pledge_member_idx on pledge (member_code);
+drop index if exists pledge_member_idx;  -- pledge_source_idx (member_code, source) 가 같은 일을 한다
 create index if not exists pledge_source_idx on pledge (member_code, source);
-create index if not exists pledge_kinds_idx on pledge using gin (kinds);
+drop index if exists pledge_kinds_idx;  -- 한 번도 쓰이지 않았다(idx_scan 0). classify 쓰기만 무겁게 했다
 
 -- 이행 판정 (Phase 4)
 create table if not exists pledge_status (
@@ -186,7 +186,7 @@ create table if not exists pledge_evidence (
   summary    text,
   score      numeric
 );
-create index if not exists pledge_evidence_pledge_idx on pledge_evidence (pledge_id);
+drop index if exists pledge_evidence_pledge_idx;  -- pledge_evidence_key (pledge_id, …) 가 같은 일을 한다
 create unique index if not exists pledge_evidence_key
   on pledge_evidence (pledge_id, kind, ref_id);
 
