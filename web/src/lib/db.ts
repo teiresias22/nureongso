@@ -5,7 +5,16 @@ import DISTRICT_AREA from "./districts.json";
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export const db = createClient(url, key, { auth: { persistSession: false } });
+// 주소 검색어(searchParams)를 읽는 페이지는 요청마다 새로 그려지고, 그 뒤의 fetch 는
+// 페이지의 `revalidate` 를 따르지 않아 매 방문이 DB 까지 갔다(의원 한 명에 20여 쿼리).
+// 읽기(GET)는 여기서 한 번에 1시간 데이터 캐시에 태운다. 쓰기·rpc(POST)는 건드리지 않는다.
+const cachedFetch: typeof fetch = (input, init) =>
+  fetch(input, !init?.method || init.method === "GET" ? { ...init, next: { revalidate: 3600 } } : init);
+
+export const db = createClient(url, key, {
+  auth: { persistSession: false },
+  global: { fetch: cachedFetch },
+});
 
 export type Member = {
   code: string;
