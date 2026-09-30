@@ -552,7 +552,6 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
             if not row:
                 continue
             doc_id = row[0]
-            cur.execute("delete from pledge where doc_id = %s", (doc_id,))
             items = []
             for i in range(1, 11):
                 title = d(r.get(f"prmsTitle{i}"))
@@ -562,7 +561,17 @@ def ingest_pledges(cur, office: str, latest_only: bool = True) -> int:
                 items.append((doc_id, mcode, sg_id, i, title,
                               d(r.get(f"prmmCont{i}")) or d(r.get(f"prmsCont{i}")),
                               d(r.get(f"prmsRealmName{i}"))))
-            if items:  # 위에서 doc_id 기준으로 지웠으므로 그냥 넣는다
+            # 내용이 같으면 손대지 않는다. 지우고 넣으면 id 가 바뀌어 판정·근거·검수가
+            # cascade 로 사라지고 classify 부터 LLM 을 다시 돈다.
+            cur.execute(
+                "select doc_id, member_code, election_id, order_no, title, body, category"
+                " from pledge where doc_id = %s order by order_no", (doc_id,),
+            )
+            if cur.fetchall() == items:
+                total += len(items)
+                continue
+            cur.execute("delete from pledge where doc_id = %s", (doc_id,))
+            if items:
                 cur.executemany(
                     "insert into pledge (doc_id, member_code, election_id, order_no,"
                     " title, body, category, source)"
