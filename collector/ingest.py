@@ -147,6 +147,22 @@ def upsert(cur, table: str, cols: list[str], rows: list[tuple], conflict: str, u
     return out
 
 
+def replace(cur, table: str, cols: list[str], rows: list[tuple], where: str = "", params: tuple = ()) -> bool:
+    """표(또는 where 로 고른 부분)를 rows 로 통째로 바꾼다. 내용이 같으면 아무것도 쓰지 않는다.
+
+    겸직·출장·연구단체·연구용역·출결은 분기에 한 번꼴로 바뀌는데 매일 지우고 다시 넣어
+    행과 인덱스를 전부 새로 썼다 (upsert 의 docstring 과 같은 Disk IO 문제).
+    비교는 문자열로 한다. 타입 차이로 '다르다' 가 나오면 예전처럼 다시 쓸 뿐이다.
+    """
+    key = lambda r: tuple(None if v is None else str(v) for v in r)
+    cur.execute(f"select {','.join(cols)} from {table} {where}", params)
+    if sorted(map(key, cur.fetchall()), key=repr) == sorted(map(key, rows), key=repr):
+        return False
+    cur.execute(f"delete from {table} {where}", params)
+    cur.executemany(f"insert into {table} ({','.join(cols)}) values ({','.join(['%s'] * len(cols))})", rows)
+    return True
+
+
 def d(v):
     """빈 문자열 -> None, 날짜 문자열 정리."""
     if v is None:
@@ -201,16 +217,24 @@ def ingest_members(cur) -> int:
     # 그래서 사람 자체를 가리키는 값만 덮고, '지금 무슨 자리에 있나' 에 달린 값은
     # 국회의원인 사람에게만 덮는다. 다른 직위는 선관위 수집기(nec.py)가 맡는다.
     IDENTITY = {"name", "name_hanja", "birth", "sex"}
+    # 현역은 아래 현역 API update 가 이 칸들을 다시 덮는다. 여기서 옛값으로 덮으면
+    # 매일 두 번씩 행을 고쳐 쓰는 핑퐁이 된다(실측 200행).
+    INC_COLS = ["party", "district", "elect_type", "committees", "term_count", "terms",
+                "tel", "email", "homepage"]
     placeholders = ",".join(["%s"] * len(cols))
-    sets = ",".join(
-        f"{c}=excluded.{c}" if c in IDENTITY else
-        f"{c}=case when coalesce(member.office,'국회의원') = '국회의원'"
-        f"         then excluded.{c} else member.{c} end"
-        for c in cols if c != "code"
-    )
+    vals = [c for c in cols if c != "code"]
+    exprs = [
+        f"excluded.{c}" if c in IDENTITY else
+        f"case when coalesce(member.office,'국회의원') = '국회의원'"
+        + (" and not excluded.is_incumbent" if c in INC_COLS else "")
+        + f" then excluded.{c} else member.{c} end"
+        for c in vals
+    ]
+    # 바뀐 사람만 쓴다 (upsert() 와 같은 이유). 조건 없이는 역대 의원 전원을 매일 다시 썼다.
     cur.executemany(
         f"insert into member ({','.join(cols)}) values ({placeholders})"
-        f" on conflict (code) do update set {sets}",
+        f" on conflict (code) do update set {','.join(f'{c}={e}' for c, e in zip(vals, exprs))}"
+        f" where ({','.join('member.' + c for c in vals)}) is distinct from ({','.join(exprs)})",
         rows,
     )
 
@@ -224,12 +248,13 @@ def ingest_members(cur) -> int:
         )
         for r in inc if r.get("MONA_CD")
     ]
+    inc_cols = ", ".join(INC_COLS)
     cur.executemany(
-        "update member set party=%s, district=%s, elect_type=%s, committees=%s,"
-        " term_count=%s, terms=%s, tel=%s, email=%s, homepage=%s,"
-        " is_incumbent=true, office='국회의원'"
-        " where code=%s",
-        inc_rows,
+        f"update member set ({inc_cols}, is_incumbent, office)"
+        " = (%s,%s,%s,%s,%s,%s,%s,%s,%s, true, '국회의원') where code=%s"
+        f" and ({inc_cols}, is_incumbent, office)"
+        " is distinct from (%s,%s,%s,%s,%s,%s,%s,%s,%s, true, '국회의원')",
+        [(*r[:9], r[9], *r[:9]) for r in inc_rows],
     )
     return len(rows)
 
@@ -551,10 +576,8 @@ def ingest_sidejobs(cur, age: int) -> int:
         out.append((a, d(r.get("YR")), ymd(r.get("OPB_DAY")), name, code,
                     d(r.get("CCOF_INST_NM")), d(r.get("PSIT_NM")),
                     d(r.get("CCOF_PSB_YN_CD")), sidejob_kind(r.get("CCOF_PSB_YN_CD"))))
-    cur.execute("delete from member_sidejob")
-    cur.executemany(
-        "insert into member_sidejob (age, year, opened_at, name, member_code, org, position,"
-        " decision, decision_kind) values (%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
+    replace(cur, "member_sidejob", ["age", "year", "opened_at", "name", "member_code", "org",
+                                    "position", "decision", "decision_kind"], out)
     if miss:
         print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:20])}", file=sys.stderr)
     return len(out)
@@ -616,10 +639,8 @@ def ingest_trips(cur, age: int) -> int:
             out.append((a, name, code, ", ".join(names), clean(r.get("DSTN_NM")),
                         clean(r.get("PURP_RSON")), clean(r.get("SCH_DYS")), start, end,
                         clean(r.get("EXPNS_SUPPT_INST_NM")), (r.get("REPORT_YN") or "").strip() == "유"))
-    cur.execute("delete from member_trip")
-    cur.executemany(
-        "insert into member_trip (age, name, member_code, companions, destination, purpose, period,"
-        " start_on, end_on, funder, reported) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
+    replace(cur, "member_trip", ["age", "name", "member_code", "companions", "destination", "purpose",
+                                 "period", "start_on", "end_on", "funder", "reported"], out)
     if miss:
         print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:20])}", file=sys.stderr)
     return len(out)
@@ -703,10 +724,8 @@ def ingest_research(cur, age: int) -> int:
                     out.append((a, clean(r.get("RE_NAME")), clean(r.get("RE_TOPIC_NAME")),
                                 clean(r.get("RE_OBJECTIVE")), role, name, party, code,
                                 cnt, clean(r.get("LINK_URL"))))
-    cur.execute("delete from member_research")
-    cur.executemany(
-        "insert into member_research (age, group_name, topic, objective, role, name, party,"
-        " member_code, member_cnt, link_url) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", out)
+    replace(cur, "member_research", ["age", "group_name", "topic", "objective", "role", "name",
+                                     "party", "member_code", "member_cnt", "link_url"], out)
     if fallback:
         print(f"  ! 홈페이지 명단을 못 읽어 API 명단을 쓴 단체 {len(fallback)}: {', '.join(fallback[:20])}",
               file=sys.stderr)
@@ -754,10 +773,8 @@ def ingest_studies(cur, age: int) -> int:
                 out.append((a, int(year) if re.fullmatch(r"\d{4}", year) else None, int(q) if q else None,
                             clean(r.get("RPT_TITLE")), clean(r.get("DIV_NM")), clean(r.get("ASBLM_NM")),
                             name, code, r.get("FILE_ID")))
-    cur.execute("delete from member_study")
-    cur.executemany(
-        "insert into member_study (age, year, quarter, title, kind, requesters, name, member_code, file_id)"
-        " values (%s,%s,%s,%s,%s,%s,%s,%s,%s)", [o for o in out if o[3]])
+    replace(cur, "member_study", ["age", "year", "quarter", "title", "kind", "requesters", "name",
+                                  "member_code", "file_id"], [o for o in out if o[3]])
     if miss:
         print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss[:30])}", file=sys.stderr)
     return len(out)
@@ -914,12 +931,10 @@ def ingest_attendance(cur, age: int) -> int:
     if miss:
         print(f"  ! 사람을 못 찾은 줄 {len(miss)}: {', '.join(miss)}", file=sys.stderr)
 
-    cur.execute("delete from attendance where age = %s", (age,))
-    cur.executemany(
-        "insert into attendance (age, name, party, member_code, session_no, as_of, days,"
-        " present, absent, leave, trip, absence_report, source_url)"
-        " values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-        [(age, n, p, code_of[n], session, as_of, *v, url) for n, p, *v in rows])
+    replace(cur, "attendance", ["age", "name", "party", "member_code", "session_no", "as_of", "days",
+                                "present", "absent", "leave", "trip", "absence_report", "source_url"],
+            [(age, n, p, code_of[n], session, as_of, *v, url) for n, p, *v in rows],
+            "where age = %s", (age,))
     return len(rows)
 
 
