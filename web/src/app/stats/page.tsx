@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { db, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
+import { db, eok, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
 
 export const revalidate = 3600;
 
@@ -189,7 +189,6 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
 }
 
 /** 천원 → '13.0억'. 표 칸이 좁아 억 단위 한 자리로 줄인다. */
-const eok = (k: number) => `${(k / 100000).toFixed(1)}억`;
 
 /** 의원 상세의 공개 기록을 묶음별로. 순서는 위 표와 같이 인원 순이다.
  *  단체장·교육감은 국회 활동이 없어 재산만 남는다. */

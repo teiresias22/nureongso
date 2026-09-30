@@ -82,7 +82,7 @@ web/         Next.js (App Router) 프론트, Vercel 배포
 - **upsert 는 값이 바뀐 행만 고친다.** 조건 없는 `on conflict do update` 는 같은 값이어도 새 행 버전을
   쓰고 WAL 을 남긴다. 매일 법안·표결·예산·발주를 통째로 다시 쓰던 것이 쓰기 IO 1위였다(bill 만 WAL
   약 360MB, budget_biz 합계 약 550MB). `ingest.upsert` 가 `where (...) is distinct from excluded(...)` 를
-  붙인다 — 직접 SQL 을 쓰는 곳도 같은 조건을 단다(fiscal·judge).
+  붙인다 — 직접 SQL 을 쓰는 곳도 같은 조건을 단다(judge).
 - **발의자 명단은 새로·바뀐 법안만 넣는다.** 25만 행을 매일 다시 넣어 보지 않는다.
 - **요청마다 큰 표를 정렬하지 않는다.** 공고 중복 제거는 `bid_notice_first`(머티리얼라이즈드 뷰)에
   미리 해 두고 `bid.py fetch` 끝에 refresh 한다.

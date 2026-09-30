@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Photo } from "../page";
 import { AreaPicker } from "./picker";
 import {
-  attendRate, districtArea, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
+  attendRate, districtArea, officeBadge, CARD_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type CardStats, type Member,
 } from "@/lib/db";
 
@@ -152,7 +152,6 @@ type Rec = {
 };
 
 /** 천원 → '16.6억'. 카드 칸이 좁아 억 한 자리로 줄인다. */
-const eok = (k: number) => `${(k / 100000).toFixed(1)}억`;
 
 function Card({ m, s, r }: { m: Member; s?: CardStats; r?: Rec }) {
   const mp = (m.office ?? "국회의원") === "국회의원";

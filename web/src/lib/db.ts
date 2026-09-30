@@ -357,6 +357,14 @@ export function wonK(k: number) {
   return `${sign}${eok.toLocaleString("ko-KR")}억${rest ? ` ${rest.toLocaleString("ko-KR")}만` : ""} 원`;
 }
 
+/** 천원 → '12.3억' / '4,500만'. 막대 라벨은 짧아야 한다. 긴 표기는 wonK. */
+export const eok = (k: number) => {
+  const man = k / 10;
+  return Math.abs(man) >= 10000
+    ? `${(man / 10000).toFixed(1)}억`
+    : `${Math.round(man).toLocaleString("ko-KR")}만`;
+};
+
 /** 본회의 출결 누적. 최신 회기 엑셀의 '총 계' — 회의일수 = 출석+결석+청가+출장+결석신고서. */
 export type Attendance = {
   age: number;

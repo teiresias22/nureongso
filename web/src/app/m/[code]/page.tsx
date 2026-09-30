@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  db, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
+  db, eok, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
   partyColor, pct, shortDistrict, termText, wonK,
   type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
   type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
@@ -1563,13 +1563,6 @@ const GROUPS = [
   { key: "기타", color: "var(--viz-4)" },
 ];
 
-/** 천원 → '12.3억' / '4,500만'. 막대 라벨은 짧아야 한다. 긴 표기는 wonK. */
-const eok = (k: number) => {
-  const man = k / 10;
-  return Math.abs(man) >= 10000
-    ? `${(man / 10000).toFixed(1)}억`
-    : `${Math.round(man).toLocaleString("ko-KR")}만`;
-};
 
 /** 국회공보 재산공개.
  *

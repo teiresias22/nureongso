@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
-  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termText,
+  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termText,
   type CardStats, type Member, type OfficeTerm,
 } from "@/lib/db";
 
@@ -362,7 +362,6 @@ type Rec = {
 };
 
 /** 천원 → '16.6억'. 카드 칸이 좁아 억 한 자리로 줄인다. */
-const eok = (k: number) => `${(k / 100000).toFixed(1)}억`;
 
 /** 카드의 수치 하나. on 이면 지금 정렬 기준이라 테두리를 두른다(색만으로 가르지 않는다). */
 function Fig({ label, value, on }: { label: string; value: number | string; on?: boolean }) {

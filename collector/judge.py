@@ -214,8 +214,8 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             # 이 사람만 정확히 집는다.
             cur.execute(
                 "delete from ingest_run where source in"
-                " ('match:' || %s, 'ordin:' || %s, 'bid:' || %s, 'fiscal:' || %s)",
-                (mcode, mcode, mcode, mcode))
+                " ('match:' || %s, 'ordin:' || %s, 'bid:' || %s)",
+                (mcode, mcode, mcode))
         conn.commit()
         done += 1
         tagged += len(pairs)
