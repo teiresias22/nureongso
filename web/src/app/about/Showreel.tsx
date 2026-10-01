@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 /** 파일명에 날짜를 넣는다 — 영상을 다시 만들면 이름을 바꿔 캐시를 우회한다. */
-const REEL = "/videos/showreel-2026-09";
+const REEL = "/videos/showreel-2026-10";
 /** 폰 세로 화면에서는 16:9 대신 4:5 파일을 쓴다. 16:9 를 폰 폭에 맞추면 글자가 읽히지 않는다. */
 const PORTRAIT = "(max-width: 767px) and (orientation: portrait)";
 
@@ -14,12 +14,13 @@ function subscribePortrait(cb: () => void) {
 }
 
 /**
- * 15초 소개 영상. 원본은 color_of_days 레포 marketing/showreel/nureongso 에서 렌더했다.
+ * 20초 소개 영상. 원본은 color_of_days 레포 marketing/showreel/nureongso 에서 렌더했다
+ * (2026-10 새 두 소 캐릭터, 로고 잠금 화면으로 끝난다).
  *
  * - 화면에 35% 이상 보일 때만 소리 없이 재생하고 벗어나면 멈춘다. preload="none" 이라
  *   스크롤해서 보기 전에는 영상을 받지 않는다(포스터 이미지만 받는다).
  * - 사용자가 멈추면 다시 스크롤해 와도 자동으로 틀지 않는다. 동작 줄이기 설정이면 처음부터 틀지 않는다.
- * - 15초 동안 움직이는 콘텐츠라 멈춤 버튼을 둔다(WCAG 2.2.2).
+ * - 20초 동안 움직이는 콘텐츠라 멈춤 버튼을 둔다(WCAG 2.2.2).
  */
 export function Showreel() {
   const portrait = useSyncExternalStore(subscribePortrait, () => window.matchMedia(PORTRAIT).matches, () => false);
@@ -91,7 +92,7 @@ export function Showreel() {
           loop
           playsInline
           preload="none"
-          aria-label="누렁소검은소 15초 소개 영상 — 어느 소가 일을 더 잘하오? 공약을 공식 기록과 대조해 판정하고, 임기 동안 남긴 기록을 나란히 보여준다. 의견은 싣지 않는다."
+          aria-label="누렁소검은소 20초 소개 영상 — 어느 소가 일을 더 잘하오? 공약을 공식 기록과 대조해 판정하고, 비슷한 공약 대신 임기 동안 남긴 기록과 두 사람의 기록을 나란히 보여준다. 의견은 싣지 않는다."
         >
           <source src={`${REEL}-${ar}.mp4`} type="video/mp4" />
         </video>
@@ -114,7 +115,7 @@ export function Showreel() {
       </div>
       {/* 영상 속 후보·수치는 예시다. 실존 인물로 읽히면 이 서비스의 원칙과 어긋나서 캡션에 못 박는다. */}
       <figcaption className="text-xs leading-5 text-muted">
-        15초 소개 영상. 화면 속 후보와 기록 수치는 설명을 위한 예시이며 실제 인물·정당과 관계없습니다.
+        20초 소개 영상. 화면 속 후보와 기록 수치는 설명을 위한 예시이며 실제 인물·정당과 관계없습니다.
       </figcaption>
     </figure>
   );
