@@ -25,7 +25,7 @@ export default async function Image() {
   ];
 
   const title = "누렁소검은소";
-  const sub = "선출직이 실제로 한 일";
+  const sub = "공적 기록으로 보는 약속과 실천";
   const font = await koreanFont(title + sub + facts.flat().join(""));
 
   return new ImageResponse(

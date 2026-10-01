@@ -130,7 +130,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Image src="/logo-cows.png" alt="" width={32} height={32} className="rounded-md" priority />
               누렁소검은소
             </Link>
-            <span className="hidden text-xs text-muted sm:inline">선출직이 실제로 한 일</span>
+            <span className="hidden text-xs text-muted sm:inline">공적 기록으로 보는 약속과 실천</span>
             {/* 글씨만 있으면 본문과 구별이 안 돼 누를 수 있는 줄 모른다. 테두리를 준다. */}
             {/* 누르는 자리: 모바일은 44px(손가락), 넓은 화면은 36px. 예전엔 30px 였다. */}
             <nav className="ml-auto flex gap-1.5 text-sm">

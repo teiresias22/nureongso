@@ -55,7 +55,7 @@ export default async function Image({ params }: { params: Promise<{ code: string
         r?.net_k != null ? ["순재산", `${(r.net_k / 100000).toFixed(1)}억`] : null,
       ].filter(Boolean) as [string, string][]);
 
-  const title = "누렁소검은소 선출직이 실제로 한 일 기준일";
+  const title = "누렁소검은소 공적 기록으로 보는 약속과 실천 기준일";
   const all = name + sub + facts.flat().join("") + title + "0123456789";
   const font = await koreanFont(all);
   const accent = partyColor(m?.party);
@@ -95,7 +95,7 @@ export default async function Image({ params }: { params: Promise<{ code: string
         <div style={{ display: "flex", alignItems: "center", fontSize: 26, color: "#71717a" }}>
           <img src={LOGO} alt="" width={44} height={44} style={{ borderRadius: 8 }} />
           <span style={{ marginLeft: 12 }}>누렁소검은소</span>
-          <span style={{ marginLeft: "auto" }}>선출직이 실제로 한 일</span>
+          <span style={{ marginLeft: "auto" }}>공적 기록으로 보는 약속과 실천</span>
         </div>
       </div>
     ),

@@ -33,7 +33,7 @@ export default function AboutPage() {
         />
         <div>
           <h1 className="text-xl font-bold">누렁소검은소</h1>
-          <p className="mt-1 text-sm text-muted">선출직이 실제로 한 일</p>
+          <p className="mt-1 text-sm text-muted">공적 기록으로 보는 약속과 실천</p>
         </div>
       </header>
 
