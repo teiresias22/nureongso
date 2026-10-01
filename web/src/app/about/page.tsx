@@ -24,7 +24,7 @@ export default function AboutPage() {
         {/* 헤더의 32px 로고와 같은 그림. 여기서는 이름의 유래를 설명하는 자리라
             글자보다 그림이 먼저 눈에 들어와야 한다. */}
         <Image
-          src="/logo.png"
+          src="/logo-cows.png"
           alt="누렁소와 검은소"
           width={72}
           height={72}
