@@ -158,7 +158,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   누렁소검은소
                 </Link>
                 <p className="leading-6">
-                  선출직이 약속한 것과 실제로 한 일을 공개 기록으로 나란히 봅니다. 판단은 보는 분의 몫입니다.
+                  선출직의 약속과 실천을 공적 기록으로 나란히 봅니다. 판단은 보는 분의 몫입니다.
                 </p>
                 <p className="text-xs leading-5">
                   개인이 운영하는 비영리 프로젝트이며 광고를 싣지 않습니다. 특정 정당·후보를 지지하거나
