@@ -277,13 +277,13 @@ export default async function MemberPage({
   // election_id 와 district 를 각각 in 으로 좁힌 뒤 짝이 맞는 것만 남긴다. 둘을 짝지어
   // 거르는 or(and(...)) 필터는 지역구 이름에 따옴표·괄호가 섞이면 깨진다.
   const runs = (candidacies ?? []) as Candidacy[];
-  const { data: rivalRows } = runs.length
-    ? await db
+  const rivalQ = runs.length
+    ? db
         .from("candidacy")
         .select("id, election_id, sg_typecode, sd_name, district, name, party, giho, vote_rate, elected, member_code")
         .in("election_id", [...new Set(runs.map((c) => c.election_id))])
         .in("district", [...new Set(runs.map((c) => c.district).filter(Boolean))] as string[])
-    : { data: [] };
+    : Promise.resolve({ data: [] });
   // 네 가지를 다 맞춰야 한 선거구가 된다.
   // - sg_typecode: 지방선거는 시도지사·교육감·교육의원이 같은 날 같은 '강원도' 에서
   //   치러져서, 선거일과 지역만 맞추면 교육감 후보가 도지사 경쟁자로 섞인다.
@@ -306,12 +306,9 @@ export default async function MemberPage({
       ),
     ),
   ];
-  const { data: ordinRows } = ordinIds.length
-    ? await db.from("ordinance").select("id, name, rr_kind, effective_at, url").in("id", ordinIds)
-    : { data: [] };
-  const ordinBy = new Map(
-    (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
-  );
+  const ordinQ = ordinIds.length
+    ? db.from("ordinance").select("id, name, rr_kind, effective_at, url").in("id", ordinIds)
+    : Promise.resolve({ data: [] });
   const bidIds = [
     ...new Set(
       (pledges ?? []).flatMap((p) =>
@@ -321,9 +318,15 @@ export default async function MemberPage({
       ),
     ),
   ];
-  const { data: bidRows } = bidIds.length
-    ? await db.from("bid_notice").select("id, name, budget, notice_at, url").in("id", bidIds)
-    : { data: [] };
+  const bidQ = bidIds.length
+    ? db.from("bid_notice").select("id, name, budget, notice_at, url").in("id", bidIds)
+    : Promise.resolve({ data: [] });
+  // 위 셋은 서로 기다릴 필요가 없다. 차례로 기다리면 왕복이 셋이다.
+  const [{ data: rivalRows }, { data: ordinRows }, { data: bidRows }] =
+    await Promise.all([rivalQ, ordinQ, bidQ]);
+  const ordinBy = new Map(
+    (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
+  );
   const bidBy = new Map((bidRows ?? []).map((b) => [b.id as string, b as BidNotice]));
 
   // 선거·출처마다 공보 PDF 가 하나씩이다. 공약마다 같은 주소를 붙이면 한 사람에게
@@ -360,24 +363,25 @@ export default async function MemberPage({
     (p) => p.source === "공약서" && p.election_id === ownRace?.election_id,
   );
   const rivalCodes = [...new Set(raceRivals.map((r) => r.member_code).filter(Boolean))] as string[];
-  const { data: rivalPledges } = rivalCodes.length && myDocPledges.length
-    ? await db
+  // 쌍은 a<b 로 한 줄만 있다. 내 공약이 a 쪽일 수도 b 쪽일 수도 있어 양쪽을 다 찾는다.
+  // 경쟁자 공약과 같이 받는다 — 다른 선거에서 온 쌍은 아래에서 rivalById 로 걸러진다.
+  const myIds = myDocPledges.map((p) => p.id as number);
+  const [{ data: rivalPledges }, { data: overlapRows }] = rivalCodes.length && myIds.length
+    ? await Promise.all([
+      db
         .from("pledge")
         .select("id, member_code, title")
         .in("member_code", rivalCodes)
         .eq("election_id", ownRace!.election_id)
         .eq("source", "공약서")
-        .order("order_no")
-    : { data: [] };
-  // 쌍은 a<b 로 한 줄만 있다. 내 공약이 a 쪽일 수도 b 쪽일 수도 있어 양쪽을 다 찾는다.
-  const myIds = myDocPledges.map((p) => p.id as number);
-  const { data: overlapRows } = myIds.length && (rivalPledges ?? []).length
-    ? await db
+        .order("order_no"),
+      db
         .from("pledge_overlap")
         .select("a, b, summary, specific")
         .eq("specific", true)
-        .or(`a.in.(${myIds.join(",")}),b.in.(${myIds.join(",")})`)
-    : { data: [] };
+        .or(`a.in.(${myIds.join(",")}),b.in.(${myIds.join(",")})`),
+    ])
+    : [{ data: [] }, { data: [] }];
   const myTitle = new Map(myDocPledges.map((p) => [p.id as number, p.title as string]));
   const rivalById = new Map(
     ((rivalPledges ?? []) as RivalPledge[]).map((p) => [p.id, p]),
@@ -410,8 +414,8 @@ export default async function MemberPage({
   const bidYears = years.filter((y) => y >= bidFrom.slice(0, 4));
   const bidYear = bidYears.includes(sp.bidYear ?? "") ? sp.bidYear! : "";
   const bidPage = Math.max(1, Number(sp.bidPage) || 1);
-  const { data: districtBids, count: districtBidTotal } = showBids
-    ? await (() => {
+  const districtBidQ = showBids
+    ? (() => {
         let q = isDistrictMP
           ? db.from("member_district_bid")
               .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
@@ -425,13 +429,13 @@ export default async function MemberPage({
           .order("budget", { ascending: false })
           .range((bidPage - 1) * DISTRICT_BID_PAGE, bidPage * DISTRICT_BID_PAGE - 1);
       })()
-    : { data: [], count: 0 };
+    : Promise.resolve({ data: [], count: 0 });
 
   // 업무추진비. 시도지사·교육감만 모은다(collector/expense.py). 취임 전 줄은 전임자 돈이라
   // 기관이 같아도 빼고 센다. 기관 이름('○○교육청')은 headOrg 와 같게 저장한다.
   const expenseOrg = m.office === "시도지사" || m.office === "교육감" ? headOrg : null;
-  const [{ data: expenseMonths }, { data: expenseRows }] = expenseOrg
-    ? await Promise.all([
+  const expenseQ = expenseOrg
+    ? Promise.all([
         db.from("head_expense_month").select("month, n, total")
           .eq("org", expenseOrg).gte("month", HEAD_TERM_START).order("month"),
         db.from("head_expense")
@@ -439,10 +443,7 @@ export default async function MemberPage({
           .eq("org", expenseOrg).gte("used_at", HEAD_TERM_START)
           .order("used_at", { ascending: false }).limit(EXPENSE_SHOW),
       ])
-    : [{ data: [] }, { data: [] }];
-  const expMonths = (expenseMonths ?? []) as { month: string; n: number; total: number }[];
-  const expCount = expMonths.reduce((a, r) => a + r.n, 0);
-  const expTotal = expMonths.reduce((a, r) => a + Number(r.total), 0);
+    : Promise.resolve([{ data: [] }, { data: [] }]);
 
   // 국회의원은 열린국회정보의 선수를, 나머지는 선관위 당선 횟수를 쓴다.
   const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m.office);
@@ -464,7 +465,11 @@ export default async function MemberPage({
   const line = partyLine as PartyLine | null;
   // 비교 띠에 쓸 다른 의원들. 출결은 그 대수 전원(21대 322·22대 299 — 1000행 상한 아래),
   // 정당 표는 비교가 100표 이상인 사람만(재보궐로 막 들어온 몇 표짜리가 끝에 몰린다).
-  const [{ data: attPeers }, { data: linePeers }, { data: issueStats }] = await Promise.all([
+  // 발주 공사·업무추진비도 여기서 같이 기다린다. 서로 기다릴 필요가 없다.
+  const [
+    { data: attPeers }, { data: linePeers }, { data: issueStats },
+    { data: districtBids, count: districtBidTotal }, [{ data: expenseMonths }, { data: expenseRows }],
+  ] = await Promise.all([
     att
       ? db.from("attendance").select("age, present, days").eq("age", att.age)
       : Promise.resolve({ data: [] }),
@@ -477,7 +482,12 @@ export default async function MemberPage({
       ? db.from("asset_issue_stats").select("peer, n, mean_k, median_k")
           .in("peer", assets.flatMap((a) => (a.peer ? [a.peer] : [])))
       : Promise.resolve({ data: [] }),
+    districtBidQ,
+    expenseQ,
   ]);
+  const expMonths = (expenseMonths ?? []) as { month: string; n: number; total: number }[];
+  const expCount = expMonths.reduce((a, r) => a + r.n, 0);
+  const expTotal = expMonths.reduce((a, r) => a + Number(r.total), 0);
   const statOf = new Map(
     ((issueStats ?? []) as AssetPeerStat[]).map((r) => [r.peer, r]),
   );
