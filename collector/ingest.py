@@ -52,6 +52,29 @@ SERVICES = {
 }
 
 
+def get_json(client, url: str, params: dict, tries: int = 4, what: str = ""):
+    """GET 해서 JSON 을 돌려준다. 네트워크·JSON 오류는 5, 10, 20… 초 쉬며 다시 시도한다.
+
+    국회·조달청·법제처·선관위 서버 모두 간헐적으로 연결 자체를 안 받는다. 하루·한 주에
+    한 번 도는 작업이라 몇 분 더 기다리는 편이 그 회차를 건너뛰는 것보다 낫다.
+    """
+    for attempt in range(tries):
+        try:
+            return client.get(url, params=params).json()
+        except Exception as e:
+            if attempt == tries - 1:
+                raise RuntimeError(f"{what or url}: {e}") from e
+            wait = 5 * 2**attempt
+            print(f"  retry {attempt + 1} ({wait}초 뒤): {e}", file=sys.stderr)
+            time.sleep(wait)
+
+
+def log_run(cur, source: str, rows: int) -> None:
+    """끝난 수집·판정 한 회를 ingest_run 에 남긴다. 판정 단계는 이 기록으로 이어받는다."""
+    cur.execute("insert into ingest_run (source, finished_at, rows) values (%s, now(), %s)",
+                (source, rows))
+
+
 def fetch(service: str, max_rows: int | None = None, **params) -> list[dict]:
     """서비스 전체 row 를 페이지 순회로 가져온다. max_rows 로 조기 종료(테스트용).
 
@@ -71,18 +94,7 @@ def fetch(service: str, max_rows: int | None = None, **params) -> list[dict]:
     with httpx.Client(timeout=60, headers={"User-Agent": "nureongso/0.1"}) as c:
         while True:
             q = {"Type": "json", "pIndex": page, "pSize": PAGE, "KEY": KEY, **params}
-            # 국회 서버가 간헐적으로 TCP 연결 자체를 안 받는다(connect timeout).
-            # 하루 한 번 도는 작업이라 몇 분 더 기다리는 편이 하루를 건너뛰는 것보다 낫다.
-            for attempt in range(5):
-                try:
-                    data = c.get(f"{BASE}/{name}", params=q).json()
-                    break
-                except Exception as e:  # 네트워크/JSON 오류만 재시도
-                    if attempt == 4:
-                        raise
-                    wait = 5 * 2**attempt  # 5, 10, 20, 40초
-                    print(f"  retry {attempt + 1} ({wait}초 뒤): {e}", file=sys.stderr)
-                    time.sleep(wait)
+            data = get_json(c, f"{BASE}/{name}", q, tries=5, what=name)
 
             if "RESULT" in data:  # 에러 또는 데이터 없음
                 code = data["RESULT"]["CODE"]
@@ -225,7 +237,7 @@ def ingest_members(cur) -> int:
     vals = [c for c in cols if c != "code"]
     exprs = [
         f"excluded.{c}" if c in IDENTITY else
-        f"case when coalesce(member.office,'국회의원') = '국회의원'"
+        "case when coalesce(member.office,'국회의원') = '국회의원'"
         + (" and not excluded.is_incumbent" if c in INC_COLS else "")
         + f" then excluded.{c} else member.{c} end"
         for c in vals
@@ -435,7 +447,7 @@ def ingest_summaries(cur, age: int, limit: int | None = None) -> int:
         " where age = %s and bill_no is not null and summary is null"
         " order by proposed_at desc", (age,))
     todo = cur.fetchall()
-    if limit:
+    if limit is not None:
         todo = todo[:limit]
     print(f"  요약 없는 의안 {len(todo)}건", file=sys.stderr)
 

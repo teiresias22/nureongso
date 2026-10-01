@@ -31,13 +31,13 @@ pledge_status 를 건드리지 않고 pledge_overlap 에만 쌓는다.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 
 import psycopg
 
 import llm
+from ingest import log_run
 
 # 공약을 무엇으로 잴 수 있는가. 이 다섯 가지 외에는 받지 않는다.
 KINDS = ["입법", "예산사업", "조례제도", "선언", "기타"]
@@ -159,7 +159,7 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             " order by m.is_incumbent desc nulls last, p.member_code"
         )
         targets = cur.fetchall()
-    if limit:
+    if limit is not None:
         targets = targets[:limit]
     print(f"  대상 {len(targets)}명", file=sys.stderr)
 
@@ -247,7 +247,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
                    " where r.source = 'match:' || p.member_code)")
         )
         targets = cur.fetchall()
-    if limit:
+    if limit is not None:
         targets = targets[:limit]
     print(f"  대상 {len(targets)}명", file=sys.stderr)
 
@@ -297,9 +297,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
                 " values (%s,%s,%s,%s,%s)"
                 " on conflict (pledge_id, kind, ref_id) do update set"
                 "   score = excluded.score, summary = excluded.summary", rows)
-            cur.execute(
-                "insert into ingest_run (source, finished_at, rows)"
-                " values ('match:' || %s, now(), %s)", (mcode, len(rows)))
+            log_run(cur, f"match:{mcode}", len(rows))
         conn.commit()
         done += 1
         linked += len(rows)
@@ -433,7 +431,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
         print(f"  ! 자치법규에서 못 찾은 지자체 {len(missing)}곳:"
               f" {', '.join(o for _, o, _ in missing[:8])}"
               f"{' …' if len(missing) > 8 else ''}", file=sys.stderr)
-    if limit:
+    if limit is not None:
         targets = targets[:limit]
     print(f"  대상 {len(targets)}명", file=sys.stderr)
 
@@ -463,8 +461,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
             # 후보가 없으면 '안 돌린 것' 이 아니라 '돌렸는데 없는 것' 이다. 기록을
             # 남겨야 판정에서 '미착수' 로 갈 수 있다.
             with conn.cursor() as cur:
-                cur.execute("insert into ingest_run (source, finished_at, rows)"
-                            " values ('ordin:' || %s, now(), 0)", (mcode,))
+                log_run(cur, f"ordin:{mcode}", 0)
             conn.commit()
             continue
 
@@ -498,9 +495,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
                 " values (%s,%s,%s,%s,%s)"
                 " on conflict (pledge_id, kind, ref_id) do update set"
                 "   score = excluded.score, summary = excluded.summary", rows)
-            cur.execute(
-                "insert into ingest_run (source, finished_at, rows)"
-                " values ('ordin:' || %s, now(), %s)", (mcode, len(rows)))
+            log_run(cur, f"ordin:{mcode}", len(rows))
         conn.commit()
         done += 1
         linked += len(rows)
@@ -629,7 +624,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
         print(f"  ! 입찰공고가 없는 지자체 {len(missing)}곳:"
               f" {', '.join(o for _, o, _ in missing[:8])}"
               f"{' …' if len(missing) > 8 else ''}", file=sys.stderr)
-    if limit:
+    if limit is not None:
         targets = targets[:limit]
     print(f"  대상 {len(targets)}명", file=sys.stderr)
 
@@ -655,8 +650,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
             bids = cur.fetchall()
         if not pledges or not bids:
             with conn.cursor() as cur:
-                cur.execute("insert into ingest_run (source, finished_at, rows)"
-                            " values ('bid:' || %s, now(), 0)", (mcode,))
+                log_run(cur, f"bid:{mcode}", 0)
             conn.commit()
             continue
 
@@ -691,9 +685,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
                 " values (%s,%s,%s,%s,%s)"
                 " on conflict (pledge_id, kind, ref_id) do update set"
                 "   score = excluded.score, summary = excluded.summary", rows_)
-            cur.execute(
-                "insert into ingest_run (source, finished_at, rows)"
-                " values ('bid:' || %s, now(), %s)", (mcode, len(rows_)))
+            log_run(cur, f"bid:{mcode}", len(rows_))
         conn.commit()
         done += 1
         linked += len(rows_)
@@ -808,7 +800,7 @@ def run_match_race(conn, limit: int | None, redo: bool, since: str | None = None
         key_of = lambda r: f"race:{r[0]}|{r[1]}|{r[2]}|{r[3]}"
         races = sorted((r for r in races if key_of(r) not in done_keys),
                        key=lambda r: key_of(r) in seen)
-    if limit:
+    if limit is not None:
         races = races[:limit]
     print(f"  대상 선거구 {len(races)}곳", file=sys.stderr)
 
@@ -878,8 +870,7 @@ def run_match_race(conn, limit: int | None, redo: bool, since: str | None = None
                 " on conflict (a, b) do update set"
                 "   score = excluded.score, summary = excluded.summary,"
                 "   specific = excluded.specific", pairs)
-            cur.execute("insert into ingest_run (source, finished_at, rows)"
-                        " values (%s, now(), %s)", (key, len(pairs)))
+            log_run(cur, key, len(pairs))
         conn.commit()
         done += 1
         paired += len(pairs)

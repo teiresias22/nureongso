@@ -25,13 +25,12 @@ import argparse
 import datetime as dt
 import os
 import sys
-import time
 
 import httpx
 import psycopg
 from urllib.parse import unquote
 
-from ingest import d, upsert
+from ingest import d, get_json, log_run, upsert
 from judge import SIDO_ALIAS, ordin_org
 
 URL = ("https://apis.data.go.kr/1230000/ad/BidPublicInfoService"
@@ -194,14 +193,7 @@ def months(since: str, until: str):
 def fetch_page(client: httpx.Client, bgn: str, end: str, page: int):
     q = {"serviceKey": KEY, "type": "json", "inqryDiv": 1,
          "pageNo": page, "numOfRows": PAGE, "inqryBgnDt": bgn, "inqryEndDt": end}
-    for attempt in range(4):
-        try:
-            data = client.get(URL, params=q).json()
-            break
-        except Exception as e:
-            if attempt == 3:
-                raise RuntimeError(f"{bgn}~{end} p{page}: {e}") from e
-            time.sleep(5 * 2**attempt)
+    data = get_json(client, URL, q, what=f"{bgn}~{end} p{page}")
 
     body = data.get("response", {}).get("body")
     if body is None:
@@ -262,8 +254,7 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
                     break
                 page += 1
 
-        cur.execute("insert into ingest_run (source, finished_at, rows)"
-                    " values ('bid', now(), %s)", (kept,))
+        log_run(cur, "bid", kept)
         conn.commit()
         refresh_first(conn)
     print(f"[bid] 전국 {seen:,}건 훑어 {kept:,}건 보관", file=sys.stderr)

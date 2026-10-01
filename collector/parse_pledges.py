@@ -129,7 +129,7 @@ def run(conn, sg_id: str, limit: int | None, redo: bool, empty: bool = False) ->
         )
         docs = cur.fetchall()
 
-    if limit:
+    if limit is not None:
         docs = docs[:limit]
     print(f"  대상 {len(docs)}건", file=sys.stderr)
 

@@ -23,12 +23,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
 
 import httpx
 import psycopg
 
-from ingest import d, upsert
+from ingest import d, get_json, log_run, upsert
 
 URL = "https://www.law.go.kr/DRF/lawSearch.do"
 # 공용 시험 계정. 남과 같이 쓰는 것이라 언제든 막힐 수 있다 — 자기 OC 를 쓰는 게 맞다.
@@ -48,14 +47,7 @@ def fetch_page(client: httpx.Client, page: int, since: str, until: str,
          "page": page, "sort": "ddes", "efYd": f"{since}~{until}"}
     if rr:
         q["rrClsCd"] = rr
-    for attempt in range(4):
-        try:
-            data = client.get(URL, params=q).json()
-            break
-        except Exception as e:
-            if attempt == 3:
-                raise RuntimeError(f"p{page}: {e}") from e
-            time.sleep(5 * 2**attempt)
+    data = get_json(client, URL, q, what=f"p{page}")
 
     body = data.get("OrdinSearch")
     if not body:
@@ -108,8 +100,7 @@ def run_fetch(conn, since: str, until: str, kind: str | None) -> int:
                 break
             page += 1
 
-        cur.execute("insert into ingest_run (source, finished_at, rows)"
-                    " values ('ordin', now(), %s)", (seen,))
+        log_run(cur, "ordin", seen)
         conn.commit()
     print(f"[ordin] {seen:,}건 수집 (전체 {total:,})", file=sys.stderr)
     return seen

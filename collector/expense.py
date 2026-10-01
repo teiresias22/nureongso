@@ -33,6 +33,8 @@ from typing import Callable, Iterator
 import httpx
 import psycopg
 
+from ingest import log_run
+
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/128 Safari/537.36"}
 TERM_START = "2026-07-01"   # 민선 9기 취임. 그 전은 전임자의 돈이다.
 
@@ -1074,8 +1076,7 @@ def run(conn, orgs: list[str], since: str) -> int:
                 continue
             print(f"  {org} {got:,}건", file=sys.stderr)
             total += got
-        cur.execute("insert into ingest_run (source, finished_at, rows) values ('expense', now(), %s)",
-                    (total,))
+        log_run(cur, "expense", total)
         conn.commit()
     print(f"[expense] {total:,}건", file=sys.stderr)
     return total

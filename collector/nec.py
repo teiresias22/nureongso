@@ -23,13 +23,12 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
 from urllib.parse import unquote
 
 import httpx
 import psycopg
 
-from ingest import d, upsert
+from ingest import d, get_json, upsert
 
 BASE = "https://apis.data.go.kr/9760000"
 
@@ -91,15 +90,7 @@ def fetch(op: str, **params) -> list[dict]:
         while True:
             q = {"serviceKey": KEY, "resultType": "json", "pageNo": page,
                  "numOfRows": 100, **params}
-            for attempt in range(3):
-                try:
-                    r = c.get(url, params=q)
-                    data = r.json()
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        raise RuntimeError(f"{op} {params}: {e}") from e
-                    time.sleep(2 * (attempt + 1))
+            data = get_json(c, url, q, tries=3, what=f"{op} {params}")
 
             rows, total = parse(data, op, params)
             if rows is None:  # 데이터 없음

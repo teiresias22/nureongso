@@ -138,7 +138,7 @@ def ingest(conn, sg_id: str, sg_type: str, limit: int | None, skip_done: bool) -
     if unmatched:
         print("  ! 매칭 실패는 해당 선거의 당선인을 먼저 수집해야 합니다:"
               f" nec.py winners (sgId={sg_id}, sgTypecode={sg_type})", file=sys.stderr)
-    if limit:
+    if limit is not None:
         todo = todo[:limit]
 
     ok = fail = 0
