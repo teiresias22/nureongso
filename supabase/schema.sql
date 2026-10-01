@@ -133,6 +133,9 @@ create table if not exists candidacy (
   elected       boolean
 );
 create index if not exists candidacy_member_idx on candidacy (member_code);
+-- 의원 페이지의 같은 선거구 경쟁자 조회(선거 + 지역). 선거 하나에 후보 수백 명이라
+-- election_id 만으로는 778행을 읽고 14행을 남겼다(13ms → 0.07ms, 실측).
+create index if not exists candidacy_race_idx on candidacy (election_id, district);
 create unique index if not exists candidacy_nec_key
   on candidacy (election_id, sg_typecode, huboid);   -- 부분 인덱스면 ON CONFLICT 가 추론 못 한다
 
