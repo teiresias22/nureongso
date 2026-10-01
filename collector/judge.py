@@ -763,7 +763,7 @@ RACE_SCHEMA = {
 }
 
 
-def run_match_race(conn, limit: int | None, redo: bool) -> None:
+def run_match_race(conn, limit: int | None, redo: bool, since: str | None = None) -> None:
     """같은 선거구 후보들의 공약 중 같은 약속을 찾는다.
 
     **공약서(대표공약)끼리만** 본다. 당선인은 선거공보 전체 공약도 있지만 낙선자는
@@ -797,11 +797,17 @@ def run_match_race(conn, limit: int | None, redo: bool) -> None:
         races = cur.fetchall()
 
     if not redo:
+        # since 를 주면 그 뒤에 돈 선거구만 끝난 것으로 친다. 모델을 바꿔 다시 돌릴 때
+        # 쓴다(2026-10 gemma → gemini-3.5-flash). 아예 안 돈 곳을 먼저 집는다.
         with conn.cursor() as cur:
-            cur.execute("select source from ingest_run where source like 'race:%'")
-            done_keys = {s for (s,) in cur.fetchall()}
-        races = [r for r in races
-                 if f"race:{r[0]}|{r[1]}|{r[2]}|{r[3]}" not in done_keys]
+            cur.execute("select source, started_at >= coalesce(%s::timestamptz, '-infinity')"
+                        " from ingest_run where source like 'race:%%'", (since,))
+            runs = cur.fetchall()
+        seen = {s for s, _ in runs}
+        done_keys = {s for s, recent in runs if recent}
+        key_of = lambda r: f"race:{r[0]}|{r[1]}|{r[2]}|{r[3]}"
+        races = sorted((r for r in races if key_of(r) not in done_keys),
+                       key=lambda r: key_of(r) in seen)
     if limit:
         races = races[:limit]
     print(f"  대상 선거구 {len(races)}곳", file=sys.stderr)
@@ -1068,6 +1074,7 @@ def main():
                  "match_race", "decide", "all"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--redo", action="store_true")
+    p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다")
     a = p.parse_args()
 
     dsn = os.environ.get("DATABASE_URL")
@@ -1084,7 +1091,7 @@ def main():
             run_match_bid(conn, a.limit, a.redo)
         # match_race 는 all 에 넣지 않는다. LLM 한도를 쓰는데 선거 때만 새로 생긴다.
         if a.step == "match_race":
-            run_match_race(conn, a.limit, a.redo)
+            run_match_race(conn, a.limit, a.redo, a.since)
         if a.step in ("decide", "all"):
             run_decide(conn)
 
