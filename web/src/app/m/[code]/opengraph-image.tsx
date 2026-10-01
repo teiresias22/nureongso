@@ -93,7 +93,7 @@ export default async function Image({ params }: { params: Promise<{ code: string
         </div>
 
         <div style={{ display: "flex", alignItems: "center", fontSize: 26, color: "#71717a" }}>
-          <img src={LOGO} alt="" width={44} height={44} style={{ borderRadius: 8 }} />
+          <img src={LOGO} alt="" width={79} height={44} />
           <span style={{ marginLeft: 12 }}>누렁소검은소</span>
           <span style={{ marginLeft: "auto" }}>공적 기록으로 보는 약속과 실천</span>
         </div>

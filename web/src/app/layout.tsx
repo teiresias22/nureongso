@@ -126,8 +126,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               이미지가 위로 떠서 한 줄이 어긋나 보인다. */}
           <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
             <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
-              {/* 크림색(250,248,240) 바탕 그림이라 투명화하지 않고 둥근 타일로 둔다. */}
-              <Image src="/logo-cows.png" alt="" width={32} height={32} className="rounded-md" priority />
+              {/* 바탕이 투명한 가로 그림(약 1.8:1). 크림색 테두리가 있어 어두운 화면에서도 검은소가 보인다. */}
+              <Image src="/logo-mark.png" alt="" width={58} height={32} priority />
               누렁소검은소
             </Link>
             <span className="hidden text-xs text-muted sm:inline">공적 기록으로 보는 약속과 실천</span>
@@ -154,7 +154,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="grid grid-cols-2 gap-x-6 gap-y-8 lg:grid-cols-[1.4fr_1fr_1fr_1.3fr]">
               <div className="col-span-2 space-y-3 lg:col-span-1">
                 <Link href="/" className="flex items-center gap-2 text-base font-bold text-foreground">
-                  <Image src="/logo-cows.png" alt="" width={24} height={24} className="rounded" />
+                  <Image src="/logo-mark.png" alt="" width={43} height={24} />
                   누렁소검은소
                 </Link>
                 <p className="leading-6">
