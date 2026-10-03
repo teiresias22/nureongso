@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""llm.py 의 키 순환 자체 점검. 네트워크를 타지 않는다.
+"""llm.py 의 키 순환·재시도 자체 점검. 네트워크를 타지 않는다.
 
     python test_llm.py
 """
@@ -72,8 +72,38 @@ def test_complete_switches_keys_then_gives_up():
     assert calls == ["a", "b"], calls
 
 
+def test_overload_is_retried_then_raised():
+    # 503 은 잠깐 뒤 풀린다. 한 번 실패로 넘기지 말고 기다렸다 다시 부른다.
+    reset("a")
+    llm.PROVIDER = "gemini"
+    sleep, llm.time.sleep = llm.time.sleep, lambda s: None
+    try:
+        n = [0]
+
+        def busy_twice(prompt, schema, pdf=None):
+            n[0] += 1
+            if n[0] <= 2:
+                raise llm.Overloaded("503: high demand")
+            return "ok"
+
+        llm.CALLS["gemini"] = busy_twice
+        assert llm.complete("x") == "ok" and n[0] == 3, n
+
+        # 계속 과부하면 retries 번 시도하고 올려보낸다(호출한 쪽이 '실패' 로 넘긴다).
+        n[0] = -100
+        try:
+            llm.complete("x", retries=3)
+            assert False, "끝까지 과부하면 Overloaded 가 올라와야 한다"
+        except llm.Overloaded:
+            pass
+        assert n[0] == -97, n
+    finally:
+        llm.time.sleep = sleep
+
+
 if __name__ == "__main__":
     test_parsing()
     test_rotation_stops_at_the_end()
     test_complete_switches_keys_then_gives_up()
+    test_overload_is_retried_then_raised()
     print("ok")

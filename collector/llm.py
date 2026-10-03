@@ -35,10 +35,18 @@ class RateLimited(LLMError):
     """분당 한도 초과. 잠깐 기다리면 풀린다."""
 
 
+class Overloaded(LLMError):
+    """서버 쪽 과부하(500·502·503·504). '수요가 몰렸다' 는 503 이 대부분이고 잠깐 뒤면 풀린다.
+    재시도 없이 넘기면 그 건은 '실패' 로 하루를 통째로 미룬다 — race.yml 첫날 17건 중 15건이
+    이렇게 넘어갔다(2026-10-02)."""
+
+
 class QuotaExhausted(LLMError):
     """일일 한도 소진. 기다려도 그날은 안 풀리므로 재시도하지 말고 멈춰야 한다.
     제미나이 무료 등급은 모델당 하루 500건이고 태평양 시간 자정에 초기화된다."""
 
+
+OVERLOADED = (500, 502, 503, 504, 529)  # 529: Anthropic overloaded
 
 # --------------------------------------------------------------------------- Gemini
 
@@ -144,6 +152,8 @@ def gemini_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> s
     )
     if r.status_code == 429:
         raise _quota_error(r)
+    if r.status_code in OVERLOADED:
+        raise Overloaded(f"{r.status_code}: {_flat(r.text)}")
     if r.status_code >= 400:
         raise LLMError(f"{r.status_code}: {_flat(r.text)}")
     _key_used[_key_i] = _key_used.get(_key_i, 0) + 1
@@ -217,6 +227,8 @@ def anthropic_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -
     )
     if r.status_code == 429:
         raise RateLimited(_flat(r.text))
+    if r.status_code in OVERLOADED:
+        raise Overloaded(f"{r.status_code}: {_flat(r.text)}")
     if r.status_code >= 400:
         raise LLMError(f"{r.status_code}: {_flat(r.text)}")
     return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()
@@ -227,7 +239,7 @@ CALLS = {"gemini": gemini_call, "ollama": ollama_call, "anthropic": anthropic_ca
 
 def complete(prompt: str, schema: dict | None = None, retries: int = 4,
              pdf: bytes | None = None) -> str:
-    """한 번 호출. 429 는 기다렸다 다시 시도한다(무료 등급은 분당 제한이 빡빡하다).
+    """한 번 호출. 429·서버 과부하(5xx)는 기다렸다 다시 시도한다(무료 등급은 분당 제한이 빡빡하다).
 
     pdf 를 주면 텍스트 대신 PDF 원본을 그대로 넘긴다. 글꼴에 문자 매핑이 없어
     텍스트 추출이 (cid:NNNN) 으로 깨지는 공보를 이 경로로 처리한다.
@@ -245,12 +257,13 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
             # 키 전환은 재시도 횟수를 소모하지 않는다. 키 개수만큼만 일어난다.
             if PROVIDER != "gemini" or not gemini_rotate():
                 raise
-        except RateLimited:
+        except (RateLimited, Overloaded) as e:
             attempt += 1
             if attempt >= retries:
                 raise
             wait = 20 * attempt
-            print(f"[llm] 분당 한도 초과, {wait}초 대기", file=sys.stderr)
+            what = "분당 한도 초과" if isinstance(e, RateLimited) else f"서버 과부하({str(e)[:3]})"
+            print(f"[llm] {what}, {wait}초 대기", file=sys.stderr)
             time.sleep(wait)
         except httpx.TimeoutException:
             attempt += 1
