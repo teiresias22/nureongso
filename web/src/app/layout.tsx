@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { ldJson, REPO, REPORT_URL, SITE } from "@/lib/site";
+import { kstYear, ldJson, REPO, REPORT_URL, SITE } from "@/lib/site";
 import "./globals.css";
 
 /** 헤더에는 찾아보는 길만 둔다. */
@@ -127,7 +127,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
             <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
               {/* 바탕이 투명한 가로 그림(약 1.8:1). 크림색 테두리가 있어 어두운 화면에서도 검은소가 보인다. */}
-              <Image src="/logo-mark.png" alt="" width={58} height={32} priority />
+              <Image src="/logo-mark.png" alt="" width={58} height={32} preload />
               누렁소검은소
             </Link>
             <span className="hidden text-xs text-muted sm:inline">공적 기록으로 보는 약속과 실천</span>
@@ -218,7 +218,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 공공데이터는 각 기관의 이용 조건에 따라 출처를 밝혀 씁니다.
               </p>
               <p className="shrink-0">
-                © {new Date().getFullYear()} 누렁소검은소 ·{" "}
+                © {kstYear()} 누렁소검은소 ·{" "}
                 <a href={REPO} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
                   소스 코드
                 </a>

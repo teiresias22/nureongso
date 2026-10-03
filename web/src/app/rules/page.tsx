@@ -30,8 +30,9 @@ const TOC: [string, string][] = [
   ["research", "15. 의원 연구단체"],
   ["study", "16. 연구용역 결과보고서"],
   ["office-budget", "17. 참고: 의원실 지원경비 기준"],
-  ["aggregate", "18. 여러 사람을 모아 볼 때의 규칙"],
-  ["not-shown", "19. 공개돼 있어도 싣지 않는 것"],
+  ["head-expense", "18. 시도지사·교육감 업무추진비"],
+  ["aggregate", "19. 여러 사람을 모아 볼 때의 규칙"],
+  ["not-shown", "20. 공개돼 있어도 싣지 않는 것"],
   ["sources", "출처"],
 ];
 

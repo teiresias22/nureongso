@@ -31,7 +31,7 @@ export default function AboutPage() {
           alt="누렁소와 검은소"
           width={130}
           height={72}
-          priority
+          preload
         />
         <div>
           <h1 className="text-xl font-bold">누렁소검은소</h1>

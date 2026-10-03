@@ -49,7 +49,8 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
 
   // 국회의원만 고를 수 있다. 단체장·교육감은 발의도 표결도 없어서 비교표가
   // 공약 건수 한 줄로 쪼그라든다. 그 한 줄로 두 사람을 견주는 건 뜻이 없다.
-  const { data: all } = await db
+  // 아래 묶음과 따로 기다리지 않는다(서로 상관없는 조회다).
+  const allQ = db
     .from("member")
     .select("code, name, office, party, district")
     .eq("is_incumbent", true)
@@ -57,11 +58,11 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
     .order("name");
 
   const codes = [a, b].filter(Boolean) as string[];
-  const [
+  const [{ data: all }, [
     { data: members }, { data: stats }, { data: atts }, { data: lines }, { data: assets },
     { data: jobs }, { data: trips }, { data: groups }, { data: studies },
-  ] = codes.length
-    ? await Promise.all([
+  ]] = await Promise.all([allQ, codes.length
+    ? Promise.all([
         db.from("member").select("*").in("code", codes),
         db.from("member_stats").select("*").in("code", codes),
         db.from("attendance").select("member_code, present, days").eq("age", 22).in("member_code", codes),
@@ -74,7 +75,7 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
         db.from("member_research").select("member_code, role").eq("age", 22).in("member_code", codes),
         db.from("member_study").select("member_code, kind").eq("age", 22).in("member_code", codes),
       ])
-    : Array.from({ length: 9 }, () => ({ data: [] }));
+    : Array.from({ length: 9 }, () => ({ data: [] }))]);
   const attBy = new Map(((atts ?? []) as { member_code: string; present: number; days: number }[])
     .map((r) => [r.member_code, r]));
   const lineBy = new Map(((lines ?? []) as { code: string; party_counted: number; against_party: number }[])

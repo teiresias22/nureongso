@@ -37,3 +37,7 @@ export function pageOg(
 /** <script type="application/ld+json"> 본문. 법안명·요약은 바깥 데이터라 '</script>' 가 들어 있으면
  *  태그가 닫힌다. '<' 를 이스케이프한다(Next 의 JSON-LD 가이드와 같다). */
 export const ldJson = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
+
+/** 올해(한국 시각). 서버(Vercel)는 UTC 라 그냥 getFullYear() 면 1월 1일 0~9시에 지난해가 나온다. */
+export const kstYear = () =>
+  Number(new Intl.DateTimeFormat("en", { timeZone: "Asia/Seoul", year: "numeric" }).format(new Date()));

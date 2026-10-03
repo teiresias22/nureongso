@@ -1,16 +1,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
-  attendRate, officeBadge, CARD_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict, termText,
-  type CardStats, type Member, type OfficeTerm,
+  attendRate, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, OFFICES, partyColor, pct, shortDistrict, termText,
+  type CardRecord, type CardStats, type Member, type OfficeTerm,
 } from "@/lib/db";
 
 export const revalidate = 3600;
 
 type SP = { q?: string; party?: string; sort?: string; elect?: string; office?: string };
-
-/** 탭 순서. 데이터에서 뽑으면 가나다순이라 국회의원이 교육감 뒤로 간다. */
-const OFFICES = ["국회의원", "시도지사", "구시군의장", "교육감"];
 
 /** 직위마다 잴 수 있는 것이 다르다. 발의·표결은 국회에만 있고, 단체장·교육감은
  *  공약·득표율·당선 횟수뿐이다. 한 메뉴에 다 넣으면 어느 쪽을 고르든 절반은
@@ -53,16 +50,16 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
     // 현역 명부를 대조해 비어 있는 지역구를 센다 (뷰 vacant_seat).
     db.from("vacant_seat").select("sd_name, district, last_name"),
     // 출결·재산·겸직 등 공개 기록. 현직 한 사람당 한 줄(member_record, 560행 안쪽).
-    db.from("member_record").select("code, present, days, net_k, trips, studies, sidejob_flagged"),
+    db.from("member_record").select(CARD_REC_COLS),
   ]);
 
   if (!members?.length) return <Empty />;
 
   const vacancies = (vacant ?? []) as { sd_name: string; district: string; last_name: string }[];
   const statById = new Map((stats ?? []).map((s: CardStats) => [s.code, s]));
-  const recById = new Map(((records ?? []) as Rec[]).map((r) => [r.code, r]));
+  const recById = new Map(((records ?? []) as CardRecord[]).map((r) => [r.code, r]));
   // 출석률. 기록이 없으면 -1 로 뒤에 둔다(0% 와 '기록 없음' 은 다르다).
-  const attendOf = (r?: Rec) => (r?.days ? (r.present ?? 0) / r.days : -1);
+  const attendOf = (r?: CardRecord) => (r?.days ? (r.present ?? 0) / r.days : -1);
   // 단체장·교육감은 국회 선수가 없다. 그 직위로 몇 번 당선됐는지로 대신한다.
   const termBy = new Map(
     ((terms ?? []) as OfficeTerm[]).map((t) => [`${t.member_code}|${t.office}`, t]),
@@ -125,6 +122,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
 
   return (
     <div className="space-y-5">
+      {/* 화면에는 머리글의 로고·이름이 제목 노릇을 한다. 화면 낭독기와 검색엔진용 제목만 둔다. */}
+      <h1 className="sr-only">누렁소검은소 — 선출직 공약·의정활동 목록</h1>
       {/* 탭. 정렬은 탭마다 다르므로 탭을 옮길 때 sort 를 버린다. 검색어는 남긴다. */}
       <nav className="flex flex-wrap gap-1 border-b border-line text-sm">
         {["", ...OFFICES.filter((o) => offices.includes(o))].map((o) => {
@@ -355,13 +354,6 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
     </div>
   );
 }
-
-type Rec = {
-  code: string; present: number | null; days: number | null; net_k: number | null;
-  trips: number | null; studies: number | null; sidejob_flagged: number | null;
-};
-
-/** 천원 → '16.6억'. 카드 칸이 좁아 억 한 자리로 줄인다. */
 
 /** 카드의 수치 하나. on 이면 지금 정렬 기준이라 테두리를 두른다(색만으로 가르지 않는다). */
 function Fig({ label, value, on }: { label: string; value: number | string; on?: boolean }) {

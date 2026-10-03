@@ -33,7 +33,7 @@ export async function generateMetadata(
   // 국회가 준 제안이유 원문을 그대로 줄인다. 새로 요약하지 않는다.
   const description = b.summary
     ? b.summary.replace(/\s+/g, " ").slice(0, 160)
-    : `의안번호 ${b.bill_no} · ${b.proc_result ?? "계류 중"}. 발의자와 처리 결과를 봅니다.`;
+    : `${[b.bill_no && `의안번호 ${b.bill_no}`, b.proc_result ?? "계류 중"].filter(Boolean).join(" · ")}. 발의자와 처리 결과를 봅니다.`;
   return {
     title: b.name,
     description,
@@ -67,8 +67,8 @@ export default async function BillPage({
       from
         ? db.from("member").select("code, name").eq("code", from).maybeSingle()
         : Promise.resolve({ data: null }),
-      // 의원별 표결. 한 법안에 300행 남짓이라 1000행 상한 아래다.
-      db.from("vote").select("member_code, result").eq("bill_id", id),
+      // 의원별 표결과 그 의원의 정당. 한 법안에 300행 남짓이라 1000행 상한 아래다.
+      db.from("vote_member").select("member_code, result, name, party").eq("bill_id", id),
     ]);
 
   // DB 오류를 '없는 법안' 404 로 내지 않는다(의원 페이지와 같은 이유).
@@ -81,17 +81,11 @@ export default async function BillPage({
   const co = list.filter((s) => s.role === "co");
   const back = backTo as { code: string; name: string } | null;
 
-  // vote.member_code 에는 외래키가 없어 member 를 임베드하지 못한다. 한 번 더 묻는다.
-  const vrows = (votes ?? []) as { member_code: string; result: string }[];
-  const { data: voters } = vrows.length
-    ? await db.from("member").select("code, name, party").in("code", vrows.map((v) => v.member_code))
-    : { data: [] };
-  const who = new Map(((voters ?? []) as { code: string; name: string; party: string | null }[])
-    .map((m) => [m.code, m]));
+  const vrows = (votes ?? []) as { member_code: string; result: string; name: string | null; party: string | null }[];
   const byParty = new Map<string, Record<string, number>>();
   for (const v of vrows) {
     // 위성정당으로 남은 사람은 모당에 넣는다(partyLine). 표결 당시엔 이미 합당해 같은 당이다.
-    const party = partyLine(who.get(v.member_code)?.party) || "정당 정보 없음";
+    const party = partyLine(v.party) || "정당 정보 없음";
     const t = byParty.get(party) ?? {};
     t[v.result] = (t[v.result] ?? 0) + 1;
     byParty.set(party, t);
@@ -103,7 +97,7 @@ export default async function BillPage({
   // 반대·기권은 이름까지 보인다. 찬성이 대부분인 법안에서 궁금한 건 '누가 반대했나' 다.
   const dissent = (k: string) =>
     vrows.filter((v) => v.result === k)
-      .map((v) => ({ code: v.member_code, ...who.get(v.member_code) }))
+      .map((v) => ({ code: v.member_code, name: v.name, party: v.party }))
       .sort((a, c) => (a.name ?? "").localeCompare(c.name ?? "", "ko"));
   // 소속 정당 다수와 다르게 던진 표. 규칙은 member_party_line 뷰·/rules#party-line 과 같다 —
   // 불참은 표가 아니고, 그 당에서 표를 던진 사람이 3명 미만이거나 1위가 동률이면 다수가 없다.
@@ -118,7 +112,7 @@ export default async function BillPage({
   }
   const offLine = vrows
     .filter((v) => v.result !== "불참")
-    .map((v) => ({ code: v.member_code, result: v.result, ...who.get(v.member_code) }))
+    .map((v) => ({ code: v.member_code, result: v.result, name: v.name, party: v.party }))
     .filter((m) => {
       const line = majority.get(partyLine(m.party));
       return line && line !== m.result;
@@ -158,7 +152,8 @@ export default async function BillPage({
       <header className="rounded-lg border border-line bg-card p-4">
         <h1 className="text-lg font-bold">{b.name}</h1>
         <p className="mt-1 text-sm text-muted">
-          의안번호 {b.bill_no} · 제안 {b.proposed_at} · {b.committee ?? "위원회 미배정"}
+          {[b.bill_no && `의안번호 ${b.bill_no}`, b.proposed_at && `제안 ${b.proposed_at}`, b.committee ?? "위원회 미배정"]
+            .filter(Boolean).join(" · ")}
         </p>
         <p className="mt-2 text-sm">
           <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">

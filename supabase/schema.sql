@@ -72,6 +72,14 @@ create table if not exists vote (
 );
 create index if not exists vote_member_idx on vote (member_code);
 
+-- 법안 상세의 정당별 표결. vote.member_code 에도 외래키가 없어 임베드가 안 된다. 예전엔 표결을
+-- 받은 뒤 의원 300명을 .in() 으로 한 번 더 물었다(왕복 두 번). 명부에 없는 표도 세야 해서 left join.
+create or replace view vote_member
+with (security_invoker = true) as
+select v.bill_id, v.member_code, v.result, m.name, m.party
+from vote v left join member m on m.code = v.member_code;
+grant select on vote_member to anon, authenticated;
+
 -- 본회의 표결에 부쳐진 의안 (집계)
 create table if not exists plenary_bill (
   bill_id     text primary key,

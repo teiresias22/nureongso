@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 import {
-  db, hasBills, lastPart, partyColor, pct, termLabel,
+  db, eok, hasBills, lastPart, partyColor, pct, termLabel,
   type Member, type MemberStats, type OfficeTerm,
 } from "@/lib/db";
 import { LOGO } from "@/lib/logo";
@@ -52,7 +52,7 @@ export default async function Image({ params }: { params: Promise<{ code: string
       ([
         ["공약", `${s?.pledge_count.toLocaleString() ?? 0}건`],
         term?.last_vote_rate != null ? ["득표율", `${term.last_vote_rate}%`] : null,
-        r?.net_k != null ? ["순재산", `${(r.net_k / 100000).toFixed(1)}억`] : null,
+        r?.net_k != null ? ["순재산", eok(r.net_k)] : null,
       ].filter(Boolean) as [string, string][]);
 
   const title = "누렁소검은소 공적 기록으로 보는 약속과 실천 기준일";

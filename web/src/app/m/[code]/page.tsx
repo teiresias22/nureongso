@@ -8,11 +8,10 @@ import {
   type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
   type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
 } from "@/lib/db";
-import { SITE } from "@/lib/site";
+import { kstYear, ldJson, pageOg, SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
-import { ldJson, pageOg } from "@/lib/site";
 
 export const revalidate = 3600;
 
@@ -108,12 +107,14 @@ const PLEDGE_SOURCES = [
  *  ponytail: 상수 하나로 끝낸다. 지난 대수 법안을 수집하게 되면 이 범위로는 모자라니
  *  그때 의원별 최초 발의 연도를 질의해 채운다. */
 const BILL_YEAR_FROM = 2024;
+/** 이 페이지가 쓰는 member 칸. 연락처·생년 같은 건 안 쓴다(Member 타입과 같다). */
+const MEMBER_COLS = "code, name, office, party, district, elect_type, term_count, terms, committees, photo_url";
 /** 국회 공개 명단의 보좌진 칸 순서(ingest.py STAFF_ROLES 와 같다). */
 const STAFF_ROLES = ["보좌관", "비서관", "비서"] as const;
 /** 업무추진비 목록에 펼칠 최근 줄 수. 한 달에 40~50건이라 한두 달치다. */
 const EXPENSE_SHOW = 60;
 const billYears = () => {
-  const now = new Date().getFullYear();
+  const now = kstYear();
   return Array.from({ length: now - BILL_YEAR_FROM + 1 }, (_, i) => String(now - i));
 };
 
@@ -149,7 +150,8 @@ export async function generateMetadata(
 ): Promise<Metadata> {
   const { code } = await params;
   const [{ data: member }, { data: stats }, { data: rec }] = await Promise.all([
-    db.from("member").select("name, office, party, district").eq("code", code).maybeSingle(),
+    // 본문과 같은 select 라 1시간 데이터 캐시를 한 칸으로 같이 쓴다.
+    db.from("member").select(MEMBER_COLS).eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
     // 현직만 있다(member_record). 역대 인물은 비어 있어 수치를 빼고 쓴다.
     db.from("member_record").select("present, days, net_k").eq("code", code).maybeSingle(),
@@ -170,7 +172,7 @@ export async function generateMetadata(
   if (hasPledges(s)) facts.push(`공약 ${s!.pledge_count}건`);
   const r = rec as { present: number | null; days: number | null; net_k: number | null } | null;
   if (r?.days) facts.push(`본회의 출석 ${pct(r.present ?? 0, r.days)}%`);
-  if (r?.net_k != null) facts.push(`순재산 ${(r.net_k / 100000).toFixed(1)}억`);
+  if (r?.net_k != null) facts.push(`순재산 ${eok(r.net_k)}`);
 
   const title = `${m.name} · ${who}`;
   const description = facts.length
@@ -223,11 +225,13 @@ export default async function MemberPage({
     { data: studyRows },
     { data: staffRows },
   ] = await Promise.all([
-    db.from("member").select("*").eq("code", code).maybeSingle(),
+    db.from("member").select(MEMBER_COLS).eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
     bills(code, "rep", repFilter, repYear, repPage),
     bills(code, "co", coFilter, coYear, coPage),
-    db.from("candidacy").select("*").eq("member_code", code).order("election_id", { ascending: false }),
+    db.from("candidacy")
+      .select("id, election_id, sg_typecode, office, sd_name, district, party, giho, vote_rate, elected, member_code")
+      .eq("member_code", code).order("election_id", { ascending: false }),
     db.from("member_office_term").select("*").eq("member_code", code),
     // 선거공보 원문 PDF. 공약은 이 PDF 를 AI 가 읽어 정리한 것이라, 정리가 미덥지
     // 않으면 원문으로 갈 수 있어야 한다. 사람당 많아야 서너 줄이다.
@@ -235,7 +239,7 @@ export default async function MemberPage({
     db
       .from("pledge")
       .select(
-        "id, title, body, category, election_id, source, kinds, pledge_status(status, decided_by, note), pledge_evidence(kind, ref_id, summary, score)",
+        "id, title, body, category, election_id, source, kinds, pledge_status(status, decided_by, note), pledge_evidence(kind, ref_id, summary)",
       )
       .eq("member_code", code)
       .order("order_no"),
@@ -327,13 +331,6 @@ export default async function MemberPage({
   const bidQ = bidIds.length
     ? db.from("bid_notice").select("id, name, budget, notice_at, url").in("id", bidIds)
     : Promise.resolve({ data: [] });
-  // 위 셋은 서로 기다릴 필요가 없다. 차례로 기다리면 왕복이 셋이다.
-  const [{ data: rivalRows }, { data: ordinRows }, { data: bidRows }] =
-    await Promise.all([rivalQ, ordinQ, bidQ]);
-  const ordinBy = new Map(
-    (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
-  );
-  const bidBy = new Map((bidRows ?? []).map((b) => [b.id as string, b as BidNotice]));
 
   // 선거·출처마다 공보 PDF 가 하나씩이다. 공약마다 같은 주소를 붙이면 한 사람에게
   // 수십 번 반복되므로 구획 머리글에 한 번만 건다.
@@ -356,57 +353,8 @@ export default async function MemberPage({
   // 지역구에서 임기 중 발주된 공공 공사. 공약과는 잇지 않는다 — 한 시군구를 여럿이
   // 나눠 갖는 의원이 253명 중 168명이라 누구 덕인지 가릴 수가 없다. 사실만 보인다.
   const isDistrictMP = isMP && m.elect_type !== "비례대표";
-  // 같은 선거구에 함께 나온 후보들의 공약 중 같은 약속. 한 지역 공약은 비슷비슷해서,
-  // 무엇이 같은지 갈라 줘야 무엇이 다른지 보인다.
-  //
-  // 공약서(대표공약)끼리만 본다. 당선인은 선거공보 전체 공약도 있지만 낙선자는 공약서
-  // 5~10개뿐이라 섞으면 한쪽만 길어 비교가 기울어진다.
-  //
-  // 국회의원은 대상이 아니다. 선관위가 선거 후 당선인 공약만 남겨 낙선자 것을 구할 수 없다.
+  // 이번 직위로 당선된 선거. 발주 기관(headOrg)과 아래 공약 비교가 여기서 갈린다.
   const ownRace = isMP ? undefined : runs.find((c) => c.elected && c.office === m.office);
-  const raceRivals = ownRace ? rivalsOf(ownRace) : [];
-  const myDocPledges = (pledges ?? []).filter(
-    (p) => p.source === "공약서" && p.election_id === ownRace?.election_id,
-  );
-  const rivalCodes = [...new Set(raceRivals.map((r) => r.member_code).filter(Boolean))] as string[];
-  // 쌍은 a<b 로 한 줄만 있다. 내 공약이 a 쪽일 수도 b 쪽일 수도 있어 양쪽을 다 찾는다.
-  // 경쟁자 공약과 같이 받는다 — 다른 선거에서 온 쌍은 아래에서 rivalById 로 걸러진다.
-  const myIds = myDocPledges.map((p) => p.id as number);
-  const [{ data: rivalPledges }, { data: overlapRows }] = rivalCodes.length && myIds.length
-    ? await Promise.all([
-      db
-        .from("pledge")
-        .select("id, member_code, title")
-        .in("member_code", rivalCodes)
-        .eq("election_id", ownRace!.election_id)
-        .eq("source", "공약서")
-        .order("order_no"),
-      db
-        .from("pledge_overlap")
-        .select("a, b, summary, specific")
-        .eq("specific", true)
-        .or(`a.in.(${myIds.join(",")}),b.in.(${myIds.join(",")})`),
-    ])
-    : [{ data: [] }, { data: [] }];
-  const myTitle = new Map(myDocPledges.map((p) => [p.id as number, p.title as string]));
-  const rivalById = new Map(
-    ((rivalPledges ?? []) as RivalPledge[]).map((p) => [p.id, p]),
-  );
-  /** 경쟁자별 겹친 쌍. 내 공약 제목 ↔ 그 사람 공약 제목. */
-  const overlapBy = new Map<string, { mine: string; theirs: string; why: string | null }[]>();
-  for (const o of (overlapRows ?? []) as PledgeOverlap[]) {
-    const [mineId, theirId] = myTitle.has(o.a) ? [o.a, o.b] : [o.b, o.a];
-    const theirs = rivalById.get(theirId);
-    // 같은 선거구의 다른 사람이 아니면(다른 선거에서 온 쌍) 건너뛴다.
-    if (!theirs || !myTitle.has(mineId) || !theirs.member_code) continue;
-    const list = overlapBy.get(theirs.member_code) ?? [];
-    list.push({ mine: myTitle.get(mineId)!, theirs: theirs.title, why: o.summary });
-    overlapBy.set(theirs.member_code, list);
-  }
-  const rivalPledgeCount = new Map<string, number>();
-  for (const p of (rivalPledges ?? []) as RivalPledge[]) {
-    if (p.member_code) rivalPledgeCount.set(p.member_code, (rivalPledgeCount.get(p.member_code) ?? 0) + 1);
-  }
 
   // 발주 공사. 두 갈래인데 뜻이 다르다.
   //   국회의원 — 지역구 안에서 남이 발주한 것. 본인은 발주 권한이 없다.
@@ -469,11 +417,14 @@ export default async function MemberPage({
   const line = partyLine as PartyLine | null;
   // 비교 띠에 쓸 다른 의원들. 출결은 그 대수 전원(21대 322·22대 299 — 1000행 상한 아래),
   // 정당 표는 비교가 100표 이상인 사람만(재보궐로 막 들어온 몇 표짜리가 끝에 몰린다).
-  // 발주 공사·업무추진비도 여기서 같이 기다린다. 서로 기다릴 필요가 없다.
+  // 경쟁 후보·근거 조례·발주 공고·발주 공사·업무추진비도 여기서 같이 기다린다. 모두 첫 묶음
+  // 결과만 있으면 되고 서로는 기다릴 필요가 없다. 따로 기다리면 왕복이 하나 더 는다.
   const [
+    { data: rivalRows }, { data: ordinRows }, { data: bidRows },
     { data: attPeers }, { data: linePeers }, { data: issueStats },
     { data: districtBids, count: districtBidTotal }, [{ data: expenseMonths }, { data: expenseRows }],
   ] = await Promise.all([
+    rivalQ, ordinQ, bidQ,
     att
       ? db.from("attendance").select("age, present, days").eq("age", att.age)
       : Promise.resolve({ data: [] }),
@@ -489,6 +440,61 @@ export default async function MemberPage({
     districtBidQ,
     expenseQ,
   ]);
+  const ordinBy = new Map(
+    (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
+  );
+  const bidBy = new Map((bidRows ?? []).map((b) => [b.id as string, b as BidNotice]));
+
+  // 같은 선거구에 함께 나온 후보들의 공약 중 같은 약속. 한 지역 공약은 비슷비슷해서,
+  // 무엇이 같은지 갈라 줘야 무엇이 다른지 보인다.
+  //
+  // 공약서(대표공약)끼리만 본다. 당선인은 선거공보 전체 공약도 있지만 낙선자는 공약서
+  // 5~10개뿐이라 섞으면 한쪽만 길어 비교가 기울어진다.
+  //
+  // 국회의원은 대상이 아니다. 선관위가 선거 후 당선인 공약만 남겨 낙선자 것을 구할 수 없다.
+  const raceRivals = ownRace ? rivalsOf(ownRace) : [];
+  const myDocPledges = (pledges ?? []).filter(
+    (p) => p.source === "공약서" && p.election_id === ownRace?.election_id,
+  );
+  const rivalCodes = [...new Set(raceRivals.map((r) => r.member_code).filter(Boolean))] as string[];
+  // 쌍은 a<b 로 한 줄만 있다. 내 공약이 a 쪽일 수도 b 쪽일 수도 있어 양쪽을 다 찾는다.
+  // 경쟁자 공약과 같이 받는다 — 다른 선거에서 온 쌍은 아래에서 rivalById 로 걸러진다.
+  const myIds = myDocPledges.map((p) => p.id as number);
+  const [{ data: rivalPledges }, { data: overlapRows }] = rivalCodes.length && myIds.length
+    ? await Promise.all([
+      db
+        .from("pledge")
+        .select("id, member_code, title")
+        .in("member_code", rivalCodes)
+        .eq("election_id", ownRace!.election_id)
+        .eq("source", "공약서")
+        .order("order_no"),
+      db
+        .from("pledge_overlap")
+        .select("a, b, summary, specific")
+        .eq("specific", true)
+        .or(`a.in.(${myIds.join(",")}),b.in.(${myIds.join(",")})`),
+    ])
+    : [{ data: [] }, { data: [] }];
+  const myTitle = new Map(myDocPledges.map((p) => [p.id as number, p.title as string]));
+  const rivalById = new Map(
+    ((rivalPledges ?? []) as RivalPledge[]).map((p) => [p.id, p]),
+  );
+  /** 경쟁자별 겹친 쌍. 내 공약 제목 ↔ 그 사람 공약 제목. */
+  const overlapBy = new Map<string, { mine: string; theirs: string; why: string | null }[]>();
+  for (const o of (overlapRows ?? []) as PledgeOverlap[]) {
+    const [mineId, theirId] = myTitle.has(o.a) ? [o.a, o.b] : [o.b, o.a];
+    const theirs = rivalById.get(theirId);
+    // 같은 선거구의 다른 사람이 아니면(다른 선거에서 온 쌍) 건너뛴다.
+    if (!theirs || !myTitle.has(mineId) || !theirs.member_code) continue;
+    const list = overlapBy.get(theirs.member_code) ?? [];
+    list.push({ mine: myTitle.get(mineId)!, theirs: theirs.title, why: o.summary });
+    overlapBy.set(theirs.member_code, list);
+  }
+  const rivalPledgeCount = new Map<string, number>();
+  for (const p of (rivalPledges ?? []) as RivalPledge[]) {
+    if (p.member_code) rivalPledgeCount.set(p.member_code, (rivalPledgeCount.get(p.member_code) ?? 0) + 1);
+  }
   const expMonths = (expenseMonths ?? []) as { month: string; n: number; total: number }[];
   const expCount = expMonths.reduce((a, r) => a + r.n, 0);
   const expTotal = expMonths.reduce((a, r) => a + Number(r.total), 0);
@@ -569,7 +575,7 @@ export default async function MemberPage({
             alt=""
             width={80}
             height={96}
-            priority
+            preload
             className="h-24 w-20 rounded object-cover"
           />
         )}
@@ -916,7 +922,7 @@ export default async function MemberPage({
               const st = p.pledge_status as unknown as
                 { status: string; decided_by: string; note: string | null } | null;
               const ev = (p.pledge_evidence ?? []) as unknown as {
-                kind: string; ref_id: string; summary: string | null; score: number | null;
+                kind: string; ref_id: string; summary: string | null;
               }[];
               return (
                 <li key={p.id}>
@@ -959,7 +965,7 @@ export default async function MemberPage({
                               >
                                 발주 공고 · {bd.name}
                                 {bd.budget
-                                  ? ` (${Math.round(bd.budget / 100000000)}억)`
+                                  ? ` (${eok(bd.budget / 1000)})`
                                   : ""}
                               </a>
                             ) : o ? (
@@ -1181,7 +1187,7 @@ export default async function MemberPage({
                   <span className="mt-0.5 block text-xs text-muted">
                     {[
                       b.notice_at,
-                      b.budget ? `${Math.round(b.budget / 100000000)}억` : null,
+                      b.budget ? eok(b.budget / 1000) : null,
                       b.org,
                     ]
                       .filter(Boolean)

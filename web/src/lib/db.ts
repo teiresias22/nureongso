@@ -32,6 +32,16 @@ export type Member = {
   is_incumbent?: boolean;
 };
 
+/** 목록 카드(홈·내 지역)의 공개 기록 칸. member_record 에서 이것만 받는다. */
+export const CARD_REC_COLS = "code, present, days, net_k, trips, studies, sidejob_flagged";
+export type CardRecord = {
+  code: string; present: number | null; days: number | null; net_k: number | null;
+  trips: number | null; studies: number | null; sidejob_flagged: number | null;
+};
+
+/** 직위 탭 순서(홈·통계). 데이터에서 뽑으면 가나다순이라 국회의원이 교육감 뒤로 간다. */
+export const OFFICES = ["국회의원", "시도지사", "구시군의장", "교육감"];
+
 /** 목록 카드가 실제로 쓰는 칸. 558행을 받는 화면에서 `select *` 를 하면 위원회
  *  이름 같은 긴 글이 통째로 따라와 쿼리가 349ms 에서 154ms 로 벌어진다(실측).
  *  화면에 안 쓰는 값은 받지 않는다. */

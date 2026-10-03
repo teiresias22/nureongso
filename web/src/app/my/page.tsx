@@ -3,8 +3,8 @@ import { Photo } from "../page";
 import { AreaPicker } from "./picker";
 import { pageOg } from "@/lib/site";
 import {
-  attendRate, districtArea, officeBadge, CARD_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
-  type CardStats, type Member,
+  attendRate, districtArea, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
+  type CardRecord, type CardStats, type Member,
 } from "@/lib/db";
 
 export const revalidate = 3600;
@@ -63,12 +63,12 @@ export default async function MyPage({
     db.from("member").select(CARD_COLS).eq("is_incumbent", true),
     db.from("member_stats").select(CARD_STAT_COLS).eq("is_incumbent", true),
     // 출결·재산·겸직 등 공개 기록. 현직 한 사람당 한 줄이다(member_record).
-    db.from("member_record").select("code, present, days, net_k, trips, studies, sidejob_flagged"),
+    db.from("member_record").select(CARD_REC_COLS),
   ]);
 
   const areaBy = new Map(((areas ?? []) as Area[]).map((a) => [a.member_code, a]));
   const statBy = new Map((stats ?? []).map((s: CardStats) => [s.code, s]));
-  const recBy = new Map(((records ?? []) as Rec[]).map((r) => [r.code, r]));
+  const recBy = new Map(((records ?? []) as CardRecord[]).map((r) => [r.code, r]));
 
   // 시도 → 시군구 목록. 통째로 클라이언트에 넘겨 시도를 고르는 즉시 채운다.
   const byRegion = new Map<string, Set<string>>();
@@ -160,14 +160,7 @@ export default async function MyPage({
   );
 }
 
-type Rec = {
-  code: string; present: number | null; days: number | null; net_k: number | null;
-  trips: number | null; studies: number | null; sidejob_flagged: number | null;
-};
-
-/** 천원 → '16.6억'. 카드 칸이 좁아 억 한 자리로 줄인다. */
-
-function Card({ m, s, r }: { m: Member; s?: CardStats; r?: Rec }) {
+function Card({ m, s, r }: { m: Member; s?: CardStats; r?: CardRecord }) {
   const mp = (m.office ?? "국회의원") === "국회의원";
   const area = mp ? districtArea(m.district) : "";
   return (

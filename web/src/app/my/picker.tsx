@@ -21,6 +21,7 @@ export function AreaPicker({
     <form className="flex flex-wrap items-center gap-2">
       <select
         name="sd"
+        aria-label="시·도"
         value={sd}
         // 시도를 바꾸면 앞 시군구는 버린다. 그 시도에 없는 이름이라 결과가 0명이 된다.
         onChange={(e) => {
@@ -38,6 +39,7 @@ export function AreaPicker({
       </select>
       <select
         name="wiw"
+        aria-label="시·군·구"
         value={wiw}
         onChange={(e) => setWiw(e.target.value)}
         disabled={!sd}

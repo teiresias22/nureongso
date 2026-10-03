@@ -38,7 +38,7 @@ export default async function Image() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <img src={LOGO} width={187} height={104} />
+          <img src={LOGO} alt="" width={187} height={104} />
           <div style={{ fontSize: 88, fontWeight: 700 }}>{title}</div>
         </div>
         <div style={{ marginTop: 20, fontSize: 40, color: "#a1a1aa" }}>{sub}</div>

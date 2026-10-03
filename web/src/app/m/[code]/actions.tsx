@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 
 const KEY = "nrs.compare";
 const BTN =
@@ -9,12 +9,28 @@ const BTN =
 
 type Picked = { code: string; name: string };
 
-function read(): Picked[] {
+// 비교함 원문(JSON). 처음 읽을 때 저장소에서 한 번 가져오고 이후로는 이 값이 기준이다 —
+// 저장이 막혀도(사생활 보호 모드) 이 탭 안에서는 담기·빼기가 동작한다.
+let raw: string | null = null;
+const listeners = new Set<() => void>();
+const subscribe = (f: () => void) => (listeners.add(f), () => void listeners.delete(f));
+const snapshot = () => {
+  if (raw == null) {
+    try {
+      raw = localStorage.getItem(KEY) || "[]";
+    } catch {
+      raw = "[]";
+    }
+  }
+  return raw;
+};
+
+function parse(v: string): Picked[] {
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) || "[]");
-    return Array.isArray(v) ? v.slice(0, 2) : [];
+    const x = JSON.parse(v);
+    return Array.isArray(x) ? x.slice(0, 2) : [];
   } catch {
-    return []; // 사생활 보호 모드나 저장소 차단. 비어 있는 것으로 본다.
+    return [];
   }
 }
 
@@ -27,20 +43,22 @@ function read(): Picked[] {
  *  localStorage 를 쓴다. 서버에 담아두려면 계정이 필요하고, 이 서비스는 계정을
  *  만들지 않는다. 기기 사이로 안 넘어가지만 비교는 한자리에서 끝나는 일이다. */
 export function CompareButton({ code, name }: Picked) {
-  const [list, setList] = useState<Picked[] | null>(null); // null = 아직 안 읽음
-  useEffect(() => setList(read()), []);
+  // 서버에서는 null(아직 안 읽음). 저장소를 effect 에서 읽어 setState 하면 렌더가 한 번 더 돈다.
+  const stored = useSyncExternalStore(subscribe, snapshot, () => null);
+  const list = useMemo(() => (stored == null ? null : parse(stored)), [stored]);
 
   // 서버 렌더와 첫 그리기를 맞춘다. 저장소를 읽기 전에 '빼기' 를 보이면 깜빡인다.
   if (!list) return <span className={`${BTN} invisible`}>비교함에 담기</span>;
 
   const has = list.some((x) => x.code === code);
   const save = (next: Picked[]) => {
-    setList(next);
+    raw = JSON.stringify(next);
     try {
-      localStorage.setItem(KEY, JSON.stringify(next));
+      localStorage.setItem(KEY, raw);
     } catch {
-      // 저장이 막혀도 이 화면 안에서는 동작한다.
+      // 저장이 막혀도 이 화면 안에서는 동작한다(raw 가 기준이다).
     }
+    listeners.forEach((f) => f());
   };
 
   const other = list.find((x) => x.code !== code);

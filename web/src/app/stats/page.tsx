@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { db, eok, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
+import { db, eok, OFFICES, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
 import { pageOg } from "@/lib/site";
 
 export const revalidate = 3600;
@@ -23,9 +23,8 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
   const { office = "국회의원", by = "party" } = await searchParams;
   const view = by === "region" ? "region_stats" : "party_stats";
 
-  const [{ data: rows }, { data: offices }, { data: recRows }] = await Promise.all([
+  const [{ data: rows }, { data: recRows }] = await Promise.all([
     db.from(view).select("*").eq("office", office),
-    db.from("member_region").select("office").eq("is_incumbent", true),
     db.from("group_record_stats").select("*").eq("office", office).eq("by", by === "region" ? "region" : "party"),
   ]);
   const records = ((recRows ?? []) as GroupRecord[])
@@ -35,7 +34,6 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
   const list = ((rows ?? []) as GroupStats[])
     .filter((r) => r.members > 0)
     .sort((a, b) => b.members - a.members);
-  const officeList = [...new Set((offices ?? []).map((o) => o.office).filter(Boolean))].sort();
   const hasBills = list.some((r) => r.rep_count > 0);
   const max = Math.max(1, ...list.map((r) => (hasBills ? r.rep_count / r.members : r.pledge_count / r.members)));
 
@@ -59,7 +57,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
           defaultValue={office}
           className="rounded-md border border-line bg-card px-3 py-2 text-sm"
         >
-          {officeList.map((o) => (
+          {OFFICES.map((o) => (
             <option key={o} value={o!}>
               {o}
             </option>
@@ -122,7 +120,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
                           />
                         )}
                         <span className={few ? "" : "font-medium text-foreground"}>
-                          {r.name}{few && <span aria-label="인원 적음">*</span>}
+                          {r.name}{few && <><span aria-hidden="true">*</span><span className="sr-only">(인원 적음)</span></>}
                         </span>
                       </span>
                     </td>
@@ -154,7 +152,8 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
                           <span className="block text-[11px] text-muted">계류 {r.rep_pending.toLocaleString()}</span>
                         </td>
                         <td className="px-2 py-2.5 text-right tabular-nums">
-                          {pct(r.vote_attended, r.vote_total)}%
+                          {/* 표결 기록이 없는 묶음(임기 중 들어온 사람뿐)을 0% 로 두지 않는다. */}
+                          {r.vote_total ? `${pct(r.vote_attended, r.vote_total)}%` : "—"}
                         </td>
                       </>
                     )}
@@ -193,8 +192,6 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
     </div>
   );
 }
-
-/** 천원 → '13.0억'. 표 칸이 좁아 억 단위 한 자리로 줄인다. */
 
 /** 의원 상세의 공개 기록을 묶음별로. 순서는 위 표와 같이 인원 순이다.
  *  단체장·교육감은 국회 활동이 없어 재산만 남는다. */
@@ -247,7 +244,7 @@ function RecordTable({ rows, by, office }: { rows: GroupRecord[]; by: string; of
                         <span className="h-3 w-1 shrink-0 rounded-full" style={{ background: partyColor(r.name) }} />
                       )}
                       <span className={few ? "" : "font-medium text-foreground"}>
-                        {r.name}{few && <span aria-label="인원 적음">*</span>}
+                        {r.name}{few && <><span aria-hidden="true">*</span><span className="sr-only">(인원 적음)</span></>}
                       </span>
                     </span>
                   </td>
