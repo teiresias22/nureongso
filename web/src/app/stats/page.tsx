@@ -1,12 +1,17 @@
 import Link from "next/link";
 import { db, eok, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
+import { pageOg } from "@/lib/site";
 
 export const revalidate = 3600;
 
+const TITLE = "정당·지역별 통계";
+const DESC = "정당과 지역에 따라 의정활동·출결·재산 같은 공개 기록이 어떻게 다른지 비교합니다.";
+
 export const metadata = {
-  title: "정당·지역별 통계",
+  title: TITLE,
   alternates: { canonical: "/stats" },
-  description: "정당과 지역에 따라 의정활동·출결·재산 같은 공개 기록이 어떻게 다른지 비교합니다.",
+  description: DESC,
+  ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/stats"),
 };
 
 type SP = { office?: string; by?: string };
@@ -146,6 +151,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
                         </td>
                         <td className="px-2 py-2.5 text-right tabular-nums">
                           {pct(r.rep_passed, r.rep_count)}%
+                          <span className="block text-[11px] text-muted">계류 {r.rep_pending.toLocaleString()}</span>
                         </td>
                         <td className="px-2 py-2.5 text-right tabular-nums">
                           {pct(r.vote_attended, r.vote_total)}%

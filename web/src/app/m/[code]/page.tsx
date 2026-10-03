@@ -12,6 +12,7 @@ import { SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
+import { ldJson, pageOg } from "@/lib/site";
 
 export const revalidate = 3600;
 
@@ -24,6 +25,8 @@ const DISTRICT_BID_PAGE = 30;
  *  하나씩 덮어쓴다(.github/workflows/race.yml). */
 const SHOW_RACE = true;
 
+/** 제22대 국회 임기 시작. 이 날 전 공고는 21대 임기의 것이다. */
+const MP_TERM_START = "2024-05-30";
 /** 제22대 국회 임기 시작(2024-05-30) + 1년. 이 날 전에 나온 공고는 전임 임기에
  *  준비된 것일 수 있다 — 공공 공사는 예산 편성부터 발주까지 보통 1년이 넘는다.
  *  버리지 않고 표시만 한다. 판단은 보는 사람 몫이다. */
@@ -129,7 +132,7 @@ function bills(code: string, role: "rep" | "co", filter: string, year: string, p
   // 연도는 처리 상태와 따로 걸린다 — '2025년에 낸 것 중 가결된 것' 을 볼 수 있어야 한다.
   if (year) q = q.gte("proposed_at", `${year}-01-01`).lte("proposed_at", `${year}-12-31`);
   return q
-    .order("proposed_at", { ascending: false })
+    .order("proposed_at", { ascending: false, nullsFirst: false })
     .range((page - 1) * PAGE, page * PAGE - 1);
 }
 
@@ -180,8 +183,8 @@ export async function generateMetadata(
     // 법안 목록 필터·페이지가 쿼리로 붙는다. canonical 이 없으면
     // ?rep=passed&repPage=3 같은 조합이 전부 따로 색인된다.
     alternates: { canonical: `/m/${code}` },
-    openGraph: { title, description, type: "profile", url: `/m/${code}` },
-    twitter: { card: "summary_large_image", title, description },
+    // 이미지는 이 경로의 opengraph-image(의원 카드)가 채운다.
+    ...pageOg(title, description, `/m/${code}`, { type: "profile", image: false }),
   };
 }
 
@@ -203,7 +206,7 @@ export default async function MemberPage({
   const coPage = Math.max(1, Number(sp.coPage) || 1);
 
   const [
-    { data: member },
+    { data: member, error: memberError },
     { data: stats },
     { data: repBills, count: repTotal },
     { data: coBills, count: coTotal },
@@ -241,7 +244,7 @@ export default async function MemberPage({
     db.from("asset_report")
       .select("pdf_id, source, position, peer, kind, notice_date, issue, page, source_url, total_prev_k, total_now_k, breakdown, refused")
       .eq("member_code", code)
-      .order("notice_date", { ascending: false }),
+      .order("notice_date", { ascending: false, nullsFirst: false }),
     db.from("member_party_line").select("*").eq("code", code).maybeSingle(),
     // 출결은 대수마다 한 줄(21대·22대). 최근 대수가 위.
     db.from("attendance")
@@ -251,11 +254,11 @@ export default async function MemberPage({
     db.from("member_sidejob")
       .select("id, age, opened_at, org, position, decision, decision_kind")
       .eq("member_code", code)
-      .order("opened_at", { ascending: false }),
+      .order("opened_at", { ascending: false, nullsFirst: false }),
     db.from("member_trip")
       .select("id, age, companions, destination, purpose, period, start_on, end_on, funder, reported")
       .eq("member_code", code)
-      .order("start_on", { ascending: false }),
+      .order("start_on", { ascending: false, nullsFirst: false }),
     db.from("member_research")
       .select("id, age, group_name, topic, objective, role, member_cnt, link_url")
       .eq("member_code", code)
@@ -270,6 +273,9 @@ export default async function MemberPage({
     db.from("member_staff").select("role").eq("member_code", code).is("left_on", null),
   ]);
 
+  // DB 가 멈췄을 때 '없는 사람' 404 를 내면 검색엔진이 실제 인물 페이지를 지운다.
+  // 던져서 500 으로 낸다 — 일시 오류로 보고 다시 온다.
+  if (memberError) throw memberError;
   if (!member) notFound();
   const m = member as Member;
 
@@ -408,9 +414,9 @@ export default async function MemberPage({
   // 뒤쪽이 훨씬 가깝지만 그래도 '해냈다' 는 아니다 (전임자가 준비한 사업이 많다).
   const headOrg = isMP ? null : headOrgOf(m.office, ownRace?.sd_name ?? null, ownRace?.district ?? null);
   const showBids = isDistrictMP || !!headOrg;
-  // 국회의원은 2024년 개원부터, 단체장·교육감은 2026년 취임부터. 남의 임기에 나온
-  // 공고를 자기 것처럼 늘어놓으면 안 된다.
-  const bidFrom = isMP ? `${BILL_YEAR_FROM}-01-01` : HEAD_TERM_START;
+  // 국회의원은 22대 개원부터, 단체장·교육감은 2026년 취임부터. 남의 임기에 나온
+  // 공고를 자기 것처럼 늘어놓으면 안 된다. 연도를 골라도 이 바닥은 지킨다.
+  const bidFrom = isMP ? MP_TERM_START : HEAD_TERM_START;
   const bidYears = years.filter((y) => y >= bidFrom.slice(0, 4));
   const bidYear = bidYears.includes(sp.bidYear ?? "") ? sp.bidYear! : "";
   const bidPage = Math.max(1, Number(sp.bidPage) || 1);
@@ -423,10 +429,10 @@ export default async function MemberPage({
           : db.from("bid_notice_uniq")
               .select("id, name, org, budget, notice_at, region, url", { count: "exact" })
               .eq("org", headOrg!);
-        q = q.gte("notice_at", bidYear ? `${bidYear}-01-01` : bidFrom);
+        q = q.gte("notice_at", bidYear && `${bidYear}-01-01` > bidFrom ? `${bidYear}-01-01` : bidFrom);
         if (bidYear) q = q.lte("notice_at", `${bidYear}-12-31`);
         return q
-          .order("budget", { ascending: false })
+          .order("budget", { ascending: false, nullsFirst: false })
           .range((bidPage - 1) * DISTRICT_BID_PAGE, bidPage * DISTRICT_BID_PAGE - 1);
       })()
     : Promise.resolve({ data: [], count: 0 });
@@ -441,15 +447,13 @@ export default async function MemberPage({
         db.from("head_expense")
           .select("source_url, seq, period, used_at, place, purpose, amount, headcount")
           .eq("org", expenseOrg).gte("used_at", HEAD_TERM_START)
-          .order("used_at", { ascending: false }).limit(EXPENSE_SHOW),
+          .order("used_at", { ascending: false, nullsFirst: false }).limit(EXPENSE_SHOW),
       ])
     : Promise.resolve([{ data: [] }, { data: [] }]);
 
   // 국회의원은 열린국회정보의 선수를, 나머지는 선관위 당선 횟수를 쓴다.
   const term = ((terms ?? []) as OfficeTerm[]).find((t) => t.office === m.office);
   const showPledges = hasPledges(s);
-  // 이행 판정을 아직 한 건도 안 했다. 이때 0% 를 보이면 '아무것도 안 지켰다' 로 읽힌다.
-  const judged = (pledges ?? []).some((p) => p.pledge_status);
   // 공약이 실제로 있는 선거만, 최근 순. 첫 번째가 이번 임기다.
   const pledgeElections = [...new Set((pledges ?? []).map((p) => p.election_id as string))]
     .filter(Boolean)
@@ -544,7 +548,7 @@ export default async function MemberPage({
     <div className="space-y-6">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: ldJson(jsonLd) }}
       />
       <div className="flex items-center gap-2">
         <Link href="/" className="text-xs text-muted hover:underline">
@@ -686,8 +690,9 @@ export default async function MemberPage({
             sub={
               s.pledge_law > 0
                 ? `법률로 재는 공약 ${s.pledge_law} · 발의 ${s.pledge_law_filed} · 통과 ${s.pledge_law_passed}`
-                : judged
-                  ? `이행 완료 ${s.pledge_done}/${s.pledge_count} (${pct(s.pledge_done, s.pledge_count)}%)`
+                // 분모는 판정한 공약만. 판정 전 공약까지 넣으면 '안 지켰다' 로 읽힌다.
+                : s.pledge_judged > 0
+                  ? `이행 완료 ${s.pledge_done}/${s.pledge_judged} (${pct(s.pledge_done, s.pledge_judged)}%) · 판정 ${s.pledge_judged}/${s.pledge_count}`
                   : "이행 판정 전"
             }
             href={nav.find((n) => n.id.startsWith("p-"))?.id ? `#${nav.find((n) => n.id.startsWith("p-"))!.id}` : undefined}
@@ -903,7 +908,7 @@ export default async function MemberPage({
             </p>
             <PledgeStatusBar
               statuses={list.map((p) =>
-                ((p.pledge_status as unknown as { status: string } | null)?.status) ?? "판단불가")}
+                ((p.pledge_status as unknown as { status: string } | null)?.status) ?? "미판정")}
             />
             <MoreDetails label={`공약 ${list.length}건 하나씩 보기`}>
             <ul className="divide-y divide-line">
@@ -1860,11 +1865,13 @@ const STATUS_BG: Record<string, string> = {
 };
 const STATUS_FILL: Record<string, string> = {
   완료: "#15803d", 진행: "#b45309", 미착수: "#78716c", 판단불가: "var(--viz-peer)",
+  // 판정 행이 없는 공약. 판단불가는 '판정했는데 근거가 모자란다' 라서 섞으면 안 된다.
+  미판정: "#d6d3d1",
 };
 
 /** 한 선거 공약의 상태 분포. 목록을 다 내려 보지 않아도 몇 건이 어디쯤인지 보인다. */
 function PledgeStatusBar({ statuses }: { statuses: string[] }) {
-  const order = ["완료", "진행", "미착수", "판단불가"];
+  const order = ["완료", "진행", "미착수", "판단불가", "미판정"];
   const count = (k: string) => statuses.filter((x) => x === k).length;
   return (
     <div className="border-b border-line px-4 py-3">

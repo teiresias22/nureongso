@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Photo } from "../page";
 import { AreaPicker } from "./picker";
+import { pageOg } from "@/lib/site";
 import {
   attendRate, districtArea, officeBadge, CARD_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
   type CardStats, type Member,
@@ -8,11 +9,14 @@ import {
 
 export const revalidate = 3600;
 
+const TITLE = "내 지역 대표";
+const DESC = "우리 동네 국회의원·시도지사·구청장·교육감을 한 화면에서. 선거공보에 없는 지난 임기 기록과 출석·재산 같은 공개 기록을 봅니다.";
+
 export const metadata = {
-  title: "내 지역 대표",
+  title: TITLE,
   alternates: { canonical: "/my" },
-  description:
-    "우리 동네 국회의원·시도지사·구청장·교육감을 한 화면에서. 선거공보에 없는 지난 임기 기록과 출석·재산 같은 공개 기록을 봅니다.",
+  description: DESC,
+  ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/my"),
 };
 
 /** 선관위가 주는 시도·시군구. member.district 는 직위마다 모양이 달라 못 쓴다. */
@@ -33,6 +37,14 @@ const SD_MERGED: Record<string, string> = {
 };
 const sido = (v: string | null) => (v ? SD_MERGED[v] ?? v : "");
 
+/** '서울 중구성동구갑' 에 '성동구' 가 있나. 시군구 이름이 시작하는 자리에서만 센다. */
+function inDistrict(district: string, wiw: string): boolean {
+  for (let i = district.indexOf(wiw); i >= 0; i = district.indexOf(wiw, i + 1)) {
+    if (i === 0 || " 시군구".includes(district[i - 1])) return true;
+  }
+  return false;
+}
+
 export default async function MyPage({
   searchParams,
 }: {
@@ -42,7 +54,7 @@ export default async function MyPage({
   // area='sd|wiw' 는 예전 주소다. 시군구 이름은 시도를 건너뛰면 겹치니
   // (중구가 여섯 곳, 광주시는 경기도에 있다) 둘 다 있어야 한다.
   const [aSd = "", aWiw = ""] = (q.area ?? "").split("|");
-  const sd = q.sd || aSd;
+  const sd = sido(q.sd || aSd);
   let wiw = q.wiw || aWiw;
 
   // 셋 다 현직만이라 550행 안쪽이다. PostgREST 1000행 상한에 닿지 않는다.
@@ -87,7 +99,9 @@ export default async function MyPage({
         if (a.office !== "국회의원") return true;
         // 국회의원은 wiw_name 동등비교로는 안 된다. '군산시김제시부안군을' 처럼 한 지역구가
         // 여러 시를 묶으면 wiw_name 에는 김제시만 남아 군산시 주민이 자기 의원을 놓친다.
-        return (m.district ?? "").includes(wiw);
+        // 다만 이름 경계에서만 잇는다 — 그냥 포함이면 '서구' 가 달서구·강서구에, '양주시' 가
+        // 남양주시에 붙었다(실측 7건). 앞 글자가 없거나 공백이거나 앞 시군구 이름의 끝이어야 한다.
+        return inDistrict(m.district ?? "", wiw);
       })
     : [];
 

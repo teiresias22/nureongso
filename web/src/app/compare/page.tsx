@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pageOg } from "@/lib/site";
 import {
   attendRate, db, hasBills, lastPart, partyColor, pct, wonK,
   type Member, type MemberStats,
@@ -6,10 +7,14 @@ import {
 
 export const revalidate = 3600;
 
+const TITLE = "의원 비교";
+const DESC = "국회의원 두 사람의 발의·표결·출석·재산·겸직·국외활동·연구용역과 공약을 나란히 놓고 봅니다.";
+
 export const metadata = {
-  title: "의원 비교",
+  title: TITLE,
   alternates: { canonical: "/compare" },
-  description: "국회의원 두 사람의 발의·표결·출석·재산·겸직·국외활동·연구용역과 공약을 나란히 놓고 봅니다.",
+  description: DESC,
+  ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/compare"),
 };
 
 type SP = { a?: string; b?: string };
@@ -27,7 +32,8 @@ const ROWS: {
   { label: "공동발의", get: (s) => s.co_count, fmt: (n) => `${n.toLocaleString()}건`,
     note: "남의 법안에 이름을 올린 것" },
   { label: "대표발의 가결", get: (s) => s.rep_passed,
-    fmt: (n, s) => `${n}건 (${pct(n, s.rep_count)}%)` },
+    // 분모(대표발의 전체)에 계류가 들어 있어 계류 건수를 함께 적는다.
+    fmt: (n, s) => `${n}건 (${pct(n, s.rep_count)}%) · 계류 ${s.rep_pending}` },
   // 표결 기록이 없는 사람(임기 중 들어온 의원)을 0% 로 두면 비교에서 꼴찌로 진다.
   { label: "본회의 표결 참여",
     get: (s) => attendRate(s) ?? -1,
@@ -61,7 +67,7 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
         db.from("attendance").select("member_code, present, days").eq("age", 22).in("member_code", codes),
         db.from("member_party_line").select("code, party_counted, against_party").in("code", codes),
         db.from("asset_report").select("member_code, total_now_k, notice_date").in("member_code", codes)
-          .neq("kind", "퇴직").order("notice_date", { ascending: false }),
+          .neq("kind", "퇴직").order("notice_date", { ascending: false, nullsFirst: false }),
         // 겸직·국외활동·연구단체는 22대 것만. 두 사람 합쳐도 수십 줄이다.
         db.from("member_sidejob").select("member_code, decision_kind").eq("age", 22).in("member_code", codes),
         db.from("member_trip").select("member_code, funder").eq("age", 22).in("member_code", codes),

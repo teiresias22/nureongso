@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
-import { SITE } from "@/lib/site";
+import { ldJson, pageOg, SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
 
 export const revalidate = 3600;
@@ -39,8 +39,7 @@ export async function generateMetadata(
     description,
     // 어디서 왔는지 표시하는 ?from= 이 붙는다. 같은 법안이 의원 수만큼 색인될 수 있다.
     alternates: { canonical: `/bill/${id}` },
-    openGraph: { title: b.name, description, type: "article", url: `/bill/${id}` },
-    twitter: { card: "summary_large_image", title: b.name, description },
+    ...pageOg(b.name, description, `/bill/${id}`, { type: "article" }),
   };
 }
 
@@ -54,7 +53,7 @@ export default async function BillPage({
   const { id } = await params;
   const { from } = await searchParams;
 
-  const [{ data: bill }, { data: sponsors }, { data: plenary }, { data: backTo }, { data: votes }] =
+  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: backTo }, { data: votes }] =
     await Promise.all([
       db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
       db
@@ -72,6 +71,8 @@ export default async function BillPage({
       db.from("vote").select("member_code, result").eq("bill_id", id),
     ]);
 
+  // DB 오류를 '없는 법안' 404 로 내지 않는다(의원 페이지와 같은 이유).
+  if (billError) throw billError;
   if (!bill) notFound();
   const b = bill as Bill & { summary: string | null };
 
@@ -132,7 +133,7 @@ export default async function BillPage({
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
+          __html: ldJson({
             "@context": "https://schema.org",
             "@type": "Legislation",
             name: b.name,

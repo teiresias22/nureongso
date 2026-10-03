@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { REPO, REPORT_URL, SITE } from "@/lib/site";
+import { ldJson, REPO, REPORT_URL, SITE } from "@/lib/site";
 import "./globals.css";
 
 /** 헤더에는 찾아보는 길만 둔다. */
@@ -106,7 +106,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
+            __html: ldJson({
               "@context": "https://schema.org",
               "@type": "WebSite",
               name: "누렁소검은소",

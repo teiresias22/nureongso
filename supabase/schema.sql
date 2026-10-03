@@ -652,6 +652,8 @@ left join lateral (
 ) c on true;
 
 -- 정당별 / 지역별 집계. 같은 컬럼 구성이라 화면에서 한 컴포넌트로 다룬다.
+-- 법안·표결은 국회의원 묶음에만 센다. member_stats 는 사람의 경력 전체라, 22대 의원이었다가
+-- 시도지사가 된 9명의 법안 619건·표결 1.3만 건이 시도지사 묶음에 섞였다(2026-10 실측).
 create or replace view party_stats
 with (security_invoker = true) as
 select r.office,
@@ -659,11 +661,14 @@ select r.office,
   -- 안 그러면 '더불어민주당', '더불어민주당/더불어민주당' 이 따로 집계된다.
   party_line(r.party) as name,
   count(*) as members,
-  sum(s.rep_count) as rep_count, sum(s.co_count) as co_count,
-  sum(s.rep_passed) as rep_passed, sum(s.vote_total) as vote_total,
-  sum(s.vote_total - s.vote_absent) as vote_attended,
+  sum(s.rep_count) filter (where r.office = '국회의원') as rep_count,
+  sum(s.co_count) filter (where r.office = '국회의원') as co_count,
+  sum(s.rep_passed) filter (where r.office = '국회의원') as rep_passed,
+  sum(s.vote_total) filter (where r.office = '국회의원') as vote_total,
+  sum(s.vote_total - s.vote_absent) filter (where r.office = '국회의원') as vote_attended,
   sum(s.pledge_count) as pledge_count, sum(s.pledge_law) as pledge_law,
-  sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed
+  sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed,
+  sum(s.rep_pending) filter (where r.office = '국회의원') as rep_pending
 from member_region r join member_stats s on s.code = r.code
 where r.is_incumbent and r.party is not null
 group by r.office, party_line(r.party);
@@ -671,11 +676,14 @@ group by r.office, party_line(r.party);
 create or replace view region_stats
 with (security_invoker = true) as
 select r.office, r.region as name, count(*) as members,
-  sum(s.rep_count) as rep_count, sum(s.co_count) as co_count,
-  sum(s.rep_passed) as rep_passed, sum(s.vote_total) as vote_total,
-  sum(s.vote_total - s.vote_absent) as vote_attended,
+  sum(s.rep_count) filter (where r.office = '국회의원') as rep_count,
+  sum(s.co_count) filter (where r.office = '국회의원') as co_count,
+  sum(s.rep_passed) filter (where r.office = '국회의원') as rep_passed,
+  sum(s.vote_total) filter (where r.office = '국회의원') as vote_total,
+  sum(s.vote_total - s.vote_absent) filter (where r.office = '국회의원') as vote_attended,
   sum(s.pledge_count) as pledge_count, sum(s.pledge_law) as pledge_law,
-  sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed
+  sum(s.pledge_law_filed) as pledge_law_filed, sum(s.pledge_law_passed) as pledge_law_passed,
+  sum(s.rep_pending) filter (where r.office = '국회의원') as rep_pending
 from member_region r join member_stats s on s.code = r.code
 where r.is_incumbent
 group by r.office, r.region;

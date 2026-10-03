@@ -208,9 +208,11 @@ export type GroupStats = {
   office: string | null;
   name: string;
   members: number;
+  // 법안·표결 칸은 국회의원 묶음에만 값이 있다(다른 직위는 null). 화면은 hasBills 로 가린다.
   rep_count: number;
   co_count: number;
   rep_passed: number;
+  rep_pending: number;
   vote_total: number;
   vote_attended: number;
   pledge_count: number;

@@ -1,10 +1,14 @@
 import Link from "next/link";
-import { REPORT_URL } from "@/lib/site";
+import { pageOg, REPORT_URL } from "@/lib/site";
+
+const TITLE = "판정 기준";
+const DESC = "공약 이행 판정 규칙과, 표결·출결·재산·겸직·국외활동 같은 공개 기록을 어떻게 옮기고 세는지 전부 공개합니다.";
 
 export const metadata = {
-  title: "판정 기준",
+  title: TITLE,
   alternates: { canonical: "/rules" },
-  description: "공약 이행 판정 규칙과, 표결·출결·재산·겸직·국외활동 같은 공개 기록을 어떻게 옮기고 세는지 전부 공개합니다.",
+  description: DESC,
+  ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/rules"),
 };
 
 /** 맨 위 목차. 의원 페이지의 '어떻게 세나' 같은 링크가 이 구획들을 id 로 가리킨다. */
@@ -543,6 +547,12 @@ export default function RulesPage() {
           숫자를 고르고 세는 방법입니다.
         </p>
         <ul className="list-disc space-y-1.5 pl-4 text-muted">
+          <li>
+            <b>가결률 = 대표발의 중 가결 ÷ 대표발의 전체.</b> 분모에 계류 중인 법안이 들어가므로 계류
+            건수를 함께 적습니다. 공동발의는 따로 세고 합치지 않습니다.{" "}
+            <b>표결 참여율 = (전체 표결 − 불참) ÷ 전체 표결</b>이고, 본회의 출석률(출석 ÷ 회의일수)과는
+            다른 숫자입니다(<a href="#attendance" className="underline underline-offset-2">12</a>).
+          </li>
           <li>
             <b>현직만 모읍니다.</b> 출석·표결·국외활동·연구단체·연구용역·겸직은 제22대 국회
             기록이고, <b>지금 국회의원인 사람에게만</b> 셉니다. 22대 의원이었다가 시도지사가 된

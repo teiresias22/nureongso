@@ -1,13 +1,16 @@
 import Image from "next/image";
 import Link from "next/link";
-import { REPORT_URL } from "@/lib/site";
+import { pageOg, REPORT_URL } from "@/lib/site";
 import { Showreel } from "./Showreel";
 
+const TITLE = "프로젝트 소개";
+const DESC = "어느 소가 일을 잘하는지는 귓속말로 묻습니다. 선출직이 지난 임기에 무엇을 하겠다 했고 무엇을 했는지, 조용히 확인하는 곳입니다.";
+
 export const metadata = {
-  title: "프로젝트 소개",
+  title: TITLE,
   alternates: { canonical: "/about" },
-  description:
-    "어느 소가 일을 잘하는지는 귓속말로 묻습니다. 선출직이 지난 임기에 무엇을 하겠다 했고 무엇을 했는지, 조용히 확인하는 곳입니다.",
+  description: DESC,
+  ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/about"),
 };
 
 export default function AboutPage() {
