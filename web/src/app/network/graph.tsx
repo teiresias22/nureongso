@@ -69,6 +69,33 @@ export function Graph({ nodes, edges, legend, box }: {
           strokeWidth={width(e)} className={className} />
   );
 
+  const dot = (i: number) => {
+    const n = nodes[i];
+    return (
+      <circle key={`d${i}`} cx={n.x} cy={n.y} r={i === si ? 10 : 6.5}
+              fill={n.ring ? "var(--card)" : n.color}
+              stroke={n.ring ? n.color : undefined} strokeWidth={n.ring ? 3 : 1}
+              className={n.ring ? undefined : "stroke-foreground/30"} />
+    );
+  };
+  const label = (i: number) => {
+    const n = nodes[i], fs = i === si ? 24 : 18;
+    // 고른 사람은 점 위, 이어진 사람은 점 아래. 그림 가장자리에서 잘리면 반대쪽으로 —
+    // 맨 위에 있는 한창민의 이름이 그림 테두리에 반쯤 잘렸다.
+    let up = i === si;
+    if (up && n.y - 16 - fs < box[1]) up = false;
+    if (!up && n.y + fs + 8 > box[1] + box[3]) up = true;
+    const half = (n.name.length * fs) / 2; // 한글 한 글자 폭 ≈ 글자 크기
+    const anchor = n.x - half < box[0] ? "start" : n.x + half > box[0] + box[2] ? "end" : "middle";
+    return (
+      <text key={`t${i}`} x={n.x} y={up ? n.y - 16 : n.y + fs + 8} textAnchor={anchor}
+            fontSize={fs} fontWeight={i === si ? 700 : 400}
+            className="fill-foreground" stroke="var(--card)" strokeWidth={5} paintOrder="stroke">
+        {n.name}
+      </text>
+    );
+  };
+
   /** 목록에서 고른 글('이름 · 정당')이나, 동명이인이 없는 이름 그대로. 못 찾으면 undefined. */
   const find = (v: string) => {
     const q = v.trim();
@@ -159,10 +186,7 @@ export function Graph({ nodes, edges, legend, box }: {
                   <>
                     {/* 점이 작아 손가락으로 맞히기 어렵다. 보이지 않는 큰 원이 누르는 자리다. */}
                     <circle cx={n.x} cy={n.y} r={12} fill="transparent" />
-                    <circle cx={n.x} cy={n.y} r={i === si ? 10 : 6.5}
-                            fill={n.ring ? "var(--card)" : n.color}
-                            stroke={n.ring ? n.color : undefined} strokeWidth={n.ring ? 3 : 1}
-                            className={n.ring ? undefined : "stroke-foreground/30"} />
+                    {dot(i)}
                   </>
                 )}
                 <title>{n.tag}</title>
@@ -172,13 +196,11 @@ export function Graph({ nodes, edges, legend, box }: {
                 점 아래 — 작은 당끼리 붙어 있으면 이름이 겹쳤다. */}
             {!names && dim && (
               <g className="pointer-events-none">
-                {[...near].map((i) => (
-                  <text key={i} x={nodes[i].x} y={i === si ? nodes[i].y - 16 : nodes[i].y + 24} textAnchor="middle"
-                        fontSize={i === si ? 24 : 18} fontWeight={i === si ? 700 : 400}
-                        className="fill-foreground" stroke="var(--card)" strokeWidth={5} paintOrder="stroke">
-                    {nodes[i].name}
-                  </text>
-                ))}
+                {[...near].filter((i) => i !== si).map(label)}
+                {/* 고른 사람은 점과 이름 모두 맨 위에 다시 그린다. 먼저 그리면 이어진 사람의 이름과
+                    그 흰 테두리가 덮었다. */}
+                {dot(si)}
+                {label(si)}
               </g>
             )}
           </svg>
