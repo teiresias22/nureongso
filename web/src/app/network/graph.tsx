@@ -78,7 +78,9 @@ export function Graph({ nodes, edges, legend, box }: {
     const r = el.getBoundingClientRect();
     const y = r.top + ((nodes[si].y - box[1]) / box[3]) * r.height;
     if (y < 80 || y > window.innerHeight - 40) window.scrollBy({ top: y - window.innerHeight / 2, behavior: "smooth" });
-  }, [si, nodes, box]);
+    // 이름표를 켜면 그림이 넓어져 옆으로 넘기게 되므로 그때도 다시 데려온다. 빠뜨리면 휴대폰에서
+    // 고른 사람이 화면 오른쪽 밖에 남았다.
+  }, [si, nodes, box, names]);
 
   // 둘이 서로를 상위에 두면 선이 두 번 겹친다. 굵은 쪽 하나만.
   const lines = new Map<string, GraphEdge>();

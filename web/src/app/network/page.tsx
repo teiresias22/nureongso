@@ -57,6 +57,16 @@ export default async function NetworkPage() {
   for (const e of edges) pairs.set(e.a < e.b ? `${e.a}|${e.b}` : `${e.b}|${e.a}`, [e.a, e.b]);
   // 850 폭으로 잡으면 이름표를 떼어 놓은 뒤 약 965 가 된다(separate).
   const { pos } = forceLayout(people.length, [...pairs.values()], 850);
+  // 선이 하나도 없는 의원(국회의장 우원식, 대표발의 1~2건인 김남국 등)은 힘 배치에서 무리 밖
+  // 먼 곳에 떠서 그림 상자를 늘렸다 — 휴대폰 첫 화면이 텅 비었다. 그림 아래 한 줄로 모은다.
+  const linked = new Set([...pairs.values()].flat());
+  const lone = people.flatMap((_, i) => (linked.has(i) ? [] : [i]));
+  if (lone.length) {
+    const on = pos.filter((_, i) => linked.has(i));
+    const xs = on.map((p) => p[0]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, bottom = Math.max(...on.map((p) => p[1]));
+    lone.forEach((i, k) => { pos[i] = [cx + (k - (lone.length - 1) / 2) * 70, bottom + 50]; });
+  }
   const box = separate(pos, people.map((m) => labelBox(m.name)));
   // 검색 목록의 항목. 동명이인(박지원 둘, 둘 다 민주당)은 지역구까지 붙여야 갈린다.
   const dup = new Set(people.map((m) => m.name).filter((n, i, a) => a.indexOf(n) !== i));
