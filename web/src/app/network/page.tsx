@@ -24,14 +24,20 @@ const SMALL_PARTY = 10;
 const MIN_N = 3;
 
 export default async function NetworkPage() {
-  const [{ data: mps, error }, { data: top, error: topError }] = await Promise.all([
+  const [{ data: mps, error }, ...tops] = await Promise.all([
     db.from("member").select("code, name, party, district").eq("is_incumbent", true).eq("office", "국회의원"),
-    // 의원당 3줄, 약 900행. PostgREST 1000행 상한 아래다(현직 300명 × 3).
-    // 3건 미만은 잇지 않는다. 대표발의가 1~2건이면 공동발의자 10여 명이 모두 동률이라 상위 3명이
+    // 의원당 많아야 5줄, 현직 300명이면 1,500행 남짓. PostgREST 는 1000행에서 조용히 자르므로
+    // 기본키 순으로 둘로 나눠 읽는다(300×5 < 2000). 1,500행짜리 작은 표라 OFFSET 이어도 된다 —
+    // 큰 표는 keyset 으로(ops.md, sitemap.ts).
+    // 3건 미만은 잇지 않는다. 대표발의가 1~2건이면 공동발의자 10여 명이 모두 동률이라 상위가
     // 의원 코드 순으로 정해졌다(김남국 1건). 그런 선은 관계가 아니라 정렬 순서다.
-    db.from("cosponsor_top").select("a, b, n, nrep").lte("rk", 3).gte("n", MIN_N),
+    ...[0, 1000].map((from) =>
+      db.from("cosponsor_top").select("a, b, n, nrep").gte("n", MIN_N)
+        .order("a").order("b").range(from, from + 999)),
   ]);
+  const topError = tops.find((t) => t.error)?.error;
   if (error || topError) throw error ?? topError;
+  const top = tops.flatMap((t) => t.data ?? []);
 
   const seats = new Map<string, number>();
   for (const m of mps ?? []) seats.set(partyLine(m.party), (seats.get(partyLine(m.party)) ?? 0) + 1);
@@ -43,7 +49,7 @@ export default async function NetworkPage() {
       x.name.localeCompare(y.name),
   );
   const idx = new Map(people.map((m, i) => [m.code, i]));
-  const edges = ((top ?? []) as Pick<Cosponsor, "a" | "b" | "n" | "nrep">[])
+  const edges = (top as Pick<Cosponsor, "a" | "b" | "n" | "nrep">[])
     .filter((e) => idx.has(e.a) && idx.has(e.b))
     .map((e): GraphEdge => ({ a: idx.get(e.a)!, b: idx.get(e.b)!, n: e.n, nrep: e.nrep, share: pct(e.n, e.nrep) }));
   // 그림의 선은 방향 없이 한 줄. 둘이 서로를 상위에 두면 한 번만 긋는다.
@@ -76,7 +82,7 @@ export default async function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">{TITLE}</h1>
         <p className="mt-2 text-sm leading-6 text-muted">
           점 하나가 22대 현직 국회의원 한 명입니다. 의원마다 <b className="text-foreground">자기가 대표발의한
-          법안에 공동발의자로 가장 자주 이름을 올린 3명</b>과 선으로 잇습니다(3건 이상). 선이 굵을수록 함께 이름을 올린
+          법안에 공동발의자로 가장 자주 이름을 올린 5명</b>과 선으로 잇습니다(3건 이상). 선이 굵을수록 함께 이름을 올린
           법안이 많습니다. 자주 함께 이름을 올린 사람끼리 가까이 모입니다.
         </p>
         <p className="mt-1 text-xs leading-5 text-muted">

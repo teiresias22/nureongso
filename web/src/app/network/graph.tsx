@@ -29,13 +29,15 @@ const pick = (code: string) => {
 
 const H = labelBox("")[1];
 /** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 점선), 내가 남의 법안에 올린 것
- *  (초록 점선), 둘 다인 것(실선, 보라와 초록을 섞은 파랑). 섞은 색을 그대로 쓰면(#597fa6)
- *  채도가 낮아 바탕의 회색 선과 섞여서, 같은 색조로 채도만 올렸다. 셋은 밝은·어두운 바탕 모두
- *  색 검사를 통과했다. 파랑은 조국혁신당 점 색과 비슷하지만 이쪽은 선, 저쪽은 점이다. */
+ *  (초록 점선), 둘 다인 것(황토 실선). 셋 다 밝은·어두운 바탕 색 검사를 통과했다.
+ *  정당 색(남색·빨강·파랑·주황·청록·회색)이 색 공간을 많이 차지해 고를 자리가 좁았다 — 보라와
+ *  초록을 섞은 파랑(#367fc5)은 조국혁신당 색과 거의 같았고(ΔE 4.8), 분홍은 진보당·국민의힘
+ *  빨강에 가까웠다. 황토는 가장 가까운 정당 색(무소속 회색)과도 ΔE 14 떨어져 있다.
+ *  초록과는 적록색약에서 가깝게 보여(ΔE 7.5) 실선·점선 모양으로도 가른다. */
 type Kind = { color: string; dash?: string };
 const OUT: Kind = { color: "#7c3aed", dash: "6 4" };
 const IN: Kind = { color: "#16a34a", dash: "6 4" };
-const BOTH: Kind = { color: "#367fc5" };
+const BOTH: Kind = { color: "#a16207" };
 
 export function Graph({ nodes, edges, legend, box }: {
   nodes: GraphNode[]; edges: GraphEdge[]; legend: Legend[]; box: readonly [number, number, number, number];
@@ -50,7 +52,7 @@ export function Graph({ nodes, edges, legend, box }: {
   // '1건 중 1건, 100%' 로 가장 굵게 그려졌다. 비율은 아래 목록에 분모와 함께 적는다.
   const maxN = Math.max(1, ...edges.map((e) => e.n));
   const width = (e: GraphEdge) => 0.8 + Math.sqrt(e.n / maxN) * 4;
-  // 서로를 상위 3명에 둔 사이(103쌍)는 한 줄로, 따로 정한 모양으로 긋는다. 보라·초록을 나란히
+  // 서로를 상위 5명에 둔 사이는 한 줄로, 따로 정한 모양으로 긋는다. 보라·초록을 나란히
   // 비켜 그었더니 두 줄이 붙어 무엇인지 읽기 어려웠다. 굵기는 둘 중 많은 쪽.
   const mutual = new Set(out.map((e) => e.b).filter((b) => inc.some((e) => e.a === b)));
   const hl = (e: GraphEdge, kind: Kind) => {
@@ -256,7 +258,7 @@ export function Graph({ nodes, edges, legend, box }: {
                  rows={out.map((e) => ({ i: e.b, both: mutual.has(e.b), text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
                  nodes={nodes} />
             <Rel kind={IN} title={`${nodes[si].name} 의원이 자주 이름을 올린 법안의 대표발의자`}
-                 hint="그 의원의 상위 3명 안에 든 경우만"
+                 hint="그 의원의 상위 5명 안에 든 경우만"
                  rows={inc.map((e) => ({ i: e.a, both: mutual.has(e.a), text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
                  nodes={nodes} />
           </div>

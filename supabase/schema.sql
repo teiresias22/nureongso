@@ -637,8 +637,8 @@ grant select on member_bill to anon, authenticated;
 -- A 의 대표발의 수(nrep). 현직 국회의원끼리만. 수집 후 `ingest.py refresh` 로 갱신한다.
 --
 -- 의원마다 상위 5명(rk)만 둔다. 한 번이라도 같이 이름을 올린 쌍이 가능한 쌍의 86%
--- (2026-10 실측 38,168쌍)라 전부 그리면 모든 점이 서로 이어진다. 관계도는 rk<=3 (약 900행,
--- PostgREST 1000행 상한 아래), 의원 페이지 목록은 rk<=5 를 쓴다.
+-- (2026-10 실측 38,168쌍)라 전부 그리면 모든 점이 서로 이어진다. 관계도와 의원 페이지 목록이
+-- 같은 rk<=5 를 쓴다(관계도는 1,500행 남짓이라 PostgREST 1000행 상한에 걸려 둘로 나눠 읽는다).
 -- 공동발의는 10명 서명이 필요해 당·팀 단위로 몰아 서명하는 일이 많다. 친분이 아니다.
 create materialized view if not exists cosponsor_top as
 with mp as (select code, name, party from member where is_incumbent and office = '국회의원'),
