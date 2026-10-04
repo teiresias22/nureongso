@@ -28,12 +28,13 @@ const pick = (code: string) => {
 };
 
 const H = labelBox("")[1];
-/** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 실선)과 내가 남의 법안에 올린 것
- *  (초록 점선). 정당 색(파랑·빨강·주황·청록·남색)과 겹치지 않는 두 색으로, 밝은·어두운
- *  바탕 모두 색 검사를 통과했다. 색을 못 가리는 사람을 위해 점선을 함께 쓴다. */
+/** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 실선), 내가 남의 법안에 올린 것
+ *  (초록 점선), 둘 다인 것(글자색 실선). 보라·초록은 정당 색(파랑·빨강·주황·청록·남색)과
+ *  겹치지 않고 밝은·어두운 바탕 모두 색 검사를 통과했다. 색을 못 가리는 사람을 위해 점선을 함께 쓴다. */
 type Kind = { color: string; dash?: string };
 const OUT: Kind = { color: "#7c3aed" };
 const IN: Kind = { color: "#16a34a", dash: "6 4" };
+const BOTH: Kind = { color: "var(--foreground)" };
 
 export function Graph({ nodes, edges, legend, box }: {
   nodes: GraphNode[]; edges: GraphEdge[]; legend: Legend[]; box: readonly [number, number, number, number];
@@ -48,17 +49,16 @@ export function Graph({ nodes, edges, legend, box }: {
   // '1건 중 1건, 100%' 로 가장 굵게 그려졌다. 비율은 아래 목록에 분모와 함께 적는다.
   const maxN = Math.max(1, ...edges.map((e) => e.n));
   const width = (e: GraphEdge) => 0.8 + Math.sqrt(e.n / maxN) * 4;
-  // 서로를 상위 3명에 둔 사이(103쌍)는 두 선이 겹친다. 양옆으로 비켜 긋는다.
+  // 서로를 상위 3명에 둔 사이(103쌍)는 한 줄로, 따로 정한 모양으로 긋는다. 보라·초록을 나란히
+  // 비켜 그었더니 두 줄이 붙어 무엇인지 읽기 어려웠다. 굵기는 둘 중 많은 쪽.
   const mutual = new Set(out.map((e) => e.b).filter((b) => inc.some((e) => e.a === b)));
-  const hl = (e: GraphEdge, kind: Kind, side: number) => {
+  const hl = (e: GraphEdge, kind: Kind) => {
     const other = e.a === si ? e.b : e.a;
+    const back = kind === BOTH ? inc.find((x) => x.a === other) : undefined;
     const p = nodes[si], q = nodes[other];
-    const d = Math.hypot(q.x - p.x, q.y - p.y) || 1;
-    const k = mutual.has(other) ? side * 3 : 0;
-    const [ox, oy] = [(-(q.y - p.y) / d) * k, ((q.x - p.x) / d) * k];
     return (
-      <line key={`${side}${other}`} x1={p.x + ox} y1={p.y + oy} x2={q.x + ox} y2={q.y + oy}
-            stroke={kind.color} strokeDasharray={kind.dash} strokeWidth={width(e) + 0.5} strokeLinecap="round" />
+      <line key={other} x1={p.x} y1={p.y} x2={q.x} y2={q.y} stroke={kind.color} strokeDasharray={kind.dash}
+            strokeWidth={Math.max(width(e), back ? width(back) : 0) + 0.5} strokeLinecap="round" />
     );
   };
   // 이름표는 켜야 보인다. 299개가 한꺼번에 뜨면 무리가 어떻게 갈리는지보다 글자가 먼저 읽힌다.
@@ -185,6 +185,7 @@ export function Graph({ nodes, edges, legend, box }: {
             <>
               <li className="flex items-center gap-1 sm:ml-auto"><Swatch kind={OUT} />{nodes[si].name} 법안에 이름 올린 의원</li>
               <li className="flex items-center gap-1"><Swatch kind={IN} />{nodes[si].name} 의원이 이름 올린 법안</li>
+              {mutual.size > 0 && <li className="flex items-center gap-1"><Swatch kind={BOTH} />서로 이름 올린 사이</li>}
             </>
           )}
         </ul>
@@ -195,7 +196,12 @@ export function Graph({ nodes, edges, legend, box }: {
                role="img" onClick={() => pick("")}
                aria-label={`22대 국회의원 ${nodes.length}명의 공동발의 관계도. 위의 검색으로 한 명씩 볼 수 있습니다.`}>
             <g>{[...lines].map(([k, e]) => line(e, dim ? "stroke-muted/10" : "stroke-muted/35", k))}</g>
-            {dim && <g>{out.map((e) => hl(e, OUT, 1))}{inc.map((e) => hl(e, IN, -1))}</g>}
+            {dim && (
+              <g>
+                {out.map((e) => hl(e, mutual.has(e.b) ? BOTH : OUT))}
+                {inc.filter((e) => !mutual.has(e.a)).map((e) => hl(e, IN))}
+              </g>
+            )}
             {nodes.map((n, i) => (
               <g key={n.code} className="cursor-pointer" opacity={dim && !near.has(i) ? 0.2 : 1}
                  onClick={(e) => { e.stopPropagation(); pick(i === si ? "" : n.code); }}>
@@ -245,11 +251,11 @@ export function Graph({ nodes, edges, legend, box }: {
           </div>
           <div className="grid sm:grid-cols-2">
             <Rel kind={OUT} title={`${nodes[si].name} 의원이 대표발의한 법안에 자주 이름을 올린 의원`}
-                 rows={out.map((e) => ({ i: e.b, text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
+                 rows={out.map((e) => ({ i: e.b, both: mutual.has(e.b), text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
                  nodes={nodes} />
             <Rel kind={IN} title={`${nodes[si].name} 의원이 자주 이름을 올린 법안의 대표발의자`}
                  hint="그 의원의 상위 3명 안에 든 경우만"
-                 rows={inc.map((e) => ({ i: e.a, text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
+                 rows={inc.map((e) => ({ i: e.a, both: mutual.has(e.a), text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
                  nodes={nodes} />
           </div>
         </div>
@@ -268,7 +274,7 @@ function Swatch({ kind }: { kind: Kind }) {
 }
 
 function Rel({ kind, title, hint, rows, nodes }: {
-  kind: Kind; title: string; hint?: string; rows: { i: number; text: string }[]; nodes: GraphNode[];
+  kind: Kind; title: string; hint?: string; rows: { i: number; both: boolean; text: string }[]; nodes: GraphNode[];
 }) {
   return (
     <div className="border-b border-line px-4 py-2.5 last:border-b-0 sm:border-b-0 sm:odd:border-r">
@@ -278,13 +284,14 @@ function Rel({ kind, title, hint, rows, nodes }: {
         <p className="mt-1 text-xs text-muted">없습니다</p>
       ) : (
         <ul className="mt-1">
-          {rows.map(({ i, text }) => (
+          {rows.map(({ i, both, text }) => (
             <li key={i} className="flex items-baseline gap-2">
               <button type="button" onClick={() => pick(nodes[i].code)}
                       className="min-h-9 text-left underline-offset-2 hover:underline">
                 {nodes[i].name}
               </button>
               <span className="text-xs text-muted">{nodes[i].party}</span>
+              {both && <span className="flex items-center gap-1 text-xs text-muted"><Swatch kind={BOTH} />서로</span>}
               <span className="ml-auto text-xs tabular-nums">{text}</span>
             </li>
           ))}

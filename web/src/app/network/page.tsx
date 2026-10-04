@@ -20,12 +20,16 @@ export const metadata = {
 /** 이보다 의석이 적은 정당은 속 빈 점(이름표)으로 그린다. 국민의힘·진보당(빨강), 개혁신당·사회민주당
  *  (주황)은 공식 색이 서로 거의 같아 색만으로는 못 가른다. 큰 당은 색, 작은 당은 모양까지. */
 const SMALL_PARTY = 10;
+/** 함께 이름을 올린 법안이 이보다 적으면 선을 긋지 않는다. 의원 페이지 목록도 같은 기준. */
+const MIN_N = 3;
 
 export default async function NetworkPage() {
   const [{ data: mps, error }, { data: top, error: topError }] = await Promise.all([
     db.from("member").select("code, name, party, district").eq("is_incumbent", true).eq("office", "국회의원"),
     // 의원당 3줄, 약 900행. PostgREST 1000행 상한 아래다(현직 300명 × 3).
-    db.from("cosponsor_top").select("a, b, n, nrep").lte("rk", 3),
+    // 3건 미만은 잇지 않는다. 대표발의가 1~2건이면 공동발의자 10여 명이 모두 동률이라 상위 3명이
+    // 의원 코드 순으로 정해졌다(김남국 1건). 그런 선은 관계가 아니라 정렬 순서다.
+    db.from("cosponsor_top").select("a, b, n, nrep").lte("rk", 3).gte("n", MIN_N),
   ]);
   if (error || topError) throw error ?? topError;
 
@@ -72,7 +76,7 @@ export default async function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">{TITLE}</h1>
         <p className="mt-2 text-sm leading-6 text-muted">
           점 하나가 22대 현직 국회의원 한 명입니다. 의원마다 <b className="text-foreground">자기가 대표발의한
-          법안에 공동발의자로 가장 자주 이름을 올린 3명</b>과 선으로 잇습니다. 선이 굵을수록 함께 이름을 올린
+          법안에 공동발의자로 가장 자주 이름을 올린 3명</b>과 선으로 잇습니다(3건 이상). 선이 굵을수록 함께 이름을 올린
           법안이 많습니다. 자주 함께 이름을 올린 사람끼리 가까이 모입니다.
         </p>
         <p className="mt-1 text-xs leading-5 text-muted">

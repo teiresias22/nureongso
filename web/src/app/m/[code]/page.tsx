@@ -276,8 +276,9 @@ export default async function MemberPage({
       .order("quarter", { ascending: false, nullsFirst: false }),
     // 지금 있는 보좌진. ingest.py staff 가 매일 국회 명단과 맞춰 둔다.
     db.from("member_staff").select("role").eq("member_code", code).is("left_on", null),
-    // 이 사람이 대표발의한 법안에 가장 자주 이름을 올린 현직 의원 5명(cosponsor_top).
-    db.from("cosponsor_top").select("b, n, nrep, b_name, b_party").eq("a", code).order("rk"),
+    // 이 사람이 대표발의한 법안에 가장 자주 이름을 올린 현직 의원 5명(cosponsor_top). 3건 미만은
+    // 동률 속에서 의원 코드 순으로 뽑힌 것이라 뺀다(관계도 /network 와 같은 기준).
+    db.from("cosponsor_top").select("b, n, nrep, b_name, b_party").eq("a", code).gte("n", 3).order("rk"),
   ]);
 
   // DB 가 멈췄을 때 '없는 사람' 404 를 내면 검색엔진이 실제 인물 페이지를 지운다.
