@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { db, partyColor, partyLine, pct, type Cosponsor } from "@/lib/db";
-import { forceLayout } from "@/lib/force";
+import { db, partyColor, partyLine, pct, shortDistrict, type Cosponsor } from "@/lib/db";
+import { forceLayout, labelBox, separate } from "@/lib/force";
 import { pageOg } from "@/lib/site";
 import { Graph, type GraphEdge, type GraphNode } from "./graph";
 
@@ -17,13 +17,13 @@ export const metadata = {
   ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/network"),
 };
 
-/** 이보다 의석이 적은 정당은 속 빈 원으로 그린다. 국민의힘·진보당(빨강), 개혁신당·사회민주당
+/** 이보다 의석이 적은 정당은 속 빈 이름표로 그린다. 국민의힘·진보당(빨강), 개혁신당·사회민주당
  *  (주황)은 공식 색이 서로 거의 같아 색만으로는 못 가른다. 큰 당은 색, 작은 당은 모양까지. */
 const SMALL_PARTY = 10;
 
 export default async function NetworkPage() {
   const [{ data: mps, error }, { data: top, error: topError }] = await Promise.all([
-    db.from("member").select("code, name, party").eq("is_incumbent", true).eq("office", "국회의원"),
+    db.from("member").select("code, name, party, district").eq("is_incumbent", true).eq("office", "국회의원"),
     // 의원당 3줄, 약 900행. PostgREST 1000행 상한 아래다(현직 300명 × 3).
     db.from("cosponsor_top").select("a, b, n, nrep").lte("rk", 3),
   ]);
@@ -45,12 +45,17 @@ export default async function NetworkPage() {
   // 그림의 선은 방향 없이 한 줄. 둘이 서로를 상위에 두면 한 번만 긋는다.
   const pairs = new Map<string, [number, number]>();
   for (const e of edges) pairs.set(e.a < e.b ? `${e.a}|${e.b}` : `${e.b}|${e.a}`, [e.a, e.b]);
-  const { pos, height } = forceLayout(people.length, [...pairs.values()]);
+  // 850 폭으로 잡으면 이름표를 떼어 놓은 뒤 약 965 가 된다(separate).
+  const { pos } = forceLayout(people.length, [...pairs.values()], 850);
+  const box = separate(pos, people.map((m) => labelBox(m.name)));
+  // 검색 목록의 항목. 동명이인(박지원 둘, 둘 다 민주당)은 지역구까지 붙여야 갈린다.
+  const dup = new Set(people.map((m) => m.name).filter((n, i, a) => a.indexOf(n) !== i));
 
   const nodes: GraphNode[] = people.map((m, i) => {
     const party = partyLine(m.party) || "무소속";
     return {
-      code: m.code, name: m.name, party, x: pos[i][0], y: pos[i][1], color: partyColor(party),
+      code: m.code, name: m.name, party, x: pos[i][0], y: pos[i][1], w: labelBox(m.name)[0], color: partyColor(party),
+      tag: [m.name, party, dup.has(m.name) && (shortDistrict(m.district) || "비례대표")].filter(Boolean).join(" · "),
       ring: party !== "무소속" && (seats.get(partyLine(m.party)) ?? 0) < SMALL_PARTY,
     };
   });
@@ -66,7 +71,7 @@ export default async function NetworkPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">{TITLE}</h1>
         <p className="mt-2 text-sm leading-6 text-muted">
-          점 하나가 22대 현직 국회의원 한 명입니다. 의원마다 <b className="text-foreground">자기가 대표발의한
+          이름표 하나가 22대 현직 국회의원 한 명입니다. 의원마다 <b className="text-foreground">자기가 대표발의한
           법안에 공동발의자로 가장 자주 이름을 올린 3명</b>과 선으로 잇습니다. 선이 굵을수록 그 비율이
           높습니다. 자주 함께 이름을 올린 사람끼리 가까이 모입니다.
         </p>
@@ -78,7 +83,7 @@ export default async function NetworkPage() {
           </Link>
         </p>
       </div>
-      <Graph nodes={nodes} edges={edges} legend={legend} height={height} />
+      <Graph nodes={nodes} edges={edges} legend={legend} box={box} />
     </div>
   );
 }

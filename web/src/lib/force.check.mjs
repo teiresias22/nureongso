@@ -1,7 +1,7 @@
 // 실행: node src/lib/force.check.mjs  (Node 24 가 .ts 를 그대로 읽는다)
 // 다섯 점짜리 덩어리 둘이 선 하나로만 이어진 그래프. 덩어리 안이 덩어리 사이보다 가까워야 한다.
 import assert from "node:assert";
-import { forceLayout } from "./force.ts";
+import { forceLayout, labelBox, separate } from "./force.ts";
 
 const links = [];
 for (const base of [0, 5])
@@ -18,4 +18,15 @@ assert(inside < across / 2, `덩어리 안 ${inside} / 사이 ${across}`);
 assert.deepStrictEqual(forceLayout(10, links).pos, p, "같은 입력이면 같은 그림");
 // 겹친 점에서 0 으로 나누지 않는다.
 assert(forceLayout(3, [[0, 1]], 1000, 1).pos.flat().every(Number.isFinite));
+// 한 점에 몰린 이름표 셋. 떼어 놓은 뒤 어느 둘도 겹치지 않고, viewBox 가 모두를 담아야 한다.
+const pos = [[100, 100], [100, 100], [101, 100]];
+const boxes = ["김철수", "이영", "박민수"].map(labelBox);
+const [vx, vy, vw, vh] = separate(pos, boxes);
+for (let i = 0; i < 3; i++) {
+  assert(pos[i][0] - boxes[i][0] / 2 >= vx && pos[i][0] + boxes[i][0] / 2 <= vx + vw);
+  assert(pos[i][1] - boxes[i][1] / 2 >= vy && pos[i][1] + boxes[i][1] / 2 <= vy + vh);
+  for (let j = i + 1; j < 3; j++)
+    assert(Math.abs(pos[i][0] - pos[j][0]) >= (boxes[i][0] + boxes[j][0]) / 2 - 1
+        || Math.abs(pos[i][1] - pos[j][1]) >= (boxes[i][1] + boxes[j][1]) / 2 - 1, `${i}·${j} 겹침`);
+}
 console.log("force ok");
