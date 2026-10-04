@@ -17,7 +17,7 @@ export const metadata = {
   ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/network"),
 };
 
-/** 이보다 의석이 적은 정당은 속 빈 이름표로 그린다. 국민의힘·진보당(빨강), 개혁신당·사회민주당
+/** 이보다 의석이 적은 정당은 속 빈 점(이름표)으로 그린다. 국민의힘·진보당(빨강), 개혁신당·사회민주당
  *  (주황)은 공식 색이 서로 거의 같아 색만으로는 못 가른다. 큰 당은 색, 작은 당은 모양까지. */
 const SMALL_PARTY = 10;
 
@@ -71,7 +71,7 @@ export default async function NetworkPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">{TITLE}</h1>
         <p className="mt-2 text-sm leading-6 text-muted">
-          이름표 하나가 22대 현직 국회의원 한 명입니다. 의원마다 <b className="text-foreground">자기가 대표발의한
+          점 하나가 22대 현직 국회의원 한 명입니다. 의원마다 <b className="text-foreground">자기가 대표발의한
           법안에 공동발의자로 가장 자주 이름을 올린 3명</b>과 선으로 잇습니다. 선이 굵을수록 그 비율이
           높습니다. 자주 함께 이름을 올린 사람끼리 가까이 모입니다.
         </p>

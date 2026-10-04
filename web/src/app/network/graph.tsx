@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LABEL_FONT, labelBox } from "@/lib/force";
 
 export type GraphNode = {
@@ -39,6 +39,9 @@ export function Graph({ nodes, edges, legend, box }: {
   const inc = edges.filter((e) => e.b === si).sort((x, y) => y.share - x.share);
   const near = new Set([si, ...out.map((e) => e.b), ...inc.map((e) => e.a)]);
   const dim = si >= 0;
+  // 이름표는 켜야 보인다. 299개가 한꺼번에 뜨면 무리가 어떻게 갈리는지보다 글자가 먼저 읽힌다.
+  // 점과 이름표는 같은 자리에 놓여(separate 가 이름표 기준으로 떼어 둔 자리) 켜고 꺼도 그림이 움직이지 않는다.
+  const [names, setNames] = useState(false);
 
   // 검색으로 고른 사람이 화면 밖이면 데려온다. 휴대폰에서는 그림이 화면보다 넓어 옆으로도.
   const wrap = useRef<HTMLDivElement>(null);
@@ -105,10 +108,16 @@ export function Graph({ nodes, edges, legend, box }: {
             {nodes.map((n) => <option key={n.code} value={n.tag} />)}
           </datalist>
         </label>
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
+          <input type="checkbox" role="switch" checked={names} onChange={(e) => setNames(e.target.checked)}
+                 className="peer sr-only" />
+          <span aria-hidden className="relative h-5 w-9 shrink-0 rounded-full bg-line transition peer-checked:bg-foreground peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 after:absolute after:top-0.5 after:left-0.5 after:size-4 after:rounded-full after:bg-card after:shadow after:transition peer-checked:after:translate-x-4" />
+          이름 표시
+        </label>
         <p className="pb-3 text-xs text-muted">
           {dim
             ? "빈 곳을 누르면 전체 보기로 돌아갑니다."
-            : "이름을 누르거나 검색하면 그 의원과 이어진 선만 남습니다."}
+            : "점을 누르거나 검색하면 그 의원과 이어진 선만 남습니다."}
         </p>
       </form>
 
@@ -116,17 +125,18 @@ export function Graph({ nodes, edges, legend, box }: {
         <ul className="flex flex-wrap gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-xs text-muted">
           {legend.map((l) => (
             <li key={l.party} className="flex items-center gap-1">
-              <svg width="18" height="10" aria-hidden>
-                <rect x="1" y="1" width="16" height="8" rx="4" fill={l.ring ? "var(--card)" : l.color}
-                      stroke={l.color} strokeWidth="1.5" />
+              <svg width="12" height="12" aria-hidden>
+                <circle cx="6" cy="6" r={l.ring ? 4 : 5} fill={l.ring ? "var(--card)" : l.color}
+                        stroke={l.ring ? l.color : undefined} strokeWidth={l.ring ? 2 : 0} />
               </svg>
               {l.party} {l.count}
             </li>
           ))}
         </ul>
         <div ref={wrap} className="overflow-x-auto">
-          {/* 글자가 11px 아래로 작아지지 않게 최소 폭을 둔다. 넓은 화면에서는 칸에 맞춘다. */}
-          <svg viewBox={box.join(" ")} className="block h-auto w-full" style={{ minWidth: Math.round(box[2] * 0.85) }}
+          {/* 이름표를 켜면 글자가 11px 아래로 작아지지 않게 최소 폭을 둔다(휴대폰은 옆으로 넘겨 본다). */}
+          <svg viewBox={box.join(" ")} className="block h-auto w-full"
+               style={names ? { minWidth: Math.round(box[2] * 0.85) } : undefined}
                role="img" onClick={() => pick("")}
                aria-label={`22대 국회의원 ${nodes.length}명의 공동발의 관계도. 위의 검색으로 한 명씩 볼 수 있습니다.`}>
             <g>{[...lines].map(([k, e]) => line(e, dim ? "stroke-muted/10" : "stroke-muted/35", k))}</g>
@@ -134,17 +144,43 @@ export function Graph({ nodes, edges, legend, box }: {
             {nodes.map((n, i) => (
               <g key={n.code} className="cursor-pointer" opacity={dim && !near.has(i) ? 0.2 : 1}
                  onClick={(e) => { e.stopPropagation(); pick(i === si ? "" : n.code); }}>
-                <rect x={n.x - n.w / 2 + 1} y={n.y - H / 2 + 1} width={n.w - 2} height={H - 2} rx={(H - 2) / 2}
-                      fill={n.ring ? "var(--card)" : n.color}
-                      stroke={i === si ? "var(--foreground)" : n.color} strokeWidth={i === si ? 3 : 1.5} />
-                {/* 당 색 바탕에 흰 글자. 글자를 당 색으로 칠하면 주황·청록·남색이 바탕과 대비가 모자랐다. */}
-                <text x={n.x} y={n.y} textAnchor="middle" dominantBaseline="central" fontSize={LABEL_FONT}
-                      fontWeight={i === si ? 700 : 400} fill={n.ring ? "var(--foreground)" : "#fff"}>
-                  {n.name}
-                </text>
+                {names ? (
+                  <>
+                    <rect x={n.x - n.w / 2 + 1} y={n.y - H / 2 + 1} width={n.w - 2} height={H - 2} rx={(H - 2) / 2}
+                          fill={n.ring ? "var(--card)" : n.color}
+                          stroke={i === si ? "var(--foreground)" : n.color} strokeWidth={i === si ? 3 : 1.5} />
+                    {/* 당 색 바탕에 흰 글자. 글자를 당 색으로 칠하면 주황·청록·남색이 바탕과 대비가 모자랐다. */}
+                    <text x={n.x} y={n.y} textAnchor="middle" dominantBaseline="central" fontSize={LABEL_FONT}
+                          fontWeight={i === si ? 700 : 400} fill={n.ring ? "var(--foreground)" : "#fff"}>
+                      {n.name}
+                    </text>
+                  </>
+                ) : (
+                  <>
+                    {/* 점이 작아 손가락으로 맞히기 어렵다. 보이지 않는 큰 원이 누르는 자리다. */}
+                    <circle cx={n.x} cy={n.y} r={12} fill="transparent" />
+                    <circle cx={n.x} cy={n.y} r={i === si ? 10 : 6.5}
+                            fill={n.ring ? "var(--card)" : n.color}
+                            stroke={n.ring ? n.color : undefined} strokeWidth={n.ring ? 3 : 1}
+                            className={n.ring ? undefined : "stroke-foreground/30"} />
+                  </>
+                )}
                 <title>{n.tag}</title>
               </g>
             ))}
+            {/* 점일 때는 고른 사람과 이어진 사람만 이름을 단다. 고른 사람은 점 위, 이어진 사람은
+                점 아래 — 작은 당끼리 붙어 있으면 이름이 겹쳤다. */}
+            {!names && dim && (
+              <g className="pointer-events-none">
+                {[...near].map((i) => (
+                  <text key={i} x={nodes[i].x} y={i === si ? nodes[i].y - 16 : nodes[i].y + 24} textAnchor="middle"
+                        fontSize={i === si ? 24 : 18} fontWeight={i === si ? 700 : 400}
+                        className="fill-foreground" stroke="var(--card)" strokeWidth={5} paintOrder="stroke">
+                    {nodes[i].name}
+                  </text>
+                ))}
+              </g>
+            )}
           </svg>
         </div>
       </div>
