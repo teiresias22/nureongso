@@ -103,7 +103,7 @@ export default async function NetworkPage() {
           </Link>
         </p>
       </div>
-      <Graph nodes={nodes} edges={edges} legend={legend} box={box} />
+      <Graph nodes={nodes} edges={edges} legend={legend} box={box} lone={lone.map((i) => people[i].name)} />
     </div>
   );
 }

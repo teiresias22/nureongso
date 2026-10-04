@@ -39,8 +39,10 @@ const OUT: Kind = { color: "#7c3aed", dash: "6 4" };
 const IN: Kind = { color: "#16a34a", dash: "6 4" };
 const BOTH: Kind = { color: "#a16207" };
 
-export function Graph({ nodes, edges, legend, box }: {
+export function Graph({ nodes, edges, legend, box, lone }: {
   nodes: GraphNode[]; edges: GraphEdge[]; legend: Legend[]; box: readonly [number, number, number, number];
+  /** 선이 하나도 없어 그림 맨 아래 한 줄에 모은 의원 이름(page.tsx). */
+  lone: string[];
 }) {
   const sel = useSyncExternalStore(subscribe, hash, () => "");
   const si = nodes.findIndex((n) => n.code === sel);
@@ -245,6 +247,14 @@ export function Graph({ nodes, edges, legend, box }: {
             )}
           </svg>
         </div>
+        {/* 그림 밖 글로 둔다. 그림 안 글씨는 점 화면에서 휴대폰 폭에 맞춰 5px 남짓으로 줄었다.
+            줄이 옆으로 넘어가 있어도 이 설명은 늘 보인다. */}
+        {lone.length > 0 && (
+          <p className="border-t border-line px-3 py-2 text-xs leading-5 text-muted">
+            맨 아래 한 줄은 선이 없는 의원입니다({lone.join(" · ")}). 대표발의 법안에 3건 이상 함께
+            이름을 올린 상대가 없고, 다른 의원의 상위 5명에도 들지 않았습니다.
+          </p>
+        )}
       </div>
 
       {si >= 0 && (
