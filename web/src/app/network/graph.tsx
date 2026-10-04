@@ -28,14 +28,14 @@ const pick = (code: string) => {
 };
 
 const H = labelBox("")[1];
-/** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 이중 점선), 내가 남의 법안에 올린 것
- *  (초록 점선), 둘 다인 것(분홍 실선). 셋 다 정당 색(파랑·빨강·주황·청록·남색)과 겹치지 않고
- *  밝은·어두운 바탕 색 검사를 통과했다. 분홍·초록은 적록색약에서 가깝게 보여(ΔE 6.1) 색만이
- *  아니라 선 모양(실선·점선·이중선)으로도 가른다. */
-type Kind = { color: string; dash?: string; double?: boolean };
-const OUT: Kind = { color: "#7c3aed", dash: "8 4", double: true };
+/** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 점선), 내가 남의 법안에 올린 것
+ *  (초록 점선), 둘 다인 것(실선, 보라와 초록을 섞은 파랑). 섞은 색을 그대로 쓰면(#597fa6)
+ *  채도가 낮아 바탕의 회색 선과 섞여서, 같은 색조로 채도만 올렸다. 셋은 밝은·어두운 바탕 모두
+ *  색 검사를 통과했다. 파랑은 조국혁신당 점 색과 비슷하지만 이쪽은 선, 저쪽은 점이다. */
+type Kind = { color: string; dash?: string };
+const OUT: Kind = { color: "#7c3aed", dash: "6 4" };
 const IN: Kind = { color: "#16a34a", dash: "6 4" };
-const BOTH: Kind = { color: "#db2777" };
+const BOTH: Kind = { color: "#367fc5" };
 
 export function Graph({ nodes, edges, legend, box }: {
   nodes: GraphNode[]; edges: GraphEdge[]; legend: Legend[]; box: readonly [number, number, number, number];
@@ -266,26 +266,17 @@ export function Graph({ nodes, edges, legend, box }: {
   );
 }
 
-/** 선 하나. 이중선은 굵은 색 선 위에 바탕색 가는 선을 겹쳐 두 줄로 보이게 한다 —
- *  양쪽 줄 두께는 1.5 로 두고, 건수(w)는 두 줄 사이 간격으로 드러난다. */
 function KindLine({ kind, x1, y1, x2, y2, w }: {
   kind: Kind; x1: number; y1: number; x2: number; y2: number; w: number;
 }) {
-  const at = { x1, y1, x2, y2, strokeDasharray: kind.dash };
-  if (!kind.double) return <line {...at} stroke={kind.color} strokeWidth={w} strokeLinecap="round" />;
-  const outer = Math.max(w, 1.5) + 3;
-  return (
-    <g>
-      <line {...at} stroke={kind.color} strokeWidth={outer} />
-      <line {...at} stroke="var(--card)" strokeWidth={outer - 3} />
-    </g>
-  );
+  return <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={kind.color} strokeDasharray={kind.dash}
+               strokeWidth={w} strokeLinecap="round" />;
 }
 
 function Swatch({ kind }: { kind: Kind }) {
   return (
     <svg width="22" height="10" aria-hidden className="shrink-0">
-      <KindLine kind={kind} x1={1} y1={5} x2={21} y2={5} w={kind.double ? 1.5 : 2.5} />
+      <KindLine kind={kind} x1={1} y1={5} x2={21} y2={5} w={2.5} />
     </svg>
   );
 }
