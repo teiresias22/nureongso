@@ -28,7 +28,12 @@ const pick = (code: string) => {
 };
 
 const H = labelBox("")[1];
-const width = (e: GraphEdge) => 0.8 + e.share * 0.035;
+/** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 실선)과 내가 남의 법안에 올린 것
+ *  (초록 점선). 정당 색(파랑·빨강·주황·청록·남색)과 겹치지 않는 두 색으로, 밝은·어두운
+ *  바탕 모두 색 검사를 통과했다. 색을 못 가리는 사람을 위해 점선을 함께 쓴다. */
+type Kind = { color: string; dash?: string };
+const OUT: Kind = { color: "#7c3aed" };
+const IN: Kind = { color: "#16a34a", dash: "6 4" };
 
 export function Graph({ nodes, edges, legend, box }: {
   nodes: GraphNode[]; edges: GraphEdge[]; legend: Legend[]; box: readonly [number, number, number, number];
@@ -39,6 +44,23 @@ export function Graph({ nodes, edges, legend, box }: {
   const inc = edges.filter((e) => e.b === si).sort((x, y) => y.share - x.share);
   const near = new Set([si, ...out.map((e) => e.b), ...inc.map((e) => e.a)]);
   const dim = si >= 0;
+  // 선 굵기는 비율이 아니라 건수. 비율로 하면 대표발의가 1건뿐인 의원(김남국·이소희)의 선이
+  // '1건 중 1건, 100%' 로 가장 굵게 그려졌다. 비율은 아래 목록에 분모와 함께 적는다.
+  const maxN = Math.max(1, ...edges.map((e) => e.n));
+  const width = (e: GraphEdge) => 0.8 + Math.sqrt(e.n / maxN) * 4;
+  // 서로를 상위 3명에 둔 사이(103쌍)는 두 선이 겹친다. 양옆으로 비켜 긋는다.
+  const mutual = new Set(out.map((e) => e.b).filter((b) => inc.some((e) => e.a === b)));
+  const hl = (e: GraphEdge, kind: Kind, side: number) => {
+    const other = e.a === si ? e.b : e.a;
+    const p = nodes[si], q = nodes[other];
+    const d = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+    const k = mutual.has(other) ? side * 3 : 0;
+    const [ox, oy] = [(-(q.y - p.y) / d) * k, ((q.x - p.x) / d) * k];
+    return (
+      <line key={`${side}${other}`} x1={p.x + ox} y1={p.y + oy} x2={q.x + ox} y2={q.y + oy}
+            stroke={kind.color} strokeDasharray={kind.dash} strokeWidth={width(e) + 0.5} strokeLinecap="round" />
+    );
+  };
   // 이름표는 켜야 보인다. 299개가 한꺼번에 뜨면 무리가 어떻게 갈리는지보다 글자가 먼저 읽힌다.
   // 점과 이름표는 같은 자리에 놓여(separate 가 이름표 기준으로 떼어 둔 자리) 켜고 꺼도 그림이 움직이지 않는다.
   const [names, setNames] = useState(false);
@@ -159,6 +181,12 @@ export function Graph({ nodes, edges, legend, box }: {
               {l.party} {l.count}
             </li>
           ))}
+          {dim && (
+            <>
+              <li className="flex items-center gap-1 sm:ml-auto"><Swatch kind={OUT} />{nodes[si].name} 법안에 이름 올린 의원</li>
+              <li className="flex items-center gap-1"><Swatch kind={IN} />{nodes[si].name} 의원이 이름 올린 법안</li>
+            </>
+          )}
         </ul>
         <div ref={wrap} className="overflow-x-auto">
           {/* 이름표를 켜면 글자가 11px 아래로 작아지지 않게 최소 폭을 둔다(휴대폰은 옆으로 넘겨 본다). */}
@@ -167,7 +195,7 @@ export function Graph({ nodes, edges, legend, box }: {
                role="img" onClick={() => pick("")}
                aria-label={`22대 국회의원 ${nodes.length}명의 공동발의 관계도. 위의 검색으로 한 명씩 볼 수 있습니다.`}>
             <g>{[...lines].map(([k, e]) => line(e, dim ? "stroke-muted/10" : "stroke-muted/35", k))}</g>
-            {dim && <g>{[...out, ...inc].map((e, i) => line(e, "stroke-foreground/70", `s${i}`))}</g>}
+            {dim && <g>{out.map((e) => hl(e, OUT, 1))}{inc.map((e) => hl(e, IN, -1))}</g>}
             {nodes.map((n, i) => (
               <g key={n.code} className="cursor-pointer" opacity={dim && !near.has(i) ? 0.2 : 1}
                  onClick={(e) => { e.stopPropagation(); pick(i === si ? "" : n.code); }}>
@@ -216,10 +244,10 @@ export function Graph({ nodes, edges, legend, box }: {
             </Link>
           </div>
           <div className="grid sm:grid-cols-2">
-            <Rel title={`${nodes[si].name} 의원이 대표발의한 법안에 자주 이름을 올린 의원`}
+            <Rel kind={OUT} title={`${nodes[si].name} 의원이 대표발의한 법안에 자주 이름을 올린 의원`}
                  rows={out.map((e) => ({ i: e.b, text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
                  nodes={nodes} />
-            <Rel title={`${nodes[si].name} 의원이 자주 이름을 올린 법안의 대표발의자`}
+            <Rel kind={IN} title={`${nodes[si].name} 의원이 자주 이름을 올린 법안의 대표발의자`}
                  hint="그 의원의 상위 3명 안에 든 경우만"
                  rows={inc.map((e) => ({ i: e.a, text: `${e.nrep}건 중 ${e.n}건 (${e.share}%)` }))}
                  nodes={nodes} />
@@ -230,12 +258,21 @@ export function Graph({ nodes, edges, legend, box }: {
   );
 }
 
-function Rel({ title, hint, rows, nodes }: {
-  title: string; hint?: string; rows: { i: number; text: string }[]; nodes: GraphNode[];
+function Swatch({ kind }: { kind: Kind }) {
+  return (
+    <svg width="20" height="8" aria-hidden className="shrink-0">
+      <line x1="1" y1="4" x2="19" y2="4" stroke={kind.color} strokeWidth="2.5" strokeDasharray={kind.dash}
+            strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function Rel({ kind, title, hint, rows, nodes }: {
+  kind: Kind; title: string; hint?: string; rows: { i: number; text: string }[]; nodes: GraphNode[];
 }) {
   return (
     <div className="border-b border-line px-4 py-2.5 last:border-b-0 sm:border-b-0 sm:odd:border-r">
-      <h2 className="text-xs font-semibold">{title}</h2>
+      <h2 className="flex items-center gap-1.5 text-xs font-semibold"><Swatch kind={kind} />{title}</h2>
       {hint && <p className="text-xs text-muted">{hint}</p>}
       {rows.length === 0 ? (
         <p className="mt-1 text-xs text-muted">없습니다</p>

@@ -72,8 +72,8 @@ export default async function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">{TITLE}</h1>
         <p className="mt-2 text-sm leading-6 text-muted">
           점 하나가 22대 현직 국회의원 한 명입니다. 의원마다 <b className="text-foreground">자기가 대표발의한
-          법안에 공동발의자로 가장 자주 이름을 올린 3명</b>과 선으로 잇습니다. 선이 굵을수록 그 비율이
-          높습니다. 자주 함께 이름을 올린 사람끼리 가까이 모입니다.
+          법안에 공동발의자로 가장 자주 이름을 올린 3명</b>과 선으로 잇습니다. 선이 굵을수록 함께 이름을 올린
+          법안이 많습니다. 자주 함께 이름을 올린 사람끼리 가까이 모입니다.
         </p>
         <p className="mt-1 text-xs leading-5 text-muted">
           법안은 의원 10명 이상이 함께해야 낼 수 있어 서명을 주고받는 일이 흔합니다. 선은 함께 서명한
