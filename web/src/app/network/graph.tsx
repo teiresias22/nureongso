@@ -28,13 +28,14 @@ const pick = (code: string) => {
 };
 
 const H = labelBox("")[1];
-/** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 실선), 내가 남의 법안에 올린 것
- *  (초록 점선), 둘 다인 것(글자색 실선). 보라·초록은 정당 색(파랑·빨강·주황·청록·남색)과
- *  겹치지 않고 밝은·어두운 바탕 모두 색 검사를 통과했다. 색을 못 가리는 사람을 위해 점선을 함께 쓴다. */
-type Kind = { color: string; dash?: string };
-const OUT: Kind = { color: "#7c3aed" };
+/** 고른 사람의 선. 남이 내 법안에 이름을 올린 것(보라 이중 점선), 내가 남의 법안에 올린 것
+ *  (초록 점선), 둘 다인 것(분홍 실선). 셋 다 정당 색(파랑·빨강·주황·청록·남색)과 겹치지 않고
+ *  밝은·어두운 바탕 색 검사를 통과했다. 분홍·초록은 적록색약에서 가깝게 보여(ΔE 6.1) 색만이
+ *  아니라 선 모양(실선·점선·이중선)으로도 가른다. */
+type Kind = { color: string; dash?: string; double?: boolean };
+const OUT: Kind = { color: "#7c3aed", dash: "8 4", double: true };
 const IN: Kind = { color: "#16a34a", dash: "6 4" };
-const BOTH: Kind = { color: "var(--foreground)" };
+const BOTH: Kind = { color: "#db2777" };
 
 export function Graph({ nodes, edges, legend, box }: {
   nodes: GraphNode[]; edges: GraphEdge[]; legend: Legend[]; box: readonly [number, number, number, number];
@@ -56,10 +57,8 @@ export function Graph({ nodes, edges, legend, box }: {
     const other = e.a === si ? e.b : e.a;
     const back = kind === BOTH ? inc.find((x) => x.a === other) : undefined;
     const p = nodes[si], q = nodes[other];
-    return (
-      <line key={other} x1={p.x} y1={p.y} x2={q.x} y2={q.y} stroke={kind.color} strokeDasharray={kind.dash}
-            strokeWidth={Math.max(width(e), back ? width(back) : 0) + 0.5} strokeLinecap="round" />
-    );
+    return <KindLine key={other} kind={kind} x1={p.x} y1={p.y} x2={q.x} y2={q.y}
+                     w={Math.max(width(e), back ? width(back) : 0) + 0.5} />;
   };
   // 이름표는 켜야 보인다. 299개가 한꺼번에 뜨면 무리가 어떻게 갈리는지보다 글자가 먼저 읽힌다.
   // 점과 이름표는 같은 자리에 놓여(separate 가 이름표 기준으로 떼어 둔 자리) 켜고 꺼도 그림이 움직이지 않는다.
@@ -171,7 +170,8 @@ export function Graph({ nodes, edges, legend, box }: {
       </form>
 
       <div className="overflow-hidden rounded-lg border border-line bg-card">
-        <ul className="flex flex-wrap gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-xs text-muted">
+        <div className="space-y-1 border-b border-line px-3 py-2 text-xs text-muted">
+        <ul className="flex flex-wrap gap-x-3 gap-y-1">
           {legend.map((l) => (
             <li key={l.party} className="flex items-center gap-1">
               <svg width="12" height="12" aria-hidden>
@@ -181,14 +181,16 @@ export function Graph({ nodes, edges, legend, box }: {
               {l.party} {l.count}
             </li>
           ))}
-          {dim && (
-            <>
-              <li className="flex items-center gap-1 sm:ml-auto"><Swatch kind={OUT} />{nodes[si].name} 법안에 이름 올린 의원</li>
-              <li className="flex items-center gap-1"><Swatch kind={IN} />{nodes[si].name} 의원이 이름 올린 법안</li>
-              {mutual.size > 0 && <li className="flex items-center gap-1"><Swatch kind={BOTH} />서로 이름 올린 사이</li>}
-            </>
-          )}
         </ul>
+        {/* 정당 줄과 선 줄을 나눈다. 한 줄에 이어 붙이면 어디까지가 점이고 어디부터가 선인지 흐렸다. */}
+        {dim && (
+          <ul className="flex flex-wrap gap-x-3 gap-y-1">
+            <li className="flex items-center gap-1"><Swatch kind={OUT} />{nodes[si].name} 법안에 이름 올린 의원</li>
+            <li className="flex items-center gap-1"><Swatch kind={IN} />{nodes[si].name} 의원이 이름 올린 법안</li>
+            {mutual.size > 0 && <li className="flex items-center gap-1"><Swatch kind={BOTH} />서로 이름 올린 사이</li>}
+          </ul>
+        )}
+        </div>
         <div ref={wrap} className="overflow-x-auto">
           {/* 이름표를 켜면 글자가 11px 아래로 작아지지 않게 최소 폭을 둔다(휴대폰은 옆으로 넘겨 본다). */}
           <svg viewBox={box.join(" ")} className="block h-auto w-full"
@@ -264,11 +266,26 @@ export function Graph({ nodes, edges, legend, box }: {
   );
 }
 
+/** 선 하나. 이중선은 굵은 색 선 위에 바탕색 가는 선을 겹쳐 두 줄로 보이게 한다 —
+ *  양쪽 줄 두께는 1.5 로 두고, 건수(w)는 두 줄 사이 간격으로 드러난다. */
+function KindLine({ kind, x1, y1, x2, y2, w }: {
+  kind: Kind; x1: number; y1: number; x2: number; y2: number; w: number;
+}) {
+  const at = { x1, y1, x2, y2, strokeDasharray: kind.dash };
+  if (!kind.double) return <line {...at} stroke={kind.color} strokeWidth={w} strokeLinecap="round" />;
+  const outer = Math.max(w, 1.5) + 3;
+  return (
+    <g>
+      <line {...at} stroke={kind.color} strokeWidth={outer} />
+      <line {...at} stroke="var(--card)" strokeWidth={outer - 3} />
+    </g>
+  );
+}
+
 function Swatch({ kind }: { kind: Kind }) {
   return (
-    <svg width="20" height="8" aria-hidden className="shrink-0">
-      <line x1="1" y1="4" x2="19" y2="4" stroke={kind.color} strokeWidth="2.5" strokeDasharray={kind.dash}
-            strokeLinecap="round" />
+    <svg width="22" height="10" aria-hidden className="shrink-0">
+      <KindLine kind={kind} x1={1} y1={5} x2={21} y2={5} w={kind.double ? 1.5 : 2.5} />
     </svg>
   );
 }
