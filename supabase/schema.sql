@@ -633,6 +633,34 @@ grant select on member_stats to anon, authenticated;
 grant select on member_party_line to anon, authenticated;
 grant select on member_bill to anon, authenticated;
 
+-- 공동발의 관계. A 가 대표발의한 법안에 B 가 공동발의자로 이름을 올린 횟수(n)와
+-- A 의 대표발의 수(nrep). 현직 국회의원끼리만. 수집 후 `ingest.py refresh` 로 갱신한다.
+--
+-- 의원마다 상위 5명(rk)만 둔다. 한 번이라도 같이 이름을 올린 쌍이 가능한 쌍의 86%
+-- (2026-10 실측 38,168쌍)라 전부 그리면 모든 점이 서로 이어진다. 관계도는 rk<=3 (약 900행,
+-- PostgREST 1000행 상한 아래), 의원 페이지 목록은 rk<=5 를 쓴다.
+-- 공동발의는 10명 서명이 필요해 당·팀 단위로 몰아 서명하는 일이 많다. 친분이 아니다.
+create materialized view if not exists cosponsor_top as
+with mp as (select code, name, party from member where is_incumbent and office = '국회의원'),
+r as (
+  select s.member_code as a, count(*) as nrep
+  from bill_sponsor s join mp on mp.code = s.member_code
+  where s.role = 'rep' group by 1
+), e as (
+  select r.member_code as a, c.member_code as b, count(*) as n,
+         row_number() over (partition by r.member_code order by count(*) desc, c.member_code) as rk
+  from bill_sponsor r
+  join bill_sponsor c on c.bill_id = r.bill_id and c.role = 'co'
+  join mp mb on mb.code = c.member_code
+  where r.role = 'rep'
+  group by r.member_code, c.member_code
+)
+select e.a, e.b, e.n, r.nrep, e.rk, mp.name as b_name, mp.party as b_party
+from e join r using (a) join mp on mp.code = e.b
+where e.rk <= 5;
+create unique index if not exists cosponsor_top_ab_idx on cosponsor_top (a, b);
+grant select on cosponsor_top to anon, authenticated;
+
 -- 시도는 선관위 sd_name 이 정확하다. member.district 는 '서울 강서구병' 처럼
 -- 시군구까지 붙어 있고 역대 값이 슬래시로 이어져 오기도 한다.
 create or replace view member_region
@@ -808,7 +836,7 @@ create table if not exists pledge_overlap (
   -- 구청장 후보는 대표공약 5개에 경제·복지·교통을 통째로 담는 일이 많아, 표어끼리
   -- 붙으면 '살기 좋은 수영구' 와 '건강도시 수영' 이 이어진다. 읽는 사람이 새로 아는
   -- 게 없다. confidence 로는 안 갈린다 — 0.85 이상에도 표어끼리가 섞여 있었다.
-  specific boolean
+  specific boolean,
   primary key (a, b)
 );
 create index if not exists pledge_overlap_b_idx on pledge_overlap (b);

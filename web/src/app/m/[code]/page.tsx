@@ -4,9 +4,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   db, eok, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
-  partyColor, pct, shortDistrict, termText, wonK,
+  partyColor, partyLine, pct, shortDistrict, termText, wonK,
   type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
-  type BidNotice, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
+  type BidNotice, type Cosponsor, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
 } from "@/lib/db";
 import { kstYear, ldJson, pageOg, SITE } from "@/lib/site";
 import { CompareButton, ShareButton } from "./actions";
@@ -217,13 +217,14 @@ export default async function MemberPage({
     { data: docLinks },
     { data: pledges },
     { data: assetRows },
-    { data: partyLine },
+    { data: lineRow },
     { data: attRows },
     { data: sidejobRows },
     { data: tripRows },
     { data: researchRows },
     { data: studyRows },
     { data: staffRows },
+    { data: cosignRows },
   ] = await Promise.all([
     db.from("member").select(MEMBER_COLS).eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
@@ -275,6 +276,8 @@ export default async function MemberPage({
       .order("quarter", { ascending: false, nullsFirst: false }),
     // 지금 있는 보좌진. ingest.py staff 가 매일 국회 명단과 맞춰 둔다.
     db.from("member_staff").select("role").eq("member_code", code).is("left_on", null),
+    // 이 사람이 대표발의한 법안에 가장 자주 이름을 올린 현직 의원 5명(cosponsor_top).
+    db.from("cosponsor_top").select("b, n, nrep, b_name, b_party").eq("a", code).order("rk"),
   ]);
 
   // DB 가 멈췄을 때 '없는 사람' 404 를 내면 검색엔진이 실제 인물 페이지를 지운다.
@@ -414,7 +417,7 @@ export default async function MemberPage({
   const assets = (assetRows ?? []) as AssetReport[];
   const atts = (attRows ?? []) as Attendance[];
   const att = atts[0];
-  const line = partyLine as PartyLine | null;
+  const line = lineRow as PartyLine | null;
   // 비교 띠에 쓸 다른 의원들. 출결은 그 대수 전원(21대 322·22대 299 — 1000행 상한 아래),
   // 정당 표는 비교가 100표 이상인 사람만(재보궐로 막 들어온 몇 표짜리가 끝에 몰린다).
   // 경쟁 후보·근거 조례·발주 공고·발주 공사·업무추진비도 여기서 같이 기다린다. 모두 첫 묶음
@@ -524,6 +527,8 @@ export default async function MemberPage({
     }
   }
   if (hasBills(s)) nav.push({ id: "rep-sec", label: "대표발의" }, { id: "co-sec", label: "공동발의" });
+  const cosign = (cosignRows ?? []) as Omit<Cosponsor, "a">[];
+  if (showBills && cosign.length) nav.push({ id: "cosign", label: "함께 발의" });
   if (SHOW_RACE && raceRivals.length && myDocPledges.length)
     nav.push({ id: "race", label: "후보 공약 비교" });
   if (showBids && (districtBidTotal ?? 0) > 0) nav.push({ id: "bid", label: "발주 공사" });
@@ -1040,6 +1045,30 @@ export default async function MemberPage({
               keep={{ rep: repFilter, repYear, repPage: String(repPage) }}
             />
           </Section>
+
+          {cosign.length > 0 && (
+            <Section id="cosign" title="대표발의 법안에 자주 이름을 올린 의원" count={cosign.length}>
+              <p className="border-b border-line px-4 py-2 text-xs leading-5 text-muted">
+                {m.name} 의원이 대표발의한 법안 {cosign[0].nrep}건에 공동발의자로 이름을 올린 횟수입니다(현직
+                국회의원만). 법안은 의원 10명 이상이 함께해야 낼 수 있어 서명을 주고받는 일이 흔합니다 —
+                친분이나 계파를 뜻하지 않습니다.{" "}
+                <Link href={`/network#${code}`} className="underline underline-offset-2 hover:text-foreground">
+                  관계도에서 보기
+                </Link>
+              </p>
+              <ul className="divide-y divide-line">
+                {cosign.map((c) => (
+                  <li key={c.b} className="flex items-baseline gap-2 px-4 py-2.5 text-sm">
+                    <Link href={`/m/${c.b}`} className="font-medium hover:underline">{c.b_name}</Link>
+                    <span className="text-xs text-muted">{partyLine(c.b_party)}</span>
+                    <span className="ml-auto tabular-nums">
+                      {c.n}건 <span className="text-xs text-muted">({pct(c.n, c.nrep)}%)</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
         </>
       )}
 

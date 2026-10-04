@@ -279,6 +279,9 @@ export type Rival = Pick<
 /** specific: 겹친 내용이 확인할 수 있을 만큼 구체적인가. 화면은 이것만 쓴다. */
 export type PledgeOverlap = { a: number; b: number; summary: string | null; specific: boolean | null };
 
+/** a 가 대표발의한 법안 nrep 건 중 b 가 공동발의자로 이름을 올린 n 건 (cosponsor_top). */
+export type Cosponsor = { a: string; b: string; n: number; nrep: number; b_name: string; b_party: string | null };
+
 /** 경쟁 후보의 공약서 대표공약 한 줄. */
 export type RivalPledge = { id: number; member_code: string | null; title: string };
 

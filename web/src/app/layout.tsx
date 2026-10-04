@@ -9,6 +9,7 @@ const NAV = [
   { href: "/my", label: "내 지역" },
   { href: "/stats", label: "통계" },
   { href: "/compare", label: "비교" },
+  { href: "/network", label: "관계도" },
 ];
 
 /** 푸터에는 읽는 문서 둘만. 왜 만들었는지(about)가 먼저고, 무엇을 근거로
@@ -23,6 +24,7 @@ const FOOTER_COLS: { title: string; links: { href: string; label: string; ext?: 
       { href: "/my", label: "내 지역 대표 찾기" },
       { href: "/stats", label: "정당·지역별 통계" },
       { href: "/compare", label: "의원 비교" },
+      { href: "/network", label: "공동발의 관계도" },
     ],
   },
   {

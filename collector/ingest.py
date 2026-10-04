@@ -1017,6 +1017,7 @@ def main():
             with conn.cursor() as cur:
                 cur.execute("refresh materialized view concurrently member_stats")
                 cur.execute("refresh materialized view concurrently member_party_line")
+                cur.execute("refresh materialized view concurrently cosponsor_top")
                 # 매일 도는 수집이 단체장·교육감의 정당·지역구를 의원 시절로 되돌린
                 # 적이 있다. 조용히 틀리면 아무도 모르니 매번 세어서 찍는다.
                 cur.execute("""
