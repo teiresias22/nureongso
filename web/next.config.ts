@@ -13,6 +13,14 @@ const nextConfig: NextConfig = {
     // 인물 사진은 임기 중에 바뀌지 않으므로 길게 잡는다.
     minimumCacheTTL: 2678400, // 31일
   },
+  // 주소 검색어를 읽는 페이지는 Next 가 `private, no-store` 를 붙여 매 요청이 함수까지 갔다.
+  // 크롤러가 사이트맵 2만 개를 돌 때마다 Vercel Fast Origin Transfer 무료 10GB 의 75% 를 썼다(2026-10).
+  // 누구에게나 같은 화면이라(쿠키·로그인 없음) Vercel CDN 에만 1시간 캐시를 건다 — 데이터 캐시와 같은 주기.
+  // 브라우저용 Cache-Control 은 그대로 두고, HTML·RSC 응답은 `_rsc` 검색어로 키가 갈린다.
+  async headers() {
+    const cdn = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=3600, stale-while-revalidate=86400" }];
+    return ["/", "/m/:path*", "/bill/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn }));
+  },
 };
 
 export default nextConfig;
