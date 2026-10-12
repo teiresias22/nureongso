@@ -5,7 +5,9 @@
 성적표를 알 수 없다는 문제에서 출발했다. 발의·표결·출결·재산·겸직·국외활동·연구단체·연구용역처럼
 기관이 공개한 기록을 옮기고, 공약 이행은 공개된 규칙으로 판정한다. 의견은 싣지 않는다.
 
-서비스: https://nureongso-puce.vercel.app · 오류 제보: [GitHub 이슈](https://github.com/teiresias22/nureongso/issues/new?template=data-error.yml)
+서비스: https://nureongso.joon.is-a.dev · 오류 제보: [GitHub 이슈](https://github.com/teiresias22/nureongso/issues/new?template=data-error.yml)
+
+기술: Python 3.12 수집기 · Supabase(Postgres) · Next.js 16(App Router) · Vercel · GitHub Actions 정기 수집 · Gemini(공약 추출·근거 대조)
 
 ## 지금 되는 것
 
@@ -24,12 +26,14 @@
 - 시도지사 16, 교육감 16, 구시군의장 227
 - 공약 원문(목표·이행방법·이행기간·재원조달), 취임 이후 그 지자체의 조례 제·개정과 나라장터 공사 발주
 - 재산 — 관보 재산공개(2022~, 1,639줄), 그해 정기공개의 같은 직위 전원의 중간값·평균과 비교
+- 업무추진비(시도지사·교육감) — 시도·교육청 누리집 게시판에서 모은다(전국 API 가 없다)
 
 **공약과 이행 판정**
 - 선거공보 1,683건에서 공약 21,336건 추출(텍스트가 `(cid:NNNN)` 으로 깨진 공보는 PDF 원본을 모델에 넘긴다)
 - 공약마다 확인 수단(입법·조례제도·예산사업 등)을 붙이고, 법안·조례와 대조해 근거를 단 뒤
   공개된 규칙표로 판정한다 — 완료·진행·미착수·판단불가. 근거 없는 공약은 판단불가로 남는다.
-  규칙은 사이트의 [판정 기준](https://nureongso-puce.vercel.app/rules)에 전부 있다.
+  규칙은 사이트의 [판정 기준](https://nureongso.joon.is-a.dev/rules)에 전부 있다.
+- 같은 선거구에 함께 나온 후보들의 공약 가운데 같은 약속을 나란히 보여 준다(`judge.py match_race`)
 
 **둘러보기**
 - `/` 목록 — 직위 탭, 정당·지역구 필터. 정렬은 국회의원이 발의·표결참여·**출석률**·**순재산**,
@@ -40,6 +44,8 @@
 - `/stats` 정당·지역별 통계 — 의정활동 표 + 공개 기록 표(출석률·정당 다수와 다른 표·순재산 중간값·
   1인당 국외활동·연구단체·연구용역·겸직 문제 인원)
 - `/compare` 국회의원 둘 비교 — 의정활동·출결·정당 다수와 다른 표·겸직·국외활동·연구단체·연구용역·순재산
+- `/network` 공동발의 관계도 — 22대 현직 의원 전체를 한 장에. 대표발의한 법안에 공동발의자로 자주 이름을 올린
+  사이를 선으로 잇는다(함께한 법안 3건 이상, 의원마다 많아야 5명)
 - `/bill/[id]` 법안 — 제안이유 원문, 발의자, 본회의 표결(정당별·반대·기권·정당 다수와 다른 표)
 - `/rules` 판정 기준 — 공약 판정 규칙(1~9), 공개 기록을 옮기고 세는 방법(10~17), 여러 사람을 모아 볼 때의 규칙(18), 싣지 않는 것(19)
 - `/about` 소개 — 이름의 유래, 만든 이유, 여기서 볼 수 있는 것, 지키는 것
@@ -58,13 +64,15 @@ collector/   Python 수집기 (열린국회정보·선관위·국회공보·법�
              nec.py     선거·당선인·공약
              bulletin.py / parse_pledges.py  선거공보 → 공약   asset.py    재산(국회공보)
              gwanbo.py  재산(관보, 단체장·교육감)
-             ordin.py   조례   bid.py  공사 발주   judge.py  공약 분류·근거 대조·판정
+             ordin.py   조례   bid.py  공사 발주   expense.py  업무추진비
+             judge.py   공약 분류·근거 대조·판정, 같은 선거구 후보 공약 비교(match_race)
 supabase/    schema.sql  (Supabase SQL Editor 에 붙여넣어 실행)
 web/         Next.js (App Router) 프론트, Vercel 배포
 .github/     정기 수집 워크플로와 오류 제보 이슈 양식
              ingest.yml 매일 — ingest.py all (의원·법안·표결·겸직·출결·국외활동·연구단체·연구용역)
              nec.yml    매주 — 선거·당선인·공약, asset.py(국회공보 재산), gwanbo.py(관보 재산)
              evidence.yml 매주 — 조례·발주 수집, judge.py 분류·대조·판정
+             race.yml   매일 — 후보 공약 비교를 이어서 다시 만든다(다 돌면 지운다)
 ```
 
 워크플로는 GitHub Actions 화면에서 수동으로도 돌린다(`ingest.yml` 은 `step` 에 단계 이름 하나).
@@ -91,7 +99,7 @@ web/         Next.js (App Router) 프론트, Vercel 배포
 ## 시작하기
 
 1. Supabase 프로젝트 생성 → SQL Editor 에 `supabase/schema.sql` 실행
-2. `.env.example` 참고해 `collector/.env`, `web/.env.local` 작성
+2. `collector/.env.example` → `collector/.env`, `web/.env.example` → `web/.env.local` 로 복사해 값 채우기
 3. 두 파일 다 [dotenvx](https://dotenvx.com) 로 암호화해 둔다
 
 ```bash

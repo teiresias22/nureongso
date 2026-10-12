@@ -13,7 +13,7 @@ paths:
 | 무엇 | 어디 | 비고 |
 |---|---|---|
 | DB | Supabase 무료 | 500MB 한도. `evidence.yml` 요약에 현재 용량이 찍힌다 |
-| 웹 | Vercel, 리전 `icn1` | 환경변수는 Vercel 에. `NEXT_PUBLIC_SITE_URL` 은 자체 도메인을 붙일 때만 |
+| 웹 | Vercel, 리전 `icn1` | 환경변수는 Vercel 에. `NEXT_PUBLIC_SITE_URL` = https://nureongso.joon.is-a.dev. 무료 한도(이미지 변환 5천 · Fast Origin Transfer 10GB · 함수 CPU 4시간)를 2026-10 에 75~85% 까지 써서 CDN 캐시를 걸었다(`web.md`) |
 | 수집 | GitHub Actions | 시크릿: `DATABASE_URL` `ASSEMBLY_API_KEY` `DATA_GO_KR_KEY` `LAW_OC` `GEMINI_API_KEY` |
 | LLM | Gemini 무료 | 하루 한도는 키가 아니라 **구글 클라우드 프로젝트** 단위. 키를 쉼표로 여럿 넣으려면 프로젝트가 달라야 한다 |
 

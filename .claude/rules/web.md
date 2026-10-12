@@ -8,6 +8,9 @@ paths:
 - 이 Next.js 는 학습 데이터와 API·규칙이 다르다. 쓰기 전에 `web/node_modules/next/dist/docs/` 해당 가이드를 읽는다.
   `web/AGENTS.md` 는 `next dev` 가 다시 써 넣는 파일이라 고치지 않는다.
 - DB 접근은 `src/lib/db.ts` 의 `db` 하나. GET 은 1시간 데이터 캐시(`cachedFetch`)를 탄다 — 페이지마다 fetch 옵션을 따로 달지 않는다.
+- 그 위에 Vercel CDN 하루 캐시(`next.config.ts` 의 `headers()`)가 있다. 검색어를 읽는 페이지는 Next 가 `no-store` 를 붙여
+  매 요청이 함수까지 가서 무료 한도를 먹었다. 새 동적 경로를 만들면 그 목록에 넣을지 정한다(쿠키·로그인이 없어 누구에게나 같은 화면).
+- 사진 변환 크기는 `imageSizes` 의 96·192 두 벌뿐이다. 다른 폭을 쓰면 변환 벌수가 늘어 무료 5천 건을 넘긴다.
 - 목록은 `CARD_COLS`·`CARD_STAT_COLS` 만 받는다. `select *` 금지(558행에서 349ms→154ms 실측).
 - 공용 표기·계산은 `lib/db.ts` 에 이미 있다(`eok()` 억 단위 등). 페이지에 다시 만들지 않는다.
 - 화면은 직위가 아니라 **데이터 유무**로 가른다. 발의·표결이 있으면 의정활동, 공약이 있으면 공약.

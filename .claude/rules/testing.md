@@ -1,6 +1,7 @@
 ---
 paths:
   - "collector/test_*.py"
+  - "web/src/lib/*.check.mjs"
 ---
 
 # 테스트
@@ -17,3 +18,4 @@ cd collector && for f in test_*.py; do dotenvx run -q -- .venv/bin/python -c "im
 
   `python test_x.py` 는 `__main__` 이 없는 파일(`test_asset`·`test_extras`·`test_gwanbo`)에서 아무것도 돌리지 않는다.
 - `test_ingest.py` 는 `ASSEMBLY_API_KEY` 가 있어야 해서 `dotenvx run` 을 거친다.
+- 웹은 같은 방식의 `*.check.mjs` 를 `src/lib/` 에 둔다(`node web/src/lib/force.check.mjs`). 순수 계산(관계도 배치)만 — 화면은 `npm run build` 로 본다.

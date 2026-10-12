@@ -7,12 +7,12 @@ body:
     attributes:
       value: |
         이 게시판은 **공개**입니다. 이름·연락처 같은 개인 정보는 적지 마세요.
-        판정에 대한 의견이 아니라 **원문과 다른 사실**을 알려 주세요. 판정 규칙은 [판정 기준](https://nureongso-puce.vercel.app/rules)에 있습니다.
+        판정에 대한 의견이 아니라 **원문과 다른 사실**을 알려 주세요. 판정 규칙은 [판정 기준](https://nureongso.joon.is-a.dev/rules)에 있습니다.
   - type: input
     id: page
     attributes:
       label: 틀린 내용이 있는 페이지 주소
-      placeholder: https://nureongso-puce.vercel.app/m/...
+      placeholder: https://nureongso.joon.is-a.dev/m/...
     validations:
       required: true
   - type: textarea
