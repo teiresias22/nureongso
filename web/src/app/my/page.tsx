@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Photo } from "../page";
 import { AreaPicker } from "./picker";
+import { regionsOf, sido, type Area } from "@/lib/area";
 import { pageOg } from "@/lib/site";
 import {
   attendRate, districtArea, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
@@ -19,23 +20,7 @@ export const metadata = {
   ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/my"),
 };
 
-/** 선관위가 주는 시도·시군구. member.district 는 직위마다 모양이 달라 못 쓴다. */
-type Area = {
-  member_code: string;
-  office: string;
-  sd_name: string | null;
-  wiw_name: string | null;
-};
-
 const OFFICE_ORDER = ["국회의원", "구시군의장", "시도지사", "교육감"];
-
-/** 2026년 지방선거에서 광주·전남이 통합됐다. 새 시도지사·교육감만 통합 이름으로 넘어가고
- *  국회의원·구청장은 옛 시도 이름 그대로라, 합치지 않으면 광주 주민이 자기 시도지사를 놓친다. */
-const SD_MERGED: Record<string, string> = {
-  광주광역시: "전남광주통합특별시",
-  전라남도: "전남광주통합특별시",
-};
-const sido = (v: string | null) => (v ? SD_MERGED[v] ?? v : "");
 
 /** '서울 중구성동구갑' 에 '성동구' 가 있나. 시군구 이름이 시작하는 자리에서만 센다. */
 function inDistrict(district: string, wiw: string): boolean {
@@ -71,19 +56,7 @@ export default async function MyPage({
   const recBy = new Map(((records ?? []) as CardRecord[]).map((r) => [r.code, r]));
 
   // 시도 → 시군구 목록. 통째로 클라이언트에 넘겨 시도를 고르는 즉시 채운다.
-  const byRegion = new Map<string, Set<string>>();
-  for (const a of (areas ?? []) as Area[]) {
-    // '전국' 은 비례대표다. 지역으로 찾는 화면에 넣을 자리가 없다.
-    if (!a.sd_name || a.sd_name === "전국") continue;
-    const k = sido(a.sd_name);
-    if (!byRegion.has(k)) byRegion.set(k, new Set());
-    if (a.wiw_name) byRegion.get(k)!.add(a.wiw_name);
-  }
-  const regions = Object.fromEntries(
-    [...byRegion]
-      .sort(([a], [b]) => a.localeCompare(b, "ko"))
-      .map(([k, v]) => [k, [...v].sort((x, y) => x.localeCompare(y, "ko"))]),
-  );
+  const regions = regionsOf((areas ?? []) as Area[]);
 
   // 주소를 손으로 고쳐 들어올 수 있다. 그 시도에 없는 시군구면 시도 전체로 둔다.
   if (!regions[sd]?.includes(wiw)) wiw = "";
