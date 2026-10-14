@@ -20,4 +20,6 @@ paths:
 - `/my` 의 지역 키는 `member.district` 가 아니라 선관위 `sd_name`/`wiw_name`(`member_area` 뷰). 국회의원만 `district` 부분일치.
 - '한눈에 보기' 요약에 국외활동·연구단체·연구용역 **건수**를 올리지 않는다 — 건수가 실적처럼 읽힌다.
 - 기록 없는 사람은 정렬에서 0 이 아니라 맨 뒤.
+- 쓰기는 `app/api/subscription/route.ts` 하나뿐이다(구독 신청·확인·해지, POST → `/subscription` 으로 303). service_role 키는
+  거기서만 읽는다. `/subscription` 은 토큰을 읽는 화면이라 CDN 캐시 목록(`next.config.ts`)에 넣지 않는다.
 - 확인: `npm run lint && npm run build`(둘 다 `dotenvx` 를 거친다).

@@ -13,9 +13,10 @@ paths:
 | 무엇 | 어디 | 비고 |
 |---|---|---|
 | DB | Supabase 무료 | 500MB 한도. `evidence.yml` 요약에 현재 용량이 찍힌다 |
-| 웹 | Vercel, 리전 `icn1` | 환경변수는 Vercel 에. `NEXT_PUBLIC_SITE_URL` = https://nureongso.joon.is-a.dev. 무료 한도(이미지 변환 5천 · Fast Origin Transfer 10GB · 함수 CPU 4시간)를 2026-10 에 75~85% 까지 써서 CDN 캐시를 걸었다(`web.md`) |
-| 수집 | GitHub Actions | 시크릿: `DATABASE_URL` `ASSEMBLY_API_KEY` `DATA_GO_KR_KEY` `LAW_OC` `GEMINI_API_KEY` |
+| 웹 | Vercel, 리전 `icn1` | 환경변수는 Vercel 에(서버 전용 `SUPABASE_SERVICE_ROLE_KEY` `RESEND_API_KEY` `MAIL_FROM` 포함 — 셋 다 있어야 구독 폼이 켜진다). `NEXT_PUBLIC_SITE_URL` = https://nureongso.joon.is-a.dev. 무료 한도(이미지 변환 5천 · Fast Origin Transfer 10GB · 함수 CPU 4시간)를 2026-10 에 75~85% 까지 써서 CDN 캐시를 걸었다(`web.md`) |
+| 수집 | GitHub Actions | 시크릿: `DATABASE_URL` `ASSEMBLY_API_KEY` `DATA_GO_KR_KEY` `LAW_OC` `GEMINI_API_KEY` `RESEND_API_KEY` `MAIL_FROM` |
 | LLM | Gemini 무료 | 하루 한도는 키가 아니라 **구글 클라우드 프로젝트** 단위. 키를 쉼표로 여럿 넣으려면 프로젝트가 달라야 한다 |
+| 메일 | Resend 무료 | 하루 100통·월 3,000통, 하루 한도는 UTC 자정(09:00 KST)에 풀린다. 확인 메일(web)과 주간 메일(`digest.yml`)이 같은 키. 보내는 도메인을 Resend 에서 확인해야 한다 |
 
 ## 시크릿
 
@@ -23,6 +24,8 @@ paths:
   읽기 `dotenvx get KEY`, 쓰기 `dotenvx set KEY 값`. 새 파일은 `dotenvx encrypt -f 파일`.
 - 개인키 `.env.keys` 는 OS 키체인·로컬에만 있다. 읽거나 커밋하지 않는다(`.claude/hooks/protect.sh` 가 막는다).
 - anon 키는 공개값이다. 모든 테이블이 RLS 읽기 전용이고 쓰기 정책이 하나도 없다 — 쓰기 정책을 새로 만들지 않는다.
+  구독 표(`subscriber`·`digest_log`)는 읽기 정책도 없고 anon 권한을 거뒀다. 쓰기는 `web/src/app/api/subscription/route.ts`
+  가 service_role 키로 `subscription_request`·`subscription_confirm`·`subscription_stop` 만 부른다. 그 키는 그 파일 밖에서 읽지 않는다.
 - `DATABASE_URL` 은 Session pooler URI. 비밀번호에 `@` 등이 있으면 키워드 형식(`host=… password='…'`)을 쓴다.
 
 ## 스키마 변경

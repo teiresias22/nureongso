@@ -22,3 +22,9 @@ export function parseSubscribe(f: FormData, regions: Record<string, string[]>): 
 /** 확인·해지 링크의 토큰(uuid). 모양이 틀리면 DB 까지 가지 않는다(uuid 변환 오류도 막는다). */
 export const isToken = (t: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
+
+/** 주간 기록 메일이 켜졌나. 셋이 다 있어야 켜진다 — 값이 비면 안 나가는 NAVER_SITE_VERIFICATION 과 같은 방식.
+ *  운영 DB 에 구독 표를 적용하고 Resend 보내는 도메인을 확인한 뒤 Vercel 에 넣는다(docs/IMPROVEMENT_PROGRESS.md).
+ *  service_role 키는 있는지만 본다. 값은 api/subscription/route.ts 밖에서 읽지 않는다. */
+export const subscriptionOn = () =>
+  !!(process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.RESEND_API_KEY && process.env.MAIL_FROM);
