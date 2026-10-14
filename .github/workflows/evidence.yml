@@ -37,6 +37,12 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # 모델을 고정한다. 비워 두면 llm.py 가 쓸 수 있는 것 중 고르는데, 그 결과가 별칭
+    # gemini-flash-lite-latest 라 구글이 가리키는 모델을 바꾸면 조용히 바뀐다 — 대조 재현성 지표가
+    # 그만큼 흔들린다. 그 별칭이 가리키던 판(gemini-3.1-flash-lite)을 박는다.
+    # 바꾸는 것은 따로 커밋한다(근거 행의 model 칸에 남아 바뀐 때가 보인다). race.yml 은 따로 고정.
+    env:
+      GEMINI_MODEL: gemini-3.1-flash-lite
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -228,8 +234,9 @@ jobs:
                                      from pledge_evidence
                                      where kind = 'bill' and model like 'gemini:%' and quote_ok is not null""")
                       ok, n, empty = cur.fetchone()
+                      # 구절을 '완료' 조건에 넣을지는 이 비율을 몇 주 본 뒤 정한다(설계 열린 질문 1).
                       print(f"원문 일치율(AI 가 고른 법안 구절): {ok:,} / {n:,}" + (f" ({ok / n:.0%})" if n else "")
-                            + f" · '해당 부분 없음' {empty:,}")
+                            + f" · '해당 부분 없음' {empty:,} · 모델 {os.environ.get('GEMINI_MODEL') or '자동'}")
                       cur.execute("""select sum(rows), sum(split_part(source, ':', -1)::int) from ingest_run
                                      where source like 'repro:%' and finished_at > now() - interval '28 days'""")
                       same, seen = cur.fetchone()

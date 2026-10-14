@@ -33,7 +33,8 @@ paths:
 - 법제처(`ordin.py`, `LAW_OC`): 가끔 통째로 막힌다. 재시도로 버티지 말고 다음 주 겹쳐 받기에 맡긴다.
 - 나라장터(`bid.py`): 공고 중복 제거는 `bid_notice_first` 머티리얼라이즈드 뷰. `fetch` 끝에 refresh 를 빼지 않는다.
 - 업무추진비(`expense.py`): 전국 API 없음, 시도 게시판마다 어댑터. 새 시도는 `ADAPTERS` 에 하나 더하고 칸 이름은 `FIELDS` 가 맞춘다.
-- LLM(`llm.py`): `LLM_PROVIDER` = gemini(기본·무료) | anthropic | ollama. 한도에 걸리면 `QuotaExhausted` 로 깨끗이 멈추고 다음 실행이 이어받는다 — 재시도 루프를 넣지 않는다.
+- LLM(`llm.py`): `LLM_PROVIDER` = gemini(기본·무료) | anthropic | ollama. 정기 워크플로는 `GEMINI_MODEL` 을 고정한다
+  (`evidence.yml` gemini-3.1-flash-lite, `race.yml` gemini-3.5-flash) — 바꾸는 것은 따로 커밋. 한도에 걸리면 `QuotaExhausted` 로 깨끗이 멈추고 다음 실행이 이어받는다 — 재시도 루프를 넣지 않는다.
 
 ## 메일 — Resend (`digest.py`, `api/subscription/route.ts`)
 - 무료 하루 100통·월 3,000통. 하루 한도는 **UTC 자정**에 풀린다. 확인 메일(web)도 같은 한도를 쓴다.
