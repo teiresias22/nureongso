@@ -1,6 +1,19 @@
 # 누렁소검은소 확장 설계 — 공약 판정이 언제, 어떤 공개 기록 때문에 바뀌었는지 남기는 근거 이력
 > 기준: 앱 프로젝트 추천.md §2 · 통합: plans/2026-10-12-district-subscription.md · 작성 2026-10-12 · 상태: 제안(구현 전, 운영 DB 변경은 사용자 승인 필요)
 
+## 검토 결과 (2026-10-14, 브랜치 `feat/district-subscription-evidence` 기준 코드와 대조)
+
+맞는 것: 인용한 자리는 지금 코드와 같다 — 한 번 대조하면 다시 안 함 `judge.py:231-248`(`ingest_run 'match:'`), 대안 조인 `:932-938`, 검수 판정 보호 `:1036-1037`, 신뢰도만 바뀌어도 `updated_at` 이 움직임 `:1039`, LLM 은 연결만 `:12-13`, 모델 자동 선택 `llm.py:128`, 요약은 한 번만 받음 `ingest.py:440-470`, 공약 재생성 `nec.py:564`·`parse_pledges.py:170`, 공약 표 `schema.sql:151-202`, 공개 읽기 `:879-887`, 인물 페이지 임베드 `m/[code]/page.tsx:241-245`, `NOTE_LABEL` 에 `past_term` 없음 `db.ts:91-102`, 모델 고정은 `race.yml:39` 뿐. 근거 upsert 세 곳(`judge.py:295-299`·`:493-497`·`:683-687`)에 `is distinct from` 이 빠져 있다는 것도 맞다(`pledges.md` 규칙 위반). 호환 한자 함정은 `ingest.py:486` 이 아니라 `:481-489`(`people_of` 주석).
+
+고친 것(본문에 `검토:` 로 표시):
+1. **`create policy public_read on …` 두 줄**은 다시 실행하면 '이미 있다' 로 실패한다. 파일 앞쪽 `public_read` 배열(`schema.sql:879-887`)은 이 덩어리보다 먼저 돌아 새 표가 아직 없으므로 배열에 넣지 않고, 두 줄 앞에 `drop policy if exists` 를 단다.
+2. **`DECIDE_SQL` 을 `bill_alt` 로 바꾸는 것(⑥ 둘째 줄)은 이번에 하지 않는다.** `bill_alt` 가 없는 운영 DB 에 이 브랜치가 먼저 병합되면 월요일 `decide` 가 깨지고, '바꾼 직후 `decide --check` 0행' 은 운영 DB 에서만 확인할 수 있다. 뷰는 만들고(스냅숏·화면이 쓴다) `DECIDE_SQL` 과 서로를 가리키는 주석을 단다(`party_line`/`partyLine` 방식). 운영 DDL 적용 뒤 별도 커밋.
+3. **`evidence.yml` 의 `GEMINI_MODEL` 고정(열린 질문 5)** 은 적용하지 않았다. classify·match 의 모델과 무료 한도가 함께 바뀌는 일이라 소유자 결정으로 남긴다. 근거 행의 `model` 칸이 실제 쓴 모델을 남기므로 바뀌면 보인다.
+4. **⑧ 이력서 성과지표의 문구는 손대지 않는다**(소유자 지시). 그 정의대로 재는 SQL 만 `evidence.yml` 요약에 단다.
+5. **새 표·칸이 없는 DB 에서도 웹이 깨지지 않게** — `/pledge/[id]` 는 기존 칸만으로 먼저 그리고, 새 칸(`quote` 등)·새 표(`pledge_status_log`·`source_version`)는 따로 읽어 실패하면 비운다. 수집기 변경(근거 upsert 의 `model`·`prompt`, 증분 대조의 `created_at`)은 DDL 이 먼저 있어야 한다 — 출시 순서(`docs/IMPROVEMENT_PROGRESS.md`).
+6. **운영 DB 적용·백필·점검(③ 백필 1~4, `pledge_history.check.sql`)은 이번 작업에서 실행하지 않는다**(운영 DB 금지, 로컬 Postgres 없음). 트리거 생성문은 `schema.sql` 에 두되, 운영에서는 백필 2(`snapshot`)·3(기준선) 순서로 실행하라고 주석으로 적는다.
+7. '기존 계획서 처리' 의 "계획서는 고치지 않고" 는 바꿨다 — 계획서 본문에 같은 변경을 `검토:` 로 적어 두 문서가 같은 말을 한다.
+
 한 줄 요약: 판정은 지금처럼 **공개 규칙표(`DECIDE_SQL`)** 가 하고, 그 판정이 바뀔 때마다 "어떤 근거 기록의 어떤 버전 때문인지"를
 남긴다. 새 표는 둘(`source_version`, `pledge_status_log`), 나머지는 기존 `pledge_evidence` 에 칸을 더한다. LLM 은 근거 연결과
 원문 구절 고르기만 하고, 구절은 서버가 원문에서 다시 찾아 확인한다.
@@ -204,8 +217,11 @@ end $$;
 
 alter table source_version    enable row level security;
 alter table pledge_status_log enable row level security;
-create policy public_read on source_version    for select using (true);   -- schema.sql 의 public_read 배열에도 두 이름을 더한다
-create policy public_read on pledge_status_log for select using (true);   -- (운영에는 이 두 줄만 실행)
+-- 검토: 배열(879-887행)은 이 덩어리보다 먼저 돌아 새 표가 없다. 다시 돌려도 되게 drop 을 앞에 단다.
+drop policy if exists public_read on source_version;
+create policy public_read on source_version    for select using (true);
+drop policy if exists public_read on pledge_status_log;
+create policy public_read on pledge_status_log for select using (true);
 revoke execute on function pledge_versions(bigint) from public, anon, authenticated;
 ```
 
@@ -376,7 +392,7 @@ def run_decide(conn, check=False):
 ## ⑥ MVP 범위
 
 - [ ] DDL A–E + RLS 적용(사용자 승인) — `pledge_history.check.sql` 통과, 기존 `test_*.py` 그대로 통과.
-- [ ] `bill_alt` 로 `DECIDE_SQL` 정리 — 바꾼 직후 `decide --check` 0행(판정 결과 동일).
+- [ ] `bill_alt` 로 `DECIDE_SQL` 정리 — 바꾼 직후 `decide --check` 0행(판정 결과 동일). (검토: 운영 DDL 적용 뒤 별도 커밋으로 미룸 — 위 '검토 결과' 2)
 - [ ] `judge.py snapshot [--check]` — 첫 실행에 연결 ref 수만큼 버전, 두 번째 실행 0건.
 - [ ] 백필(기준선 → 트리거) — `pledge_status_log` 기준선 수 = `pledge_status` 행 수.
 - [ ] 판정 이력 트리거 — 다음 `decide` 의 바뀐 행 수 = 그날 새 이력 줄 수(기준선 제외).
@@ -424,7 +440,7 @@ def run_decide(conn, check=False):
 
 ## 기존 계획서 처리
 
-`docs/superpowers/plans/2026-10-12-district-subscription.md` 는 고치지 않고, 아래대로 실행 때 바꿔 적용한다.
+`docs/superpowers/plans/2026-10-12-district-subscription.md` 는 ~~고치지 않고~~ (검토: 본문에 `검토:` 로 같은 변경을 적었다) 아래대로 실행 때 바꿔 적용한다.
 
 | 계획서 | 처리 | 바뀌는 것 |
 |---|---|---|

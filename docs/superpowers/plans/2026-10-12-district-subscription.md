@@ -2,6 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## 검토 결과 (2026-10-14, 브랜치 `feat/district-subscription-evidence` 기준 코드와 대조)
+
+맞는 것: 줄 번호·이름은 지금 코드와 같다 — `schema.sql` 941행 끝(`grant select on vacant_seat`), `my/page.tsx:4`(import)·`:22-39`(Area·SD_MERGED·sido)·`:73-86`(목록), `testing.md:1-5`, `ops.md:16-18·25`, `web.md:23`, `scheduler.md:14·27`, `CLAUDE.md:13·28·35`, `README.md:10·41·75`, `collector/.env.example:29`. `ingest.upsert`(`ingest.py:124-160`)·`replace`(`:162-175`)는 넘긴 칸만 써서 `created_at` 을 덮지 않는다(`vote` upsert `:421`, `attendance` replace `:946`). 이 계획의 테스트·문구 규칙도 저장소와 맞는다.
+
+고친 것(본문에 `검토:` 로 표시):
+1. **커밋 대상** — `master` 가 아니라 `feat/district-subscription-evidence` 브랜치(소유자 지시). 브랜치만 푸시하고 PR·병합은 하지 않는다.
+2. **운영 DB 적용·점검(Task 1·2 Step 2·4·5)** — 이번 작업에서는 하지 않는다. `subscription.check.sql` 은 운영 `DATABASE_URL` 에 붙어 도는데 운영 DB 에는 아무것도 실행하지 않기로 했고, 이 환경에는 로컬 Postgres(psql·postgres·docker)도 없다. SQL 점검 파일은 쓰되 실행은 출시 준비(`docs/IMPROVEMENT_PROGRESS.md`)로 넘긴다.
+3. **공약 '새 기록' 의 기준** — `pledge_status.updated_at` 은 판정이 그대로여도 **신뢰도(confidence)만 바뀌면** 움직인다(`judge.py:1033-1040` 의 `is distinct from` 에 confidence 가 들어 있다). 그대로 쓰면 바뀌지 않은 판정이 메일에 실린다. 설계서(`specs/2026-10-12-pledge-evidence-tracking.md`)의 `pledge_status_log` 로 바꾸고, 공약 줄을 `이전 → 지금` + `/pledge/[id]` 로 쓴다(Task 2·5·6, 그 설계서의 '기존 계획서 처리' 표 그대로).
+4. **켜기 전에는 꺼져 있게** — 이 계획대로면 병합되는 순간 `/my` 에 폼이 뜨고(키가 없으면 늘 '처리하지 못했습니다'), `digest.yml` 은 시크릿이 없어 매일 빨간불이 된다. 저장소의 '값이 비면 안 나간다' 방식(`web/.env.example` 의 `NAVER_SITE_VERIFICATION`)을 따라, 폼은 `SUPABASE_SERVICE_ROLE_KEY`·`RESEND_API_KEY`·`MAIL_FROM` 이 다 있을 때만 보이고, `digest.py` 는 키가 없거나 `subscriber` 표가 없으면 건너뛰었다고 적고 0 으로 끝난다.
+5. **`subscription.check.sql` 9)** 는 기존 행이 있는 DB(운영)에서만 참이다(`-infinity` 행 수 > 0). 빈 DB 에서 돌릴 때는 그 assert 를 빼야 한다고 파일에 적었다.
+
 **Goal:** `/my` 에서 시도·시군구를 고른 사람이 메일 주소를 넣으면(이중 확인), 매주 월요일 그 지역 현직(국회의원·시도지사·구시군의장·교육감)에 대해 지난주 새로 수집된 공개 기록(대표발의 법안·본회의 표결 건수·본회의 출결 누적·공약 판정)을 텍스트 메일로 받고, 링크 하나로 해지한다.
 
 **Architecture:** 구독자 표 두 개(`subscriber`·`digest_log`)는 공개 읽기 정책 없이 RLS 만 켜고 anon 권한을 거두며, 쓰기는 Next route handler 하나가 service_role 키로 SQL 함수 세 개(`subscription_request`·`subscription_confirm`·`subscription_stop`)만 부른다. '이번 주 새 기록' 은 수집기가 이미 쓰는 표에 `created_at`(수집 시각) 칸 하나씩을 더해 SQL 함수 `digest_changes()` 로 뽑고, 지역 → 사람 풀이는 `/my` 와 같은 규칙(`member_area` + `member.district`)을 Python 으로 옮겨 쓴다. 발송은 기존 수집기와 같은 GitHub Actions 정기 실행(`digest.yml`)에서 `collector/digest.py` 가 하고, `digest_log (구독자, 주)` 기본키로 한 주 한 통을 지킨다.
@@ -21,7 +32,7 @@
 - 새 pip·npm 의존성 금지. 새 외부 연동은 Resend 하나뿐이다.
 - 웹 코드 전에 `web/node_modules/next/dist/docs/` 해당 가이드를 읽는다(`web/AGENTS.md`). DB 읽기는 `src/lib/db.ts` 의 `db` 하나.
 - 테스트: pytest·픽스처 없음. collector 는 assert 로 된 `test_*` 함수(네트워크·DB 없이), web 은 `src/lib/*.check.mjs`(순수 계산), DB 는 `supabase/*.check.sql`(`begin … rollback`).
-- 커밋: `master` 에 한국어 서술형 한 줄(`~한다`) + 본문에 이유 + `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. `git add` 는 파일을 명시한다(`git add -A`·`.` 는 훅이 막는다).
+- 커밋: (검토: `master` 가 아니라 `feat/district-subscription-evidence` 브랜치에) 한국어 서술형 한 줄(`~한다`) + 본문에 이유 + `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. `git add` 는 파일을 명시한다(`git add -A`·`.` 는 훅이 막는다).
 - 무료 한도: Vercel 함수 CPU 85% 사용 중(웹 쪽 일은 POST 하나로 최소화), Supabase 500MB, Resend 무료 하루 100통·월 3,000통(한도는 UTC 자정에 풀린다).
 
 ---
@@ -30,7 +41,7 @@
 
 - **지역 → 사람:** 새 수집 단계가 필요 없다. `/my` 가 이미 `member_area`(선관위 `sd_name`/`wiw_name`) + `member.district` 경계 일치(`inDistrict`)로 국회의원 지역구(여러 시를 묶은 `군산시김제시부안군을` 포함)·시도지사·구시군의장·교육감을 푼다. 발송 쪽은 이 규칙을 `collector/digest.py` 로 옮기고 `party_line()`/`partyLine` 처럼 서로를 가리키는 주석을 단다.
 - **메일 서비스:** 저장소에 메일 연동이 없다(`integrations.md`·코드 검색 결과 0건). Resend 하나를 고른다 — 무료 월 3,000통·하루 100통, REST 한 번이라 web(fetch)·collector(httpx) 모두 새 의존성 없음, Vercel 연동이 있고 Supabase 가 인증 메일 SMTP 로 권하는 곳, 사용자 정의 헤더(RFC 8058 원클릭 해지)와 `Idempotency-Key`(24시간) 지원. 한계: 구독자가 하루 ~90명을 넘으면 월요일에 다 못 보내고 다음 날로 넘어가며(매일 실행이 잇는다), 주 ~700명(월 3,000통)을 넘으면 Pro($20/월) 또는 SES 로 옮긴다.
-- **새 기록 판별:** 사건 날짜(`proposed_at`·`voted_at`)가 아니라 **수집된 때**로 가른다. 국회 API 가 며칠 늦게 주는 기록이 이미 보낸 주에 떨어져 빠지는 일이 없고, 창이 `[지난주 월 00:00, 이번 주 월 00:00) KST` 로 이어 붙어 겹치지도 않는다. `bill`·`vote`·`attendance` 에 `created_at` 을 '-infinity' 상수로 더하고(기존 행은 어느 주에도 안 잡힌다) 기본값만 `now()` 로 바꾼다. 공약은 `pledge_status.updated_at` 이 이미 '판정이 바뀐 때' 다(`judge.py:1038`).
+- **새 기록 판별:** 사건 날짜(`proposed_at`·`voted_at`)가 아니라 **수집된 때**로 가른다. 국회 API 가 며칠 늦게 주는 기록이 이미 보낸 주에 떨어져 빠지는 일이 없고, 창이 `[지난주 월 00:00, 이번 주 월 00:00) KST` 로 이어 붙어 겹치지도 않는다. `bill`·`vote`·`attendance` 에 `created_at` 을 '-infinity' 상수로 더하고(기존 행은 어느 주에도 안 잡힌다) 기본값만 `now()` 로 바꾼다. 공약은 ~~`pledge_status.updated_at` 이 이미 '판정이 바뀐 때' 다(`judge.py:1038`)~~ (검토: `updated_at` 은 신뢰도만 바뀌어도 움직인다 — `judge.py:1039`) 판정 이력 `pledge_status_log.at` 에서 상태가 실제로 바뀐 줄만 쓴다(설계서 ③-E).
 - **멱등:** `digest_log (subscriber_id, week)` 기본키. 보내기 전에 적고(claim), 못 보내면 지운다. 같은 주 재실행·중복 실행은 아무것도 보내지 않는다. 보내기 요청이 타임아웃으로 실패했는데 실제로는 나간 경우는 `Idempotency-Key = digest-{week}-{id}` 가 24시간 막는다.
 - **빈 주:** 보내지 않는다(`digest_log.sent = false` 만 남긴다). 하루 100통 한도를 아끼고, 내용 없는 메일이 매주 오면 스팸 신고가 늘어 새 발송 도메인 평판이 떨어진다. 확인 메일과 신청 폼에 '기록이 없는 주에는 보내지 않습니다' 라고 미리 적는다.
 - **남용 방지:** 저장소에 기존 rate-limit 패턴이 없다(쓰기 경로 자체가 처음). IP 를 저장하지 않는 대신 DB 에서 막는다 — 주소마다 확인 메일 10분에 한 통, 전체 한 시간에 30통(`subscription_busy`), 숨은 칸(honeypot), 지역은 `/my` 목록에 있는 값만(확인 메일 제목에 남의 글을 싣지 못하게). 이미 확인된 주소는 신청으로 바뀌지 않고, 어느 경우든 같은 '확인 메일을 보냈습니다' 화면을 보여 구독 여부를 드러내지 않는다.
@@ -216,6 +227,8 @@ paths:
 
 - [ ] **Step 2: Run test to verify it fails**
 
+> 검토: 운영 `DATABASE_URL` 에 붙는 점검이라 이번 작업에서는 돌리지 않았다(로컬 Postgres 도 없다).
+
 Run:
 ```bash
 cd collector && dotenvx run -q -- .venv/bin/python -c "import os,psycopg; c=psycopg.connect(os.environ['DATABASE_URL']); c.execute(open('../supabase/subscription.check.sql').read()); print('subscription.check ok')"
@@ -305,6 +318,8 @@ grant execute on function subscription_request(text, text, text), subscription_c
 
 - [ ] **Step 4: 운영 DB 에 이 덩어리만 적용**
 
+> 검토: 이번 작업에서는 실행하지 않는다(운영 DB 금지). 출시 준비 — `docs/IMPROVEMENT_PROGRESS.md`.
+
 운영 DB 하나뿐이다. 실행 전에 사용자에게 "subscriber·digest_log 표와 함수 셋을 만든다(기존 표는 건드리지 않음)" 고 알린다. 새 표·함수만 만들고 기존 데이터는 바꾸지 않는다.
 
 Run:
@@ -359,7 +374,7 @@ EOF
     - `'bill'`: `bill_id`, `name`, `proposed_at`(문자열 `YYYY-MM-DD` 또는 null) — 대표발의만
     - `'vote'`: `result`(`찬성|반대|기권|불참`), `n`(정수) — 결과별 건수
     - `'attendance'`: `age`, `session_no`, `as_of`, `present`, `days`
-    - `'pledge'`: `pledge_id`, `title`, `order_no`, `status`, `decided_by`(`auto|reviewer`)
+    - `'pledge'`: `pledge_id`, `title`, `order_no`, `status`, `decided_by`(`auto|reviewer`), `prev`(직전 상태) — 검토: `pledge_status_log` 에서 상태가 실제로 바뀐 줄(`prev_status <> status`, `reason <> 'rule'`)만. 설계서 '기존 계획서 처리' 표
   - 두 함수 모두 anon·authenticated 가 실행하지 못한다(수집기는 소유자 `postgres`)
 
 - [ ] **Step 1: Write the failing test**
@@ -448,6 +463,8 @@ end $$;
 
 - [ ] **Step 2: Run test to verify it fails**
 
+> 검토: 운영 `DATABASE_URL` 에 붙는 점검이라 이번 작업에서는 돌리지 않았다(로컬 Postgres 도 없다).
+
 Run:
 ```bash
 cd collector && dotenvx run -q -- .venv/bin/python -c "import os,psycopg; c=psycopg.connect(os.environ['DATABASE_URL']); c.execute(open('../supabase/subscription.check.sql').read()); print('subscription.check ok')"
@@ -475,6 +492,7 @@ alter table vote alter column created_at set default now();
 alter table attendance add column if not exists created_at timestamptz not null default '-infinity';
 alter table attendance alter column created_at set default now();
 -- 공약은 칸을 더하지 않는다. pledge_status.updated_at 이 이미 '판정이 바뀐 때' 다(judge.py DECIDE_SQL).
+-- (검토: 구현은 pledge_status_log 를 읽는다 — updated_at 은 신뢰도만 바뀌어도 움직인다. 아래 'pledge' 가지 참고)
 
 -- 이번 주(p_week = 월요일, KST) 메일을 아직 처리하지 않은 확인된 구독자. 그 주가 시작되기 전에 확인한
 -- 사람만 — 수요일에 확인하면 다음 월요일부터 받는다.
@@ -522,6 +540,8 @@ revoke execute on function digest_due(date), digest_changes(text[], timestamptz,
 ```
 
 - [ ] **Step 4: 운영 DB 에 이 덩어리만 적용**
+
+> 검토: 이번 작업에서는 실행하지 않는다(운영 DB 금지). 출시 준비 — `docs/IMPROVEMENT_PROGRESS.md`.
 
 `alter table … add column` 은 짧게 표 잠금을 잡는다(표를 다시 쓰지는 않는다). `ingest.yml`(04:00 KST)·`nec.yml`(화 04:30)·`evidence.yml`(월 05:00)이 도는 시간을 피하고, 실행 전에 사용자에게 "bill·vote·attendance 에 created_at 칸을 더한다(기존 행 -infinity)" 고 알린다.
 
@@ -1115,6 +1135,8 @@ new:
 
 - [ ] **Step 4: Run test to verify it passes**
 
+> 검토: 폼과 라우트는 `SUPABASE_SERVICE_ROLE_KEY`·`RESEND_API_KEY`·`MAIL_FROM` 이 다 있어야 켜진다. 키 없이 띄운 dev 서버에서는 `/my` 에 폼이 없고 `do=subscribe` 는 `done=busy` 로 간다.
+
 `npm run dev` 를 다시 띄우고(새 경로를 잡게) Step 1 의 명령을 그대로 친다.
 
 Expected:
@@ -1426,7 +1448,7 @@ def render(area: str, people, changes, start: datetime, end: datetime, token: st
         pledges = sorted(k["pledge"], key=lambda p: (p["order_no"] or 0, p["pledge_id"]))
         for p in pledges[:CAP]:
             who = DECIDED_BY.get(p["decided_by"], p["decided_by"])
-            lines.append(f"- 공약 판정 「{p['title']}」 {p['status']} ({who})")
+            lines.append(f"- 공약 판정 「{p['title']}」 {p['status']} ({who})")  # 검토: 구현은 「…」 {prev} → {status} ({who}) + /pledge/{id} 줄
         if len(pledges) > CAP:
             lines.append(f"- 공약 판정 외 {len(pledges) - CAP}건")
         blocks.append(f"■ {name} ({office})  {SITE}/m/{code}\n" + "\n".join(lines))
@@ -1614,7 +1636,7 @@ def main() -> None:
 
     key = os.environ.get("RESEND_API_KEY")
     if not (key and FROM):
-        sys.exit("RESEND_API_KEY, MAIL_FROM 이 없습니다. .env 를 확인하세요.")
+        sys.exit("RESEND_API_KEY, MAIL_FROM 이 없습니다. .env 를 확인하세요.")  # 검토: 구현은 '꺼져 있음' 으로 보고 0 으로 끝난다
     start, end = window(week)
     sent = empty = failed = 0
     with psycopg.connect(dsn) as conn, \
@@ -1736,6 +1758,7 @@ jobs:
               if row:
                   print(f"\n{row[0]} 주: 보냄 {row[1]:,} · 기록 없어 안 보냄 {row[2]:,}")
               # 몇 주째 0 이면 created_at 이 안 채워지는 것이다(수집기가 그 칸을 덮어쓰는지 본다).
+              # 검토: 구현은 pledge_status_log 에서 상태가 바뀐 줄(prev_status <> status)을 센다
               cur.execute("""select (select count(*) from bill where created_at > now() - interval '7 days'),
                                     (select count(*) from pledge_status where updated_at > now() - interval '7 days')""")
               b, s = cur.fetchone()
@@ -1853,6 +1876,8 @@ EOF
 ---
 
 ## 운영 적용 순서
+
+> 검토: 설계서와 합친 순서와 시크릿·DNS 준비는 `docs/IMPROVEMENT_PROGRESS.md` '출시 준비' 가 원본이다. 아래 4번의 '`master` 푸시' 는 사용자가 브랜치를 병합할 때다.
 
 1. Resend 가입 → 보내는 도메인 확인(아래 열린 질문) → API 키 발급.
 2. Task 1·2 의 SQL 덩어리를 운영 DB 에 적용(각 Task Step 4, 수집 워크플로가 도는 시간 피함).
