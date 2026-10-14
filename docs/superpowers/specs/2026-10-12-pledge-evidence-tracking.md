@@ -8,7 +8,7 @@
 고친 것(본문에 `검토:` 로 표시):
 1. **`create policy public_read on …` 두 줄**은 다시 실행하면 '이미 있다' 로 실패한다. 파일 앞쪽 `public_read` 배열(`schema.sql:879-887`)은 이 덩어리보다 먼저 돌아 새 표가 아직 없으므로 배열에 넣지 않고, 두 줄 앞에 `drop policy if exists` 를 단다.
 2. **`DECIDE_SQL` 을 `bill_alt` 로 바꾸는 것(⑥ 둘째 줄)은 이번에 하지 않는다.** `bill_alt` 가 없는 운영 DB 에 이 브랜치가 먼저 병합되면 월요일 `decide` 가 깨지고, '바꾼 직후 `decide --check` 0행' 은 운영 DB 에서만 확인할 수 있다. 뷰는 만들고(스냅숏·화면이 쓴다) `DECIDE_SQL` 과 서로를 가리키는 주석을 단다(`party_line`/`partyLine` 방식). 운영 DDL 적용 뒤 별도 커밋.
-3. **`evidence.yml` 의 `GEMINI_MODEL` 고정(열린 질문 5)** 은 적용하지 않았다. classify·match 의 모델과 무료 한도가 함께 바뀌는 일이라 소유자 결정으로 남긴다. 근거 행의 `model` 칸이 실제 쓴 모델을 남기므로 바뀌면 보인다.
+3. **`evidence.yml` 의 `GEMINI_MODEL` 고정(열린 질문 5)** — 소유자 결정(2026-10-14)으로 `gemini-3.1-flash-lite` 로 고정했다. 이 문서의 기본값(3.5-flash)이 아니라 지금 자동 선택이 쓰던 모델이다(열린 질문 5 참고). 근거 행의 `model` 칸은 그대로 남긴다.
 4. **⑧ 이력서 성과지표의 문구는 손대지 않는다**(소유자 지시). 그 정의대로 재는 SQL 만 `evidence.yml` 요약에 단다.
 5. **새 표·칸이 없는 DB 에서도 웹이 깨지지 않게** — `/pledge/[id]` 는 기존 칸만으로 먼저 그리고, 새 칸(`quote` 등)·새 표(`pledge_status_log`·`source_version`)는 따로 읽어 실패하면 비운다. 수집기 변경(근거 upsert 의 `model`·`prompt`, 증분 대조의 `created_at`)은 DDL 이 먼저 있어야 한다 — 출시 순서(`docs/IMPROVEMENT_PROGRESS.md`).
 6. **운영 DB 적용·백필·점검(③ 백필 1~4, `pledge_history.check.sql`)은 이번 작업에서 실행하지 않는다**(운영 DB 금지, 로컬 Postgres 없음). 트리거 생성문은 `schema.sql` 에 두되, 운영에서는 백필 2(`snapshot`)·3(기준선) 순서로 실행하라고 주석으로 적는다.
@@ -430,11 +430,11 @@ def run_decide(conn, check=False):
 
 ## 열린 질문
 
-1. **구절 확인을 판정에 넣나** — 기본: MVP 는 표시·측정만, 규칙표 불변(2차 2).
+1. **구절 확인을 판정에 넣나** — **결정(소유자, 2026-10-14): 넣지 않는다.** 규칙표 불변, `/pledge/[id]` 에 '원문 구절 확인됨' 표시만(판정 칸에 근거 N건 중 M건, 근거 줄마다). 운영 데이터 몇 주 뒤 `evidence.yml` 요약의 '원문 일치율'(locate 성공률)을 보고 다시 정한다.
 2. **페이지 경로** — 기본 `/pledge/[id]`(`/bill/[id]` 와 같은 꼴). `/p/[id]` 처럼 짧게 원하면 메일 링크도 함께 바꾼다.
 3. **규칙 변경 사건을 메일에** — 기본: 개별 줄은 빼고(`reason <> 'rule'`), 그 주에 규칙 판이 바뀌었으면 "판정 기준이 바뀌었습니다 {SITE}/rules" 한 줄.
 4. **판정 주기** — 기본 주 1회 유지(월 05:00). 메일은 지난주 이력을 읽으므로 그대로 맞는다.
-5. **`evidence.yml` 모델 고정** — 기본 `GEMINI_MODEL: gemini-3.5-flash`(`race.yml` 과 같은 값, 표본 검수를 거친 모델). 자동 선택(flash-lite)을 유지하면 모델이 조용히 바뀌어 재현성 지표가 흔들린다.
+5. **`evidence.yml` 모델 고정** — **결정(소유자, 2026-10-14): `GEMINI_MODEL: gemini-3.1-flash-lite` 를 잡 `env` 에 고정.** 지금까지 자동 선택(`gemini_pick`, flash-lite 우선)이 실제로 고른 것은 별칭 `gemini-flash-lite-latest`(이름 역순 정렬에서 숫자 판보다 앞선다)라 별칭 자체가 움직인다. 그래서 별칭이 아니라 같은 계열의 판 이름을 박았다. 3.5-flash(이 문서의 처음 기본값)는 무료 한도가 하루 20건이라(`race.yml`) 주간 classify·match 를 못 감당하고 `race.yml` 과 한도를 나눠 쓴다. 바꾸는 것은 따로 커밋한다.
 6. **근거 조례가 폐지되면** — 기본: 타임라인에만 보이고 판정은 그대로(2차 4).
 7. **공약 재수집 때 이력 cascade** — 기본 cascade(원문이 바뀌면 다른 약속). 남겨야 하면 FK 를 `on delete set null` 로.
 

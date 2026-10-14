@@ -23,6 +23,8 @@
 | 5 | digest.py 주 계산·지역 풀이·문구·보내기 (계획 Task 5 + 설계 변경) | `cb8890d` | `test_digest.py` 통과(공약 줄 `이전 → 지금` + `/pledge/[id]`) |
 | 6 | 매일 발송 본체·`digest.yml`·문서 (계획 Task 6) | `7bff019` | 키 없음 → 건너뛰고 0 종료 확인. 가짜 DB·가짜 Resend 로 발송 루프: 429 에서 멈춤, 실패한 사람의 `digest_log` 를 지움, `Idempotency-Key` |
 | M | `evidence.yml` 에 snapshot·quote·repro, 요약 지표 | `5be7bc0` | YAML 파싱, 요약 스텝의 파이썬 컴파일 |
+| D | 소유자 결정 D: `evidence.yml` `GEMINI_MODEL: gemini-3.1-flash-lite` 고정 | (이 커밋) | YAML 파싱, 요약 스텝 컴파일 |
+| Q | 소유자 결정 E: 구절 확인은 '완료' 조건이 아니다 — `/pledge/[id]` 표시만 | (이 커밋) | eslint·tsc 0, 규칙표(`DECIDE_SQL`) 그대로 |
 
 매 작업 뒤 돌린 것(마지막 회차 결과):
 
@@ -37,7 +39,14 @@
 - 공약 '새 기록' 은 `pledge_status.updated_at` 이 아니라 `pledge_status_log` 에서 상태가 바뀐 줄(`reason <> 'rule'`). updated_at 은 신뢰도만 바뀌어도 움직인다(`judge.py` DECIDE_SQL).
 - 켜는 스위치: 웹은 `SUPABASE_SERVICE_ROLE_KEY`·`RESEND_API_KEY`·`MAIL_FROM` 이 다 있어야 폼이 뜬다(`lib/subscription.ts subscriptionOn`), `digest.py` 는 키나 `subscriber` 표가 없으면 건너뛴다.
 - `DECIDE_SQL` 을 `bill_alt` 로 바꾸지 않았다(운영 적용 + `decide --check` 0 확인 뒤 별도 커밋). 둘은 같은 규칙이라는 주석으로 묶었다.
-- `evidence.yml` 의 `GEMINI_MODEL` 고정(설계 열린 질문 5)은 하지 않았다 — 소유자 결정.
+- **모델 고정(소유자 결정 D, 설계 열린 질문 5)**: `evidence.yml` 잡 `env` 에 `GEMINI_MODEL: gemini-3.1-flash-lite`.
+  자동 선택(`llm.py gemini_pick`, flash-lite 우선)은 실제로 별칭 `gemini-flash-lite-latest` 로 풀려(이름 역순 정렬) 구글이 별칭을 옮기면
+  조용히 바뀐다. 별칭 대신 같은 계열의 판 이름을 박았다(이 저장소 작업 기록에서 쓴 판 이름; API 를 불러 확인하지는 않았다).
+  설계서 처음 기본값 3.5-flash 는 무료 한도 하루 20건이라 주간 대조를 못 감당한다.
+  **모델을 바꾸는 것은 따로 커밋한다** — 이 줄과 `scheduler.md`·`integrations.md`·`.env.example` 을 같이 고친다. 근거 행의 `model` 칸은 그대로 실제 모델을 남긴다.
+- **구절 확인(소유자 결정 E, 설계 열린 질문 1)**: '완료' 조건에 넣지 않는다. 판정 규칙은 그대로이고 `/pledge/[id]` 판정 칸에
+  '원문 구절 확인됨 (근거 N건 중 M건) — 판정에는 쓰지 않는 표시', 근거 줄마다 '✓ 원문 구절 확인됨'. `/rules` 3번에도 한 줄.
+  **운영 데이터 몇 주 뒤 다시 본다** — `evidence.yml` 요약의 '원문 일치율(AI 가 고른 법안 구절)' 줄이 locate 성공률이다(이제 쓴 모델도 같이 찍는다).
 - `quote` 는 연결 때 남긴 `model`·`prompt` 를 덮지 않는다(`coalesce`). 이 칸이 생기기 전 근거만 구절을 고른 모델·판을 적는다.
 - 판정 이력의 기준선·트리거는 `schema.sql` 에서 따로 뗀 덩어리다(snapshot 뒤에 돌려야 한다).
 - 설계서 ⑧(이력서 성과지표)의 문구는 그대로 두었다. 그 정의대로 재는 줄만 `evidence.yml` 요약에 넣었다.
@@ -81,7 +90,9 @@
 
 - SQL 점검 두 파일은 한 번도 돌지 않았다. 운영 적용 직후 2-6 에서 처음 돈다 — 실패하면 그 assert 메시지가 어긋난 곳이다.
   `subscription.check.sql` 9) 의 첫 assert 는 기존 행이 있는 DB 에서만 참이다.
-- `DECIDE_SQL` → `bill_alt` 전환, `GEMINI_MODEL` 고정 여부(재현성 지표가 모델 자동 선택에 흔들린다), 구절 확인을 '완료' 조건에 넣을지(설계 열린 질문 1)는 소유자 결정.
+- `DECIDE_SQL` → `bill_alt` 전환은 운영 DDL 적용 뒤(출시 준비 2-7). 모델 고정·구절 확인은 결정됨(위 '계획·설계와 다르게 한 것').
+- 구절 확인을 판정에 넣을지 재검토: 첫 월요일부터 몇 주 '원문 일치율' 을 모은 뒤.
+- 로컬 실행(`GEMINI_MODEL` 비움)은 여전히 자동 선택이라 `-latest` 별칭을 고른다. 정기 워크플로는 모두 고정이라 두었다. 막으려면 `gemini_pick` 정규식에 `latest` 를 더한다.
 - 증분 대조의 한계(`ponytail:`): 대조와 같은 순간에 커밋 중이던 법안은 since 보다 앞선 시각으로 들어와 빠질 수 있다. 발주 변경공고(차수)는 새 id 라 따라가지 않는다.
 - Resend 무료 한도: 하루 100통·월 3,000통(주 ~700명 상한). 넘으면 Pro 또는 SES.
 - 이 컴퓨터의 전역 git 설정(`~/.gitconfig` 의 `filter.dotenvx.*`)이 지워진 dotenvx 경로(`/opt/homebrew/Cellar/dotenvx/2.32.2`)를 가리켜 `.env*` 파일을 `git add` 하면 실패한다.

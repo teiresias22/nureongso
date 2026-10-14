@@ -115,6 +115,8 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   const st = p.pledge_status;
   const lastLog = log.at(-1);
   const change = [...log].reverse().find((l) => l.prev_status != null);
+  // 표시만 한다. 구절 확인은 판정(완료 등)의 조건이 아니다 — 원문 일치율을 몇 주 본 뒤 정한다(설계 열린 질문 1).
+  const quoted = p.pledge_evidence.filter((e) => extraBy.get(e.id)?.quote_ok).length;
 
   const events = timeline({
     election: p.election_id
@@ -174,6 +176,11 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
               <span className="text-xs text-muted">{st.decided_by === "reviewer" ? "사람 검수" : "자동 판정"}</span>{" "}
               {st.note && <span>{noteText(st.note)}</span>}
             </p>
+            {quoted > 0 && (
+              <p className="mt-1 text-xs text-muted">
+                ✓ 원문 구절 확인됨 (근거 {p.pledge_evidence.length}건 중 {quoted}건) — 판정에는 쓰지 않는 표시입니다.
+              </p>
+            )}
             <p className="mt-1 text-xs text-muted">
               {kstDate(lastLog?.at ?? st.updated_at)} 판정
               {lastLog?.rule && lastLog.rule !== "manual" ? ` · 규칙 판 ${lastLog.rule}` : ""} ·{" "}
@@ -230,7 +237,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
                   {x?.quote_ok && x.quote ? (
                     <p className="text-xs">
                       <span className="text-muted">원문 구절 </span>&ldquo;{x.quote}&rdquo;
-                      <span className="text-muted"> ✓ 원문에서 확인</span>
+                      <span className="text-muted"> ✓ 원문 구절 확인됨</span>
                     </p>
                   ) : x?.quote_ok === false ? (
                     <p className="text-xs text-muted">
