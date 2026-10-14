@@ -23,7 +23,7 @@ const nextConfig: NextConfig = {
   // 브라우저용 Cache-Control 은 그대로 두고, HTML·RSC 응답은 `_rsc` 검색어로 키가 갈린다.
   async headers() {
     const cdn = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=86400, stale-while-revalidate=86400" }];
-    return ["/", "/m/:path*", "/bill/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn }));
+    return ["/", "/m/:path*", "/bill/:path*", "/pledge/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn }));
   },
 };
 

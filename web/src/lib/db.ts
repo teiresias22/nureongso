@@ -99,6 +99,15 @@ export const NOTE_LABEL: Record<string, string> = {
   none_2y: "임기 2년이 지났지만 관련 기록이 없습니다",
   none_early: "관련 기록이 아직 없습니다 (임기 2년 미만)",
   not_checked: "아직 공식 기록과 대조하지 않았습니다",
+  past_term: "지난 임기 공약이라 판정하지 않습니다",
+};
+
+/** 판정 배지 색. 인물 페이지 공약 목록과 공약 상세(/pledge/[id])가 같이 쓴다. */
+export const STATUS_BG: Record<string, string> = {
+  완료: "bg-green-700 text-white",
+  진행: "bg-amber-700 text-white",
+  미착수: "bg-stone-500 text-white",
+  판단불가: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200",
 };
 
 /** judge.py 의 note 를 사람이 읽는 말로. 접두사가 붙는 두 가지는 따로 푼다. */

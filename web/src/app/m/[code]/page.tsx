@@ -4,11 +4,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   db, eok, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
-  partyColor, partyLine, pct, shortDistrict, termText, wonK,
+  partyColor, partyLine, pct, shortDistrict, STATUS_BG, termText, wonK,
   type AssetReport, type Attendance, type Bill, type Candidacy, type Member, type MemberStats, type OfficeTerm,
   type BidNotice, type Cosponsor, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
 } from "@/lib/db";
 import { kstYear, ldJson, pageOg, SITE } from "@/lib/site";
+import { daysAgo, kstDate } from "@/lib/timeline";
 import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
@@ -427,6 +428,7 @@ export default async function MemberPage({
     { data: rivalRows }, { data: ordinRows }, { data: bidRows },
     { data: attPeers }, { data: linePeers }, { data: issueStats },
     { data: districtBids, count: districtBidTotal }, [{ data: expenseMonths }, { data: expenseRows }],
+    { data: changedRows },
   ] = await Promise.all([
     rivalQ, ordinQ, bidQ,
     att
@@ -443,7 +445,18 @@ export default async function MemberPage({
       : Promise.resolve({ data: [] }),
     districtBidQ,
     expenseQ,
+    // 최근 30일 안에 판정이 바뀐 공약(판정 이력). 표가 아직 없는 DB 면 오류 → 비어 있을 뿐이다.
+    pledges?.length
+      ? db.from("pledge_status_log").select("pledge_id, at, status, prev_status, pledge!inner(member_code)")
+          .eq("pledge.member_code", code).not("prev_status", "is", null)
+          .gte("at", daysAgo(30))
+      : Promise.resolve({ data: [] }),
   ]);
+  // 공약마다 가장 최근에 상태가 바뀐 날(한국 날짜 MM.DD). 사유만 바뀐 줄은 세지 않는다.
+  const changedOn = new Map<number, string>();
+  for (const c of (changedRows ?? []) as { pledge_id: number; at: string; status: string; prev_status: string }[]) {
+    if (c.status !== c.prev_status) changedOn.set(c.pledge_id, kstDate(c.at).slice(5).replace("-", "."));
+  }
   const ordinBy = new Map(
     (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
   );
@@ -933,12 +946,17 @@ export default async function MemberPage({
               return (
                 <li key={p.id}>
                   <Fold
-                    open={!!p.body || ev.length > 0}
+                    open={!!p.body || ev.length > 0 || !!st}
                     hint="원문"
                     head={
                       <span className="flex gap-3 px-4 py-3 text-sm">
                         {st ? (
-                          <StatusBadge status={st.status} auto={st.decided_by !== "reviewer"} />
+                          <span className="shrink-0">
+                            <StatusBadge status={st.status} auto={st.decided_by !== "reviewer"} />
+                            {changedOn.has(p.id) && (
+                              <span className="block text-[11px] text-muted">{changedOn.get(p.id)} 바뀜</span>
+                            )}
+                          </span>
                         ) : (
                           <span className="mt-0.5 shrink-0 text-xs text-muted">미판정</span>
                         )}
@@ -997,6 +1015,11 @@ export default async function MemberPage({
                         );
                       })}
                       {p.body && <p className="whitespace-pre-wrap text-muted">{p.body}</p>}
+                      {st && (
+                        <Link href={`/pledge/${p.id}`} className="inline-block text-foreground underline underline-offset-2">
+                          판정 이력·원문 근거 →
+                        </Link>
+                      )}
                     </div>
                   </Fold>
                 </li>
@@ -1893,12 +1916,6 @@ function BidPager({
 /** 공약 상태 색. 흰 글자가 4.5:1 을 넘는 단계로 골랐다 — 예전 판단불가(stone-300)는
  *  흰 글자 대비가 1.5:1, 진행(amber-500)은 2:1 이었다. 판단불가는 짙은 글자를 쓴다.
  *  분포 막대(PledgeStatusBar)도 같은 색이라 배지와 막대가 같은 말을 한다. */
-const STATUS_BG: Record<string, string> = {
-  완료: "bg-green-700 text-white",
-  진행: "bg-amber-700 text-white",
-  미착수: "bg-stone-500 text-white",
-  판단불가: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200",
-};
 const STATUS_FILL: Record<string, string> = {
   완료: "#15803d", 진행: "#b45309", 미착수: "#78716c", 판단불가: "var(--viz-peer)",
   // 판정 행이 없는 공약. 판단불가는 '판정했는데 근거가 모자란다' 라서 섞으면 안 된다.
