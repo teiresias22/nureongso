@@ -939,3 +939,77 @@ left join member m on m.code = h.member_code
 where not coalesce(m.is_incumbent, false) or m.office is distinct from '국회의원';
 
 grant select on vacant_seat to anon, authenticated;
+
+-- ==== 주간 기록 메일: 구독 ====
+-- /my 에서 지역을 고르고 메일 주소를 넣은 사람. 메일 주소·지역·신청/확인 시각만 둔다.
+-- 해지하면 행을 지운다(남겨 둘 이유가 없다). 확인하지 않은 주소는 digest.py 가 7일 뒤 지운다.
+-- token 은 확인·해지 링크의 열쇠다. 로그인이 없으니 이것을 가진 사람이 곧 주인이다.
+--
+-- 다른 표와 달리 공개 읽기 정책이 없다. RLS 만 켜고 anon·authenticated 권한까지 거둔다 — anon 키는
+-- 공개값이라 정책 하나만 잘못 붙어도 메일 주소가 통째로 나간다. 쓰기는 web/src/app/api/subscription/route.ts
+-- 가 service_role 키로 아래 세 함수만 부른다. 발송(collector/digest.py)은 postgres 로 직접 붙는다.
+create table if not exists subscriber (
+  id              bigserial primary key,
+  email           text not null unique check (email = lower(email) and length(email) <= 254),
+  sd_name         text not null,                 -- /my 의 시도 (광주·전남은 '전남광주통합특별시')
+  wiw_name        text not null default '',      -- '' 이면 시도 전체
+  token           uuid not null unique default gen_random_uuid(),
+  created_at      timestamptz not null default now(),   -- 신청
+  confirm_sent_at timestamptz,                           -- 확인 메일을 마지막으로 보낸 때
+  confirmed_at    timestamptz                            -- 동의(메일 링크의 '구독 확인')
+);
+alter table subscriber enable row level security;
+
+-- 주마다 누구를 처리했나. (구독자, 주) 기본키라 같은 주에 두 번 보내지 않는다 — digest.py 는
+-- 보내기 전에 여기 먼저 적고, 못 보냈으면 지운다. sent = false 는 그 주 기록이 없어 안 보낸 것.
+create table if not exists digest_log (
+  subscriber_id bigint  not null references subscriber(id) on delete cascade,
+  week          date    not null,                -- 그 주 월요일(KST). 담는 기간은 앞 7일
+  sent          boolean not null,
+  at            timestamptz not null default now(),
+  primary key (subscriber_id, week)
+);
+alter table digest_log enable row level security;
+revoke all on subscriber, digest_log from anon, authenticated;
+
+-- 신청. 확인 메일을 보내야 하면 token, 아니면 null.
+-- - 이미 확인된 주소는 아무것도 바꾸지 않는다. 남이 내 구독의 지역을 바꾸지 못하게. 지역을 바꾸려면 해지 후 다시.
+-- - 확인 메일은 주소마다 10분에 한 통, 전체 한 시간에 30통까지 — 남의 주소로 메일 폭탄을 쏘는 데 쓰이지
+--   않게. IP 를 저장하지 않는 대신 이것으로 막는다. 넘으면 'subscription_busy'.
+create or replace function subscription_request(p_email text, p_sd text, p_wiw text) returns uuid
+language plpgsql as $$
+declare t uuid; last_sent timestamptz;
+begin
+  if (select count(*) from subscriber where confirm_sent_at > now() - interval '1 hour') >= 30 then
+    raise exception 'subscription_busy';
+  end if;
+  insert into subscriber (email, sd_name, wiw_name) values (lower(trim(p_email)), p_sd, p_wiw)
+  on conflict (email) do update set sd_name = excluded.sd_name, wiw_name = excluded.wiw_name
+    where subscriber.confirmed_at is null
+  returning token, confirm_sent_at into t, last_sent;
+  if t is null or last_sent > now() - interval '10 minutes' then
+    return null;
+  end if;
+  update subscriber set confirm_sent_at = now() where token = t;
+  return t;
+end $$;
+
+-- 확인. 마지막 확인 메일이 7일 안이어야 한다. 이미 확인된 것은 그대로 true(다시 쓰지 않는다).
+create or replace function subscription_confirm(p_token uuid) returns boolean
+language sql as $$
+  update subscriber set confirmed_at = now()
+  where token = p_token and confirmed_at is null and confirm_sent_at > now() - interval '7 days';
+  select exists (select 1 from subscriber where token = p_token and confirmed_at is not null);
+$$;
+
+-- 해지. 행을 지운다(digest_log 도 함께). 없는 토큰이면 false.
+create or replace function subscription_stop(p_token uuid) returns boolean
+language sql as $$
+  with gone as (delete from subscriber where token = p_token returning 1)
+  select exists (select 1 from gone);
+$$;
+
+revoke execute on function subscription_request(text, text, text), subscription_confirm(uuid), subscription_stop(uuid)
+  from public, anon, authenticated;
+grant execute on function subscription_request(text, text, text), subscription_confirm(uuid), subscription_stop(uuid)
+  to service_role;
