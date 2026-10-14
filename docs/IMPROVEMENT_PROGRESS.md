@@ -23,8 +23,8 @@
 | 5 | digest.py 주 계산·지역 풀이·문구·보내기 (계획 Task 5 + 설계 변경) | `cb8890d` | `test_digest.py` 통과(공약 줄 `이전 → 지금` + `/pledge/[id]`) |
 | 6 | 매일 발송 본체·`digest.yml`·문서 (계획 Task 6) | `7bff019` | 키 없음 → 건너뛰고 0 종료 확인. 가짜 DB·가짜 Resend 로 발송 루프: 429 에서 멈춤, 실패한 사람의 `digest_log` 를 지움, `Idempotency-Key` |
 | M | `evidence.yml` 에 snapshot·quote·repro, 요약 지표 | `5be7bc0` | YAML 파싱, 요약 스텝의 파이썬 컴파일 |
-| D | 소유자 결정 D: `evidence.yml` `GEMINI_MODEL: gemini-3.1-flash-lite` 고정 | (이 커밋) | YAML 파싱, 요약 스텝 컴파일 |
-| Q | 소유자 결정 E: 구절 확인은 '완료' 조건이 아니다 — `/pledge/[id]` 표시만 | (이 커밋) | eslint·tsc 0, 규칙표(`DECIDE_SQL`) 그대로 |
+| D | 소유자 결정 D: `evidence.yml` `GEMINI_MODEL: gemini-3.1-flash-lite` 고정 | `ba60f99` | YAML 파싱, 요약 스텝 컴파일 |
+| Q | 소유자 결정 E: 구절 확인은 '완료' 조건이 아니다 — `/pledge/[id]` 표시만 | `2f38922` | eslint·tsc 0, 규칙표(`DECIDE_SQL`) 그대로 |
 
 매 작업 뒤 돌린 것(마지막 회차 결과):
 
