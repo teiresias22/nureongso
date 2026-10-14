@@ -7,7 +7,7 @@
 
 서비스: https://nureongso.joon.is-a.dev · 오류 제보: [GitHub 이슈](https://github.com/teiresias22/nureongso/issues/new?template=data-error.yml)
 
-기술: Python 3.12 수집기 · Supabase(Postgres) · Next.js 16(App Router) · Vercel · GitHub Actions 정기 수집 · Gemini(공약 추출·근거 대조)
+기술: Python 3.12 수집기 · Supabase(Postgres) · Next.js 16(App Router) · Vercel · GitHub Actions 정기 수집 · Gemini(공약 추출·근거 대조) · Resend(주간 기록 메일)
 
 ## 지금 되는 것
 
@@ -39,6 +39,9 @@
 - `/` 목록 — 직위 탭, 정당·지역구 필터. 정렬은 국회의원이 발의·표결참여·**출석률**·**순재산**,
   단체장·교육감이 공약·득표율·당선·**순재산**. 카드마다 출석·순재산·국외활동·연구용역·겸직 문제 한 줄
 - `/my` 내 지역 대표 — 시도·시군구로 국회의원·시도지사·구시군의장·교육감, 카드는 목록과 같다
+- 주간 기록 메일 — `/my` 에서 지역을 고른 뒤 메일 주소를 넣으면, 매주 월요일 지난주에 새로 수집된 그 지역 현직의
+  대표발의 법안·본회의 표결 건수·출결 누적·공약 판정 변화(자동/검수)를 텍스트로 보낸다. 기록이 없는 주는 보내지 않는다.
+  확인 메일을 눌러야 시작하고 메일마다 해지 링크가 있다. 저장하는 것은 메일 주소·지역·신청/확인 시각뿐이다
 - `/m/[code]` 인물 — 한눈에 보기, 출결·표결, 재산, 겸직, 국외활동, 연구단체, 연구용역, 공약, 발의 법안
   ('한눈에 보기' 요약 칸에는 국외활동·연구단체·연구용역 건수를 올리지 않는다 — 건수가 실적처럼 읽혀서 구획과 목차로만 둔다)
 - `/stats` 정당·지역별 통계 — 의정활동 표 + 공개 기록 표(출석률·정당 다수와 다른 표·순재산 중간값·
@@ -73,6 +76,7 @@ web/         Next.js (App Router) 프론트, Vercel 배포
              nec.yml    매주 — 선거·당선인·공약, asset.py(국회공보 재산), gwanbo.py(관보 재산)
              evidence.yml 매주 — 조례·발주 수집, judge.py 분류·대조·판정
              race.yml   매일 — 후보 공약 비교를 이어서 다시 만든다(다 돌면 지운다)
+             digest.yml 매일 — 구독자 주간 기록 메일(한 사람에게 한 주 한 통, 하루 한도에서 멈추면 다음 날 잇는다)
 ```
 
 워크플로는 GitHub Actions 화면에서 수동으로도 돌린다(`ingest.yml` 은 `step` 에 단계 이름 하나).

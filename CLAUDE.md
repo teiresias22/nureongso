@@ -10,7 +10,7 @@
 collector/   Python 3.12 수집기 → Supabase(Postgres). 파일 하나가 출처 하나
 supabase/    schema.sql 하나. 마이그레이션 도구 없음 — SQL Editor 에 붙여 실행
 web/         Next.js 16 (App Router) + supabase-js, Vercel(icn1)
-.github/     정기 수집 워크플로 4개(ingest·nec·evidence·race), 오류 제보 이슈 양식
+.github/     정기 워크플로 5개(ingest·nec·evidence·race·digest), 오류 제보 이슈 양식
 ```
 
 ## 환경·브랜치
@@ -25,7 +25,7 @@ web/         Next.js 16 (App Router) + supabase-js, Vercel(icn1)
 - web: Vercel, `web/` 가 루트. 배포 주소 https://nureongso.joon.is-a.dev (`NEXT_PUBLIC_SITE_URL`)
 - DB: Supabase 무료(500MB). 스키마 변경은 `schema.sql` 을 고치고 SQL Editor 에서 해당 문만 실행.
 - 수집: GitHub Actions — 매일 04:00 `ingest.yml`, 화 04:30 `nec.yml`, 월 05:00 `evidence.yml`,
-  매일 18:00 `race.yml`(후보 공약 비교 재생성, 다 돌면 지운다)(KST).
+  매일 18:00 `race.yml`(후보 공약 비교 재생성, 다 돌면 지운다), 매일 09:10 `digest.yml`(구독자 주간 기록 메일)(KST).
 
 ## 테스트
 
@@ -33,6 +33,9 @@ web/         Next.js 16 (App Router) + supabase-js, Vercel(icn1)
 cd collector && for f in test_*.py; do dotenvx run -q -- .venv/bin/python -c "import importlib;m=importlib.import_module('${f%.py}');[getattr(m,n)() for n in dir(m) if n.startswith('test_')]" || echo "FAIL $f"; done
 cd web && npm run lint && npm run build
 node web/src/lib/force.check.mjs   # 관계도 배치(Node 24 가 .ts 를 그대로 읽는다)
+node web/src/lib/subscription.check.mjs   # 구독 신청 입력·지역 목록
+node web/src/lib/timeline.check.mjs       # 공약 상세 타임라인
+# DB 함수·RLS·판정 이력 트리거: supabase/*.check.sql (begin…rollback). 운영 DB 에 해당 덩어리를 적용한 뒤에만, 파일 머리의 명령으로
 ```
 
 `python test_asset.py` 처럼 파일만 돌리면 `test_asset`·`test_extras`·`test_gwanbo` 는 **아무것도 실행하지 않고** 통과한다.

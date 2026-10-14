@@ -1,0 +1,75 @@
+name: 주간 기록 메일
+
+# /my 에서 구독한 사람에게 지난주(월~일, KST)에 새로 수집된 그 지역 현직의 공개 기록을 보낸다
+# (collector/digest.py). 매일 돌지만 한 사람에게 한 주 한 통이다 — digest_log (구독자, 주) 기본키가
+# 막아서 다시 돌려도 이미 처리한 사람은 건너뛴다. 기록이 없는 주는 보내지 않는다.
+#
+# 매일 도는 이유: Resend 무료 한도가 하루 100통이다. 월요일에 다 못 보내면 429 에서 깨끗이 멈추고
+# 다음 날 남은 사람부터 잇는다. 한도는 UTC 자정(09:00 KST)에 풀리므로 그 직후에 돈다.
+# 담는 기간은 수집 시각 기준이라 ingest·nec·evidence 가 언제 돌든 겹치거나 빠지지 않는다.
+#
+# 꺼져 있는 동안(시크릿 RESEND_API_KEY·MAIL_FROM 이 없거나 구독 표가 없으면) digest.py 는 건너뛰었다고 적고
+# 0 으로 끝난다. 켜는 순서는 docs/IMPROVEMENT_PROGRESS.md '출시 준비'.
+on:
+  schedule:
+    - cron: "10 0 * * *" # 매일 09:10 KST (UTC+9)
+  workflow_dispatch:
+
+concurrency:
+  group: digest
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+
+      - run: pip install -r requirements.txt
+        working-directory: collector
+
+      - name: 주간 기록 메일
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+        run: python digest.py
+
+      - name: 결과 요약
+        if: always()
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import os, sys, psycopg
+          with psycopg.connect(os.environ["DATABASE_URL"]) as c, c.cursor() as cur:
+              # 운영 DB 에 구독 표를 적용하기 전에는 적을 것이 없다(digest.py 도 건너뛴다).
+              cur.execute("select to_regclass('public.subscriber') is not null")
+              if not cur.fetchone()[0]:
+                  print("구독 표 없음 — supabase/schema.sql '주간 기록 메일' 적용 전")
+                  sys.exit(0)
+              cur.execute("""select count(*) filter (where confirmed_at is not null),
+                                    count(*) filter (where confirmed_at is null) from subscriber""")
+              ok, wait = cur.fetchone()
+              print(f"구독 {ok:,}명 · 확인 대기 {wait:,}명")
+              cur.execute("""select week, count(*) filter (where sent), count(*) filter (where not sent)
+                             from digest_log group by week order by week desc limit 1""")
+              row = cur.fetchone()
+              if row:
+                  print(f"\n{row[0]} 주: 보냄 {row[1]:,} · 기록 없어 안 보냄 {row[2]:,}")
+              # 몇 주째 0 이면 created_at 이 안 채워지는 것이다(수집기가 그 칸을 덮어쓰는지 본다).
+              # 공약은 판정 이력에서 상태가 실제로 바뀐 줄(메일에 실리는 것과 같은 조건)을 센다.
+              cur.execute("""select (select count(*) from bill where created_at > now() - interval '7 days'),
+                                    (select count(*) from pledge_status_log where at > now() - interval '7 days'
+                                       and prev_status is not null and prev_status <> status and reason <> 'rule')""")
+              b, s = cur.fetchone()
+              print(f"\n지난 7일 새로 들어온 법안 {b:,}건 · 바뀐 공약 판정 {s:,}건")
+          PY

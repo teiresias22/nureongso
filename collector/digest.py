@@ -18,12 +18,16 @@
 """
 from __future__ import annotations
 
+import argparse
 import os
+import sys
+import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
+import psycopg
 
 KST = ZoneInfo("Asia/Seoul")
 SITE = "https://nureongso.joon.is-a.dev"
@@ -113,7 +117,7 @@ def render(area: str, people, changes, start: datetime, end: datetime, token: st
             who = DECIDED_BY.get(p["decided_by"], p["decided_by"])
             # 판정 이력에서 상태가 바뀐 줄(digest_changes). 왜 바뀌었는지는 공약 상세에 있다.
             lines.append(f"- 공약 판정 「{p['title']}」 {p['prev']} → {p['status']} ({who})\n"
-                         f"  {SITE}/pledge/{p['pledge_id']}")  # 검토: 구현은 「…」 {prev} → {status} ({who}) + /pledge/{id} 줄
+                         f"  {SITE}/pledge/{p['pledge_id']}")
         if len(pledges) > CAP:
             lines.append(f"- 공약 판정 외 {len(pledges) - CAP}건")
         blocks.append(f"■ {name} ({office})  {SITE}/m/{code}\n" + "\n".join(lines))
@@ -143,3 +147,108 @@ def send(client: httpx.Client, to: str, subject: str, text: str, unsub: str, key
     if r.status_code == 429:
         raise Quota(r.text[:200])
     r.raise_for_status()
+
+
+AREA_SQL = """
+select a.member_code, a.office, a.sd_name, a.wiw_name, m.district, m.name
+from member_area a join member m on m.code = a.member_code
+"""
+
+
+def changes_of(cur, people, start: datetime, end: datetime) -> list[tuple]:
+    if not people:
+        return []
+    cur.execute("select member_code, kind, data from digest_changes(%s, %s, %s)",
+                ([c for c, _, _ in people], start, end))
+    return cur.fetchall()
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--preview", nargs="+", metavar="지역",
+                   help="'시도 [시군구]' 의 다음 월요일 메일(지금까지 모인 것)을 찍기만 한다")
+    a = p.parse_args()
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        sys.exit("DATABASE_URL 이 없습니다. .env 를 확인하세요.")
+    week = week_of(datetime.now(KST))
+
+    if a.preview:
+        sd, wiw = a.preview[0], " ".join(a.preview[1:])
+        start, end = window(week + timedelta(days=7))
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(AREA_SQL)
+            people = resolve(cur.fetchall(), sd, wiw)
+            mail = render(" ".join(filter(None, [sd, wiw])), people,
+                          changes_of(cur, people, start, end), start, end, "TOKEN")
+        print(f"{len(people)}명: {', '.join(f'{n}({o})' for _, n, o in people)}")
+        print(f"Subject: {mail[0]}\n\n{mail[1]}" if mail else "이 기간 새 기록 없음 — 보내지 않는다")
+        return
+
+    key = os.environ.get("RESEND_API_KEY")
+    # 켜기 전(운영 DB 적용·Resend 도메인 확인 전)에는 꺼져 있다. 매일 빨간불이 뜨지 않게 0 으로 끝낸다.
+    # 웹 구독 폼도 같은 키가 없으면 안 뜬다(web/src/lib/subscription.ts subscriptionOn).
+    if not (key and FROM):
+        print("[digest] RESEND_API_KEY·MAIL_FROM 이 없어 건너뜁니다(주간 메일 꺼짐)", file=sys.stderr)
+        return
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("select to_regclass('public.subscriber') is not null")
+        if not cur.fetchone()[0]:
+            print("[digest] subscriber 표가 없어 건너뜁니다(schema.sql '주간 기록 메일' 적용 전)", file=sys.stderr)
+            return
+    start, end = window(week)
+    sent = empty = failed = 0
+    with psycopg.connect(dsn) as conn, \
+            httpx.Client(timeout=30, headers={"Authorization": f"Bearer {key}"}) as client:
+        with conn.cursor() as cur:
+            # 확인하지 않은 주소는 7일 뒤 지운다. 확인 링크도 그때 끊긴다(subscription_confirm).
+            cur.execute("delete from subscriber where confirmed_at is null"
+                        " and coalesce(confirm_sent_at, created_at) < now() - interval '7 days'")
+            cur.execute(AREA_SQL)
+            areas = cur.fetchall()
+            cur.execute("select id, email, sd_name, wiw_name, token from digest_due(%s)", (week,))
+            due = cur.fetchall()
+        conn.commit()
+
+        made: dict[tuple[str, str], tuple] = {}  # 같은 지역 구독자는 한 번만 센다
+        for sid, email, sd, wiw, token in due:
+            if (sd, wiw) not in made:
+                people = resolve(areas, sd, wiw)
+                with conn.cursor() as cur:
+                    made[(sd, wiw)] = (people, changes_of(cur, people, start, end))
+            people, changes = made[(sd, wiw)]
+            mail = render(" ".join(filter(None, [sd, wiw])), people, changes, start, end, str(token))
+            with conn.cursor() as cur:
+                # 먼저 '처리함' 을 적고 보낸다. 겹친 실행이 있어도 한쪽만 적힌다(기본키).
+                cur.execute("insert into digest_log (subscriber_id, week, sent) values (%s, %s, %s)"
+                            " on conflict do nothing returning 1", (sid, week, mail is not None))
+                claimed = cur.fetchone()
+            conn.commit()
+            if not claimed:
+                continue
+            if not mail:
+                empty += 1
+                continue
+            try:
+                send(client, email, *mail, f"{SITE}/api/subscription?do=stop&t={token}", f"digest-{week}-{sid}")
+                sent += 1
+            except (Quota, httpx.HTTPError) as e:
+                # 못 보냈으면 적은 것을 지워 다음 실행이 다시 집게 한다.
+                with conn.cursor() as cur:
+                    cur.execute("delete from digest_log where subscriber_id = %s and week = %s", (sid, week))
+                conn.commit()
+                if isinstance(e, Quota):
+                    print(f"[digest] 메일 한도: {e} — 남은 사람은 다음 실행이 잇는다", file=sys.stderr)
+                    break
+                print(f"[digest] ! {sid}: {e}", file=sys.stderr)
+                failed += 1
+            time.sleep(0.2)  # Resend 기본 한도 초당 10건
+    print(f"[digest] {week} 주 · 보냄 {sent} · 기록 없음 {empty} · 실패 {failed} · 대상 {len(due)}",
+          file=sys.stderr)
+    # 성공한 것은 이미 적혔다. 그래도 초록불로 끝내면 못 받은 사람을 아무도 모른다.
+    if failed:
+        sys.exit(f"{failed}명에게 보내지 못했습니다. 다음 실행이 다시 시도합니다.")
+
+
+if __name__ == "__main__":
+    main()

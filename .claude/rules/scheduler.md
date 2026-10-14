@@ -12,6 +12,7 @@ paths:
 | `nec.yml` | 화 04:30 | `ingest` | `nec.py elections/winners/pledges` → `ingest.py refresh` → `asset.py fetch` → `gwanbo.py fetch` |
 | `evidence.yml` | 월 05:00 | `evidence` | `ordin.py`·`bid.py fetch`+`link`·`expense.py` → `judge.py classify→match→match_ordin→match_bid→decide` |
 | `race.yml` | 매일 18:00 | `race` | `judge.py match_race --since …` — 후보 공약 비교를 gemini-3.5-flash 로 이어서 다시 만든다 |
+| `digest.yml` | 매일 09:10 | `digest` | `digest.py` — 구독자에게 지난주(월~일) 새로 수집된 기록 메일. 한 사람에게 한 주 한 통 |
 
 - `ingest`·`nec` 가 한 그룹인 이유: 둘 다 `member` 를 쓴다. 그룹은 실행 하나 + 대기 하나라서 수동 실행을
   연달아 넣으면 앞의 대기 실행이 취소된다. 하나 끝난 뒤 다음을 넣는다. `ingest.yml` 수동 실행은 `step` 에 단계 하나.
@@ -25,3 +26,8 @@ paths:
   18:00 KST 인 이유는 파일 주석(미국 오후 혼잡 시간의 503 회피).
 - `run_pledges.sh` 는 선거공보 수집·파싱을 손으로 돌리는 것이다(이어받기 됨). 새 선거는 `--sg`/`--type` 을 더한다.
 - 새 단계를 넣으면 '결과 요약' 스텝에 행수·최근값을 한 줄 더한다. 조용히 낡는 것을 보이게 하려는 것이다.
+- `digest.yml` 은 매일 돌지만 한 사람에게 한 주 한 통이다(`digest_log` 기본키, 보내기 전에 적고 실패하면 지운다).
+  09:10 인 이유: Resend 하루 한도(무료 100통)가 UTC 자정에 풀린다. 한도에 걸리면 멈추고 다음 날 남은 사람부터 잇는다.
+  담는 기간은 **수집 시각** 기준 지난주 월 00:00~이번 주 월 00:00(KST)이라 다른 워크플로 시각과 상관없이 겹치거나 빠지지 않는다.
+  시크릿(`RESEND_API_KEY`·`MAIL_FROM`)이나 구독 표가 없으면 건너뛰고 0 으로 끝난다(꺼진 상태).
+  내용 확인은 `python digest.py --preview 시도 [시군구]`(쓰지도 보내지도 않는다).
