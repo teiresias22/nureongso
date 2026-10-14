@@ -111,8 +111,8 @@ def gemini_models() -> list[str]:
 
 
 def gemini_pick(models: list[str]) -> str:
-    """미리보기·실험판은 피하고, 싼 것부터 고른다."""
-    stable = [m for m in models if not re.search(r"preview|exp|thinking", m)]
+    """미리보기·실험판·`-latest` 별칭(가리키는 모델이 바뀜)은 피하고, 싼 것부터 고른다."""
+    stable = [m for m in models if not re.search(r"preview|exp|thinking|latest", m)]
     for kind in GEMINI_PREFER:
         hit = sorted((m for m in (stable or models) if kind in m), reverse=True)
         if hit:
