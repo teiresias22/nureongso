@@ -101,4 +101,85 @@ begin
   end;
 end $$;
 
+-- 6) anon 은 주간 처리 함수도 부르지 못한다(digest_due 는 메일 주소를 돌려준다)
+set local role anon;
+do $$
+begin
+  begin
+    perform digest_due(current_date);
+    raise exception 'anon 이 digest_due() 를 불렀다';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform digest_changes(array['x'], now(), now());
+    raise exception 'anon 이 digest_changes() 를 불렀다';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+
+-- 7) 주마다 한 번: 그 주가 시작되기 전에 확인한 사람만, digest_log 에 적힌 사람은 빼고
+do $$
+declare a bigint; b bigint; c bigint; n int; wk date := date '2026-10-12';
+begin
+  insert into subscriber (email, sd_name, confirmed_at)
+    values ('check-due-a@example.com', '서울특별시', timestamptz '2026-10-11 23:59+09') returning id into a;
+  insert into subscriber (email, sd_name, confirmed_at)
+    values ('check-due-b@example.com', '서울특별시', timestamptz '2026-10-12 00:00+09') returning id into b;
+  insert into subscriber (email, sd_name) values ('check-due-c@example.com', '서울특별시') returning id into c;
+  assert exists (select 1 from digest_due(wk) where id = a), '월요일 전에 확인한 사람이 빠졌다';
+  assert not exists (select 1 from digest_due(wk) where id = b), '그 주에 확인한 사람이 들어갔다';
+  assert not exists (select 1 from digest_due(wk) where id = c), '확인 안 한 사람이 들어갔다';
+  insert into digest_log (subscriber_id, week, sent) values (a, wk, true);
+  assert not exists (select 1 from digest_due(wk) where id = a), '이미 처리한 사람을 또 집었다';
+  -- digest.py 가 기대는 것: 같은 (사람, 주) 를 두 번 적으면 두 번째는 아무것도 돌려주지 않는다
+  insert into digest_log (subscriber_id, week, sent) values (a, wk, true) on conflict do nothing returning 1 into n;
+  assert n is null, '같은 주를 두 번 적었다';
+  assert exists (select 1 from digest_due(wk + 7) where id = a), '다음 주에는 다시 받아야 한다';
+end $$;
+
+-- 8) 새 기록: 기간 안에 수집된 것만, 대표발의만, 표결은 결과별 건수, 끝 시각은 다음 주 몫
+do $$
+declare f timestamptz := now() - interval '1 day'; t timestamptz := now() + interval '1 day'; pid bigint;
+begin
+  insert into member (code, name) values ('ZZCHECK1', '점검용');
+  insert into bill (bill_id, age, name, created_at) values
+    ('ZZB-NEW', 22, '새 법안', now()),
+    ('ZZB-OLD', 22, '지난주 법안', now() - interval '8 days'),
+    ('ZZB-CO', 22, '공동발의 법안', now());
+  insert into bill_sponsor (bill_id, member_code, role) values
+    ('ZZB-NEW', 'ZZCHECK1', 'rep'), ('ZZB-OLD', 'ZZCHECK1', 'rep'), ('ZZB-CO', 'ZZCHECK1', 'co');
+  insert into vote (bill_id, member_code, result, created_at) values
+    ('ZZB-NEW', 'ZZCHECK1', '찬성', now()), ('ZZB-CO', 'ZZCHECK1', '찬성', now()),
+    ('ZZB-OLD', 'ZZCHECK1', '반대', now() - interval '8 days');
+  insert into attendance (age, name, member_code, session_no, days, present, created_at)
+    values (99, '점검용', 'ZZCHECK1', 430, 10, 9, now());
+  insert into pledge (member_code, title, order_no) values ('ZZCHECK1', '점검 공약', 1) returning id into pid;
+  -- 공약은 판정 이력(pledge_status_log, 트리거)에서 상태가 실제로 바뀐 줄만 — 첫 판정(기준선)은 아니다.
+  insert into pledge_status (pledge_id, status, note) values (pid, '판단불가', 'none_early');
+  update pledge_status set status = '미착수', note = 'none_2y' where pledge_id = pid;
+
+  assert (select count(*) from digest_changes(array['ZZCHECK1'], f, t) where kind = 'bill') = 1, '새 대표발의가 하나가 아니다';
+  assert (select data->>'bill_id' from digest_changes(array['ZZCHECK1'], f, t) where kind = 'bill') = 'ZZB-NEW', '공동발의나 지난주 법안이 섞였다';
+  assert (select (data->>'n')::int from digest_changes(array['ZZCHECK1'], f, t)
+          where kind = 'vote' and data->>'result' = '찬성') = 2, '찬성이 2건이 아니다';
+  assert not exists (select 1 from digest_changes(array['ZZCHECK1'], f, t)
+                     where kind = 'vote' and data->>'result' = '반대'), '기간 밖 표결이 들어왔다';
+  assert (select data->>'session_no' from digest_changes(array['ZZCHECK1'], f, t) where kind = 'attendance') = '430', '출결 누적이 없다';
+  assert (select data->>'status' || '|' || (data->>'prev') || '|' || (data->>'decided_by') from digest_changes(array['ZZCHECK1'], f, t)
+          where kind = 'pledge') = '미착수|판단불가|auto', '공약 판정 변화가 없다';
+  assert not exists (select 1 from digest_changes(array['ZZCHECK1'], now() - interval '2 days', now())
+                     where kind = 'bill'), '기간 끝 시각에 들어온 기록이 이번 주에 들어왔다';
+  assert not exists (select 1 from digest_changes(array['ZZ-NOBODY'], f, t)), '다른 사람 기록이 나왔다';
+end $$;
+
+-- 9) 칸을 더하기 전부터 있던 행은 '-infinity' — 칸을 더한 주에 법안 전부가 '새 기록' 이 되지 않는다
+--    (기존 행이 있는 DB — 운영 — 에서만 참이다. 빈 DB 에서 돌릴 때는 첫 assert 를 뺀다)
+do $$
+begin
+  assert (select count(*) from bill where created_at = '-infinity') > 0, '기존 법안이 -infinity 가 아니다';
+  insert into bill (bill_id, age, name) values ('ZZB-DEF', 22, '기본값');
+  assert (select created_at from bill where bill_id = 'ZZB-DEF') = now(), '새 법안의 created_at 이 now() 가 아니다';
+end $$;
+
 rollback;

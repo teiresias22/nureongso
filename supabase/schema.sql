@@ -1151,3 +1151,65 @@ where not exists (select 1 from pledge_status_log l where l.pledge_id = s.pledge
 drop trigger if exists pledge_status_log_trg on pledge_status;
 create trigger pledge_status_log_trg after insert or update on pledge_status
   for each row execute function log_pledge_status();
+
+-- ==== 주간 기록 메일: 새 기록 ====
+-- '이번 주에 새로 들어온 기록' 을 가르는 시각. 수집기는 이 칸을 쓰지 않아 insert 때의 now() 가 남는다
+-- (ingest.upsert·replace 는 넘긴 칸만 쓴다). 사건 날짜(proposed_at·voted_at)로 가르지 않는 이유:
+-- 국회 API 가 며칠 늦게 주는 기록이 이미 보낸 주에 떨어져 영영 빠진다. 수집 시각이면 주와 주가 이어 붙는다.
+-- 이미 있던 행은 '-infinity' 로 둔다. now() 로 더하면 칸을 더한 주에 법안 1.9만 건이 전부 '새 기록' 이 된다.
+-- 상수 기본값으로 더한 뒤 기본값만 now() 로 바꾼다 — 상수라 표를 다시 쓰지 않는다(Disk IO, ops.md).
+-- bill.created_at 은 위 '공약 판정 이력·근거 원문' 덩어리(A)가 만든다(증분 대조도 같이 쓴다).
+alter table vote add column if not exists created_at timestamptz not null default '-infinity';
+alter table vote alter column created_at set default now();
+-- attendance 는 ingest.py attendance 가 내용이 바뀐 날 그 대수를 통째로 다시 넣는다(replace). 그래서 이 칸은
+-- '이 누적값이 들어온 때' 다 — 새 회기 파일이 오면 그 대수 전원이 그 주에 한 줄씩 잡힌다.
+alter table attendance add column if not exists created_at timestamptz not null default '-infinity';
+alter table attendance alter column created_at set default now();
+-- 공약은 칸을 더하지 않는다. pledge_status.updated_at 은 신뢰도만 바뀌어도 움직이므로(judge.py DECIDE_SQL)
+-- 판정 이력 pledge_status_log 에서 상태가 실제로 바뀐 줄만 쓴다.
+
+-- 이번 주(p_week = 월요일, KST) 메일을 아직 처리하지 않은 확인된 구독자. 그 주가 시작되기 전에 확인한
+-- 사람만 — 수요일에 확인하면 다음 월요일부터 받는다.
+create or replace function digest_due(p_week date)
+returns table (id bigint, email text, sd_name text, wiw_name text, token uuid)
+language sql stable as $$
+  select s.id, s.email, s.sd_name, s.wiw_name, s.token
+  from subscriber s
+  where s.confirmed_at < (p_week::timestamp at time zone 'Asia/Seoul')
+    and not exists (select 1 from digest_log d where d.subscriber_id = s.id and d.week = p_week)
+  order by s.id
+$$;
+
+-- 사람들(p_codes)의 [p_from, p_to) 새 기록. 화면과 같은 정의다 — 대표발의만(공동발의는 합산하지 않는다),
+-- 표결은 결과별 건수, 출결은 누적값, 공약은 판정 변화(이전 → 지금)와 자동/검수.
+create or replace function digest_changes(p_codes text[], p_from timestamptz, p_to timestamptz)
+returns table (member_code text, kind text, data jsonb)
+language sql stable as $$
+  select s.member_code, 'bill'::text,
+         jsonb_build_object('bill_id', b.bill_id, 'name', b.name, 'proposed_at', b.proposed_at)
+  from bill_sponsor s join bill b on b.bill_id = s.bill_id
+  where s.member_code = any(p_codes) and s.role = 'rep'
+    and b.created_at >= p_from and b.created_at < p_to
+  union all
+  select v.member_code, 'vote'::text, jsonb_build_object('result', v.result, 'n', count(*))
+  from vote v
+  where v.member_code = any(p_codes) and v.created_at >= p_from and v.created_at < p_to
+  group by v.member_code, v.result
+  union all
+  select a.member_code, 'attendance'::text,
+         jsonb_build_object('age', a.age, 'session_no', a.session_no, 'as_of', a.as_of,
+                            'present', a.present, 'days', a.days)
+  from attendance a
+  where a.member_code = any(p_codes) and a.created_at >= p_from and a.created_at < p_to
+  union all
+  -- 기준선(prev_status null)·사유만 바뀐 줄·규칙 판 변경(reason 'rule')은 싣지 않는다. 한 주에 두 번 바뀌면 두 줄.
+  select p.member_code, 'pledge'::text,
+         jsonb_build_object('pledge_id', p.id, 'title', p.title, 'order_no', p.order_no,
+                            'status', l.status, 'prev', l.prev_status, 'decided_by', l.decided_by)
+  from pledge_status_log l join pledge p on p.id = l.pledge_id
+  where p.member_code = any(p_codes) and l.at >= p_from and l.at < p_to
+    and l.prev_status is not null and l.prev_status <> l.status and l.reason <> 'rule'
+$$;
+
+revoke execute on function digest_due(date), digest_changes(text[], timestamptz, timestamptz)
+  from public, anon, authenticated;
