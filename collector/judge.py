@@ -8,6 +8,9 @@
   match_ordin  조례제도형 공약을 그 지자체 자치법규와 대조한다 (LLM, 단체장·교육감)
   match_race   같은 선거구에 함께 나온 후보들의 공약 중 같은 약속을 찾는다 (LLM)
   decide       근거를 보고 규칙표대로 판정한다 (LLM 없음, 몇 번 돌려도 같은 결과)
+  snapshot     연결된 근거 기록(법안·조례·발주)의 버전을 남긴다 (LLM 없음, 바뀐 것만)
+  quote        근거마다 원문 구절을 고르고 서버가 원문에서 다시 찾아 확인한다 (법안만 LLM)
+  repro        표본 몇 명을 두 번 대조해 근거가 같게 나오는지 잰다 (LLM, DB 에 근거를 쓰지 않는다)
 
 LLM 은 '이 공약과 이 기록이 같은 일인가' 만 판단한다. '이행됐다' 는 말은 decide 의
 규칙표가 하고, 그건 SQL 이라 몇 번을 돌려도 같은 답이 나온다.
@@ -25,14 +28,23 @@ pledge_status 를 건드리지 않고 pledge_overlap 에만 쌓는다.
     python judge.py all
     python judge.py decide                # 규칙만 다시 적용
     python judge.py match_race            # 선거 때만. all 에 들어 있지 않다.
+    python judge.py decide --check        # 쓰지 않고 바뀔 판정 수만 (판정 결정성 점검)
+    python judge.py snapshot [--check]    # 근거 버전. --check 는 쓰지 않고 바뀐 근거 수만
+    python judge.py quote [--limit N]     # 원문 구절 (이어받기 됨)
+    python judge.py repro --n 5           # 대조 재현성 표본
 
 환경변수: DATABASE_URL + llm.py 가 쓰는 것 (기본 GEMINI_API_KEY)
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
+import re
 import sys
+import unicodedata
+from collections import defaultdict
 
 import psycopg
 
@@ -46,6 +58,34 @@ KINDS = ["입법", "예산사업", "조례제도", "선언", "기타"]
 MP_TERM_START = "2024-05-30"      # 제22대 국회 개원
 HEAD_TERM_START = "2026-07-01"    # 제9회 지방선거 당선자 취임
 GRACE_YEARS = 2
+
+
+# --------------------------------------------------------------------------- 판·원문
+
+def version(name: str, *parts) -> str:
+    """'match:9c41e2ab'. 프롬프트·규칙 글자에서 바로 만든다 — 손으로 올리지 않아 잊을 수 없다."""
+    raw = "".join(p if isinstance(p, str) else json.dumps(p, ensure_ascii=False, sort_keys=True) for p in parts)
+    return f"{name}:{hashlib.sha256(raw.encode()).hexdigest()[:8]}"
+
+
+def norm(s: str) -> str:
+    """원문 구절을 찾고 해시를 매기는 정규화. 오프셋은 이 글자 위의 코드포인트 위치다.
+    NFKC 가 호환 한자(李 U+F9E1, ingest.people_of 의 함정)·전각 문자·전각 공백을 편다.
+    따옴표 모양·줄임표는 바꾸지 않는다 — 바꾼 글자는 원문 구절이 아니다."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", s).replace("\x00", "")).strip()
+
+
+def locate(text: str, quote: str) -> tuple[int, int] | None:
+    """정규화된 본문에서 구절이 처음 나온 구간. 퍼지 매칭은 하지 않는다. 빈 구절·없음은 None."""
+    q = norm(quote)
+    i = text.find(q) if q else -1
+    return (i, i + len(q)) if i >= 0 else None
+
+
+def content_hash(text: str, facts: dict) -> str:
+    """근거 기록 한 버전의 해시. 본문은 정규화해서 넣어 공백 모양만 바뀐 재수집은 같은 버전이다."""
+    raw = json.dumps({"t": norm(text), **facts}, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 CLASSIFY_SCHEMA = {
     "type": "object",
@@ -228,51 +268,100 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
 # --------------------------------------------------------------------------- match
 
 
+def save_evidence(cur, rows, prompt: str) -> None:
+    """근거 (pledge_id, kind, ref_id, score, why) 를 넣는다. 쓴 모델·프롬프트 판을 함께 남기고,
+    값이 그대로면 다시 쓰지 않는다(Disk IO — pledges.md 의 'judge 의 직접 SQL 도 is distinct from')."""
+    if not rows:
+        return
+    model = llm.model_id()
+    cur.executemany(
+        "insert into pledge_evidence as e (pledge_id, kind, ref_id, score, summary, model, prompt)"
+        " values (%s,%s,%s,%s,%s,%s,%s)"
+        " on conflict (pledge_id, kind, ref_id) do update set"
+        "   score = excluded.score, summary = excluded.summary,"
+        "   model = excluded.model, prompt = excluded.prompt"
+        " where (e.score, e.summary, e.model, e.prompt)"
+        "   is distinct from (excluded.score, excluded.summary, excluded.model, excluded.prompt)",
+        [(*r, model, prompt) for r in rows])
+
+
+def match_once(pledges, bills) -> set[tuple[int, str, float, str]]:
+    """입법형 공약 ↔ 대표발의 법안 LLM 한 번. 목록에 없는 id·제 말과 어긋나는 연결은 버린다.
+    run_match 와 run_repro 가 같이 쓴다. LLMError 는 그대로 올린다."""
+    out = llm.complete_json(
+        MATCH_PROMPT.format(
+            pledges="\n".join(f"{p}. {t} / {b[:150]}" for p, t, b in pledges),
+            bills="\n".join(f"{bid} | {nm} | {res}" for bid, nm, res in bills),
+        ), MATCH_SCHEMA)
+    pids = {p for p, _, _ in pledges}
+    bids = {b for b, _, _ in bills}
+    return {
+        (m["pledge_id"], m["bill_id"], float(m.get("confidence") or 0), (m.get("why") or "")[:300])
+        for m in out.get("matches", [])
+        # 없는 id 는 버린다. 모델이 지어낸 근거가 화면에 뜨면 신뢰가 무너진다.
+        if m.get("pledge_id") in pids and m.get("bill_id") in bids
+    }
+
+
 def run_match(conn, limit: int | None, redo: bool) -> None:
-    """입법형 공약 ↔ 본인 대표발의 법안. 공동발의는 서명일 뿐이라 근거로 쓰지 않는다."""
+    """입법형 공약 ↔ 본인 대표발의 법안. 공동발의는 서명일 뿐이라 근거로 쓰지 않는다.
+
+    대상: 아직 안 돈 사람 + **마지막 대조 뒤 새 대표발의가 들어온 사람**(bill.created_at).
+    예전에는 한 번 대조한 사람을 다시 보지 않아 임기 중 새로 낸 법안이 공약에 영영 안 붙었다.
+    다시 볼 때는 그 새 법안만 후보로 넘긴다 — 기존 연결은 그대로 두고, 새 기록이 없는 주에는 호출 0건.
+    ponytail: 대조와 같은 순간에 커밋 중이던 법안은 since 보다 앞선 시각으로 들어와 빠질 수 있다.
+    """
     with conn.cursor() as cur:
-        # 이미 돌린 의원은 건너뛴다. '매칭 0건' 과 '아직 안 돌림' 을 구별해야 해서
-        # 근거 유무가 아니라 실행 기록(ingest_run)으로 판단한다.
+        # '매칭 0건' 과 '아직 안 돌림' 을 구별해야 해서 근거 유무가 아니라 실행 기록(ingest_run)으로 본다.
+        # 비교는 SQL 에서 한다 — 기존 법안의 created_at 은 '-infinity' 라 파이썬 datetime 으로 못 읽는다.
         cur.execute(
             """
-            select p.member_code, count(*)
-            from pledge p
-            where '입법' = any(p.kinds)
-              and exists (select 1 from bill_sponsor s
-                           where s.member_code = p.member_code and s.role = 'rep')
-              %s
-            group by p.member_code order by count(*) desc
-            """ % ("" if redo else
-                   "and not exists (select 1 from ingest_run r"
-                   " where r.source = 'match:' || p.member_code)")
-        )
+            with t as (
+              select p.member_code, count(*) as n
+              from pledge p
+              where '입법' = any(p.kinds)
+                and exists (select 1 from bill_sponsor s
+                             where s.member_code = p.member_code and s.role = 'rep')
+              group by p.member_code
+            ), r as (
+              select substr(source, 7) as code, max(finished_at) as since
+              from ingest_run where source like 'match:%%' group by 1
+            )
+            select t.member_code, t.n, case when %(redo)s then null else r.since end
+            from t left join r on r.code = t.member_code
+            where %(redo)s or r.since is null
+               or exists (select 1 from bill_sponsor s join bill b on b.bill_id = s.bill_id
+                           where s.member_code = t.member_code and s.role = 'rep'
+                             and b.created_at > r.since)
+            -- 안 돈 사람이 먼저다. 한도에 걸려 멈춰도 '한 번도 안 본 사람' 이 남지 않게.
+            order by r.since is not null, t.n desc
+            """, {"redo": redo})
         targets = cur.fetchall()
     if limit is not None:
         targets = targets[:limit]
-    print(f"  대상 {len(targets)}명", file=sys.stderr)
+    print(f"  대상 {len(targets)}명 (새 법안만 다시 보는 사람 {sum(1 for t in targets if t[2])})",
+          file=sys.stderr)
 
     done = linked = 0
-    for i, (mcode, n) in enumerate(targets, 1):
+    for i, (mcode, n, since) in enumerate(targets, 1):
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
                 " where member_code = %s and '입법' = any(kinds) order by id", (mcode,))
             pledges = cur.fetchall()
             cur.execute(
-                "select bill_id, name, coalesce(proc_result,'계류') from member_bill"
-                " where member_code = %s and role = 'rep' order by proposed_at desc",
-                (mcode,))
+                "select b.bill_id, b.name, coalesce(b.proc_result,'계류') from bill_sponsor s"
+                " join bill b on b.bill_id = s.bill_id"
+                " where s.member_code = %s and s.role = 'rep'"
+                "   and (%s::timestamptz is null or b.created_at > %s::timestamptz)"
+                " order by b.proposed_at desc",
+                (mcode, since, since))
             bills = cur.fetchall()
         if not pledges or not bills:
             continue
 
-        out = None
         try:
-            out = llm.complete_json(
-                MATCH_PROMPT.format(
-                    pledges="\n".join(f"{p}. {t} / {b[:150]}" for p, t, b in pledges),
-                    bills="\n".join(f"{bid} | {nm} | {res}" for bid, nm, res in bills),
-                ), MATCH_SCHEMA)
+            rows = sorted(match_once(pledges, bills))
         except llm.QuotaExhausted as e:
             print(f"\n  중단: {e}", file=sys.stderr)
             print(f"  키별 성공: {llm.key_usage()}", file=sys.stderr)
@@ -282,21 +371,8 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
             print(f"  [{i}/{len(targets)}] {mcode} 실패: {str(e)[:120]}", file=sys.stderr)
             continue
 
-        pids = {p for p, _, _ in pledges}
-        bids = {b for b, _, _ in bills}
-        rows = [
-            (m["pledge_id"], "bill", m["bill_id"],
-             float(m.get("confidence") or 0), (m.get("why") or "")[:300])
-            for m in out.get("matches", [])
-            # 없는 id 는 버린다. 모델이 지어낸 근거가 화면에 뜨면 신뢰가 무너진다.
-            if m.get("pledge_id") in pids and m.get("bill_id") in bids
-        ]
         with conn.cursor() as cur:
-            cur.executemany(
-                "insert into pledge_evidence (pledge_id, kind, ref_id, score, summary)"
-                " values (%s,%s,%s,%s,%s)"
-                " on conflict (pledge_id, kind, ref_id) do update set"
-                "   score = excluded.score, summary = excluded.summary", rows)
+            save_evidence(cur, [(p, "bill", b, c, w) for p, b, c, w in rows], PROMPT_VERSION["match"])
             log_run(cur, f"match:{mcode}", len(rows))
         conn.commit()
         done += 1
@@ -406,25 +482,33 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
                      where c.member_code = p.member_code and c.elected
                        and c.office = a.office
                      order by c.election_id desc limit 1) as district,
-                   count(*)
+                   count(*),
+                   -- 마지막 대조 시각. 그 뒤 새로 들어온 자치법규가 있는 사람만 다시 본다(run_match 와 같다).
+                   (select max(r.finished_at) from ingest_run r
+                     where r.source = 'ordin:' || p.member_code) as since
             from pledge p
             join member_area a on a.member_code = p.member_code
             where '조례제도' = any(p.kinds)
               and a.office <> '국회의원'
-              %s
-            group by 1, 2, 3, 4 order by 5 desc
-            """ % ("" if redo else
-                   "and not exists (select 1 from ingest_run r"
-                   " where r.source = 'ordin:' || p.member_code)")
-        )
+            group by 1, 2, 3, 4 order by 6 nulls first, 5 desc
+            """)
         rows = cur.fetchall()
         cur.execute("select distinct org from ordinance")
         known = {o for (o,) in cur.fetchall()}
 
     targets, missing = [], []
-    for mcode, office, sd, district, n in rows:
+    for mcode, office, sd, district, n, since in rows:
         org = ordin_org(office, sd, district or "")
-        (targets if org in known else missing).append((mcode, org, n))
+        if org not in known:
+            missing.append((mcode, org, n))
+            continue
+        since = None if redo else since
+        if since is not None:
+            with conn.cursor() as cur:
+                cur.execute("select exists (select 1 from ordinance where org = %s and created_at > %s)", (org, since))
+                if not cur.fetchone()[0]:
+                    continue
+        targets.append((mcode, org, since))
     if missing:
         # 조례가 한 건도 없는 지자체는 실제로 있을 수 있다(취임 직후). 그래도 이름이
         # 틀려서 못 찾는 것과 구별이 안 되므로 반드시 눈에 보이게 적는다.
@@ -436,7 +520,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
     print(f"  대상 {len(targets)}명", file=sys.stderr)
 
     done = linked = 0
-    for i, (mcode, org, n) in enumerate(targets, 1):
+    for i, (mcode, org, since) in enumerate(targets, 1):
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
@@ -451,11 +535,12 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
                 " from ordinance o, pledge p"
                 " where o.org = %s and p.member_code = %s"
                 "   and '조례제도' = any(p.kinds)"
+                "   and (%s::timestamptz is null or o.created_at > %s::timestamptz)"
                 "   and word_similarity(" + ORDIN_CORE + ","
                 "       p.title || ' ' || coalesce(p.body,'')) > %s"
                 " group by o.id, o.name, o.rr_kind, o.effective_at"
                 " order by sim desc limit %s",
-                (org, mcode, ORDIN_SIM, ORDIN_TOP))
+                (org, mcode, since, since, ORDIN_SIM, ORDIN_TOP))
             ordins = cur.fetchall()
         if not pledges or not ordins:
             # 후보가 없으면 '안 돌린 것' 이 아니라 '돌렸는데 없는 것' 이다. 기록을
@@ -490,11 +575,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
             if m.get("pledge_id") in pids and m.get("ordin_id") in oids
         ]
         with conn.cursor() as cur:
-            cur.executemany(
-                "insert into pledge_evidence (pledge_id, kind, ref_id, score, summary)"
-                " values (%s,%s,%s,%s,%s)"
-                " on conflict (pledge_id, kind, ref_id) do update set"
-                "   score = excluded.score, summary = excluded.summary", rows)
+            save_evidence(cur, rows, PROMPT_VERSION["ordin"])
             log_run(cur, f"ordin:{mcode}", len(rows))
         conn.commit()
         done += 1
@@ -601,25 +682,33 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
                      where c.member_code = p.member_code and c.elected
                        and c.office = a.office
                      order by c.election_id desc limit 1) as district,
-                   count(*)
+                   count(*),
+                   -- 마지막 대조 시각. 그 뒤 새로 들어온 공고가 있는 사람만 다시 본다(run_match 와 같다).
+                   (select max(r.finished_at) from ingest_run r
+                     where r.source = 'bid:' || p.member_code) as since
             from pledge p
             join member_area a on a.member_code = p.member_code
             where '예산사업' = any(p.kinds)
               and a.office <> '국회의원'
-              %s
-            group by 1, 2, 3, 4 order by 5 desc
-            """ % ("" if redo else
-                   "and not exists (select 1 from ingest_run r"
-                   " where r.source = 'bid:' || p.member_code)")
-        )
+            group by 1, 2, 3, 4 order by 6 nulls first, 5 desc
+            """)
         rows = cur.fetchall()
         cur.execute("select distinct org from bid_notice")
         known = {o for (o,) in cur.fetchall()}
 
     targets, missing = [], []
-    for mcode, office, sd, district, n in rows:
+    for mcode, office, sd, district, n, since in rows:
         org = ordin_org(office, sd, district or "")
-        (targets if org in known else missing).append((mcode, org, n))
+        if org not in known:
+            missing.append((mcode, org, n))
+            continue
+        since = None if redo else since
+        if since is not None:
+            with conn.cursor() as cur:
+                cur.execute("select exists (select 1 from bid_notice where org = %s and created_at > %s)", (org, since))
+                if not cur.fetchone()[0]:
+                    continue
+        targets.append((mcode, org, since))
     if missing:
         print(f"  ! 입찰공고가 없는 지자체 {len(missing)}곳:"
               f" {', '.join(o for _, o, _ in missing[:8])}"
@@ -629,7 +718,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
     print(f"  대상 {len(targets)}명", file=sys.stderr)
 
     done = linked = 0
-    for i, (mcode, org, n) in enumerate(targets, 1):
+    for i, (mcode, org, since) in enumerate(targets, 1):
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
@@ -642,11 +731,12 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
                 " from bid_notice b, pledge p"
                 " where b.org = %s and p.member_code = %s"
                 "   and '예산사업' = any(p.kinds)"
+                "   and (%s::timestamptz is null or b.created_at > %s::timestamptz)"
                 "   and word_similarity(b.name,"
                 "       p.title || ' ' || coalesce(p.body,'')) > %s"
                 " group by b.id, b.name, b.budget, b.notice_at"
                 " order by sim desc limit %s",
-                (org, mcode, BID_SIM, BID_TOP))
+                (org, mcode, since, since, BID_SIM, BID_TOP))
             bids = cur.fetchall()
         if not pledges or not bids:
             with conn.cursor() as cur:
@@ -680,11 +770,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
             and not self_contradicted(m.get("why"))
         ]
         with conn.cursor() as cur:
-            cur.executemany(
-                "insert into pledge_evidence (pledge_id, kind, ref_id, score, summary)"
-                " values (%s,%s,%s,%s,%s)"
-                " on conflict (pledge_id, kind, ref_id) do update set"
-                "   score = excluded.score, summary = excluded.summary", rows_)
+            save_evidence(cur, rows_, PROMPT_VERSION["bid"])
             log_run(cur, f"bid:{mcode}", len(rows_))
         conn.commit()
         done += 1
@@ -694,6 +780,253 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
 
     print(f"[match_bid] {done}명, 공약-공고 연결 {linked}건", file=sys.stderr)
 
+
+
+# --------------------------------------------------------------------------- snapshot·quote·repro
+
+QUOTE_PROMPT = """공약과, 그 공약의 근거로 연결된 법안의 원문(법안명 + 제안이유·주요내용)이다.
+각 항목마다 **법안 원문에서 공약과 같은 일을 하는 부분**을 골라 그대로 옮겨라.
+
+규칙:
+- 원문을 **한 글자도 바꾸지 말고** 옮긴다. 띄어쓰기·따옴표·숫자도 원문 그대로.
+- 120자 이내, 이어진 한 구간. 줄임표(…)로 떨어진 두 곳을 잇지 마라.
+- 요약하거나 다시 쓰지 마라. 다시 쓴 글은 원문 구절이 아니다.
+- 그런 부분이 없으면 quote 를 빈 문자열로 둔다. **억지로 고르는 쪽이 빠뜨리는 쪽보다 훨씬 해롭다.**
+- id 는 아래 [ ] 안의 숫자를 그대로 쓴다.
+
+{items}"""
+
+QUOTE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": {"type": "integer"}, "quote": {"type": "string"}},
+                "required": ["id", "quote"],
+            },
+        }
+    },
+    "required": ["items"],
+}
+
+# 근거 행의 prompt 칸. 프롬프트·스키마 글자에서 만든다(version) — 고치면 저절로 바뀐다.
+PROMPT_VERSION = {
+    "match": version("match", MATCH_PROMPT, MATCH_SCHEMA),
+    "ordin": version("ordin", ORDIN_PROMPT, ORDIN_SCHEMA),
+    "bid": version("bid", BID_PROMPT, BID_SCHEMA),
+    "quote": version("quote", QUOTE_PROMPT, QUOTE_SCHEMA),
+}
+
+
+def source_rows(cur, kind: str, ref_ids: list[str]) -> dict[str, tuple[str, dict]]:
+    """근거 기록 {ref_id: (본문, facts)}. facts 는 판정에 쓰이는 칸만이다. 원천에서 사라진 ref 는 빠진다.
+
+    bill  본문 = 법안명 + 제안이유. 대안은 bill_alt(= DECIDE_SQL 의 alt 조인과 같은 규칙)에서.
+    ordin 본문 = 연결된 조례 이름. facts 는 같은 자치법규ID 의 **최신** 제·개정(폐지 포함) — 다음 개정이 오면 새 버전.
+    bid   본문 = 공고명. ponytail: 변경공고(차수)는 새 id 라 따라가지 않는다.
+    """
+    if kind == "bill":
+        cur.execute("select distinct on (b.bill_id) b.bill_id, b.name, b.summary, b.proc_result, b.proc_dt,"
+                    "       a.alt_id, a.alt_result"
+                    " from bill b left join bill_alt a on a.bill_id = b.bill_id"
+                    " where b.bill_id = any(%s) order by b.bill_id, a.alt_id", (ref_ids,))
+        return {r[0]: (r[1] + "\n" + (r[2] or ""),
+                       {"name": r[1], "proc_result": r[3], "proc_dt": r[4], "alt_id": r[5], "alt_result": r[6]})
+                for r in cur.fetchall()}
+    if kind == "ordin":
+        cur.execute("select o.id, o.name, coalesce(x.id, o.id), coalesce(x.name, o.name),"
+                    "       coalesce(x.rr_kind, o.rr_kind), coalesce(x.effective_at, o.effective_at),"
+                    "       coalesce(x.announced_at, o.announced_at)"
+                    " from ordinance o left join lateral ("
+                    "   select * from ordinance x where x.ordin_id = o.ordin_id"
+                    "   order by x.announced_at desc nulls last, x.id desc limit 1) x on true"
+                    " where o.id = any(%s)", (ref_ids,))
+        return {r[0]: (r[1], {"last_id": r[2], "name": r[3], "rr_kind": r[4],
+                              "effective_at": r[5], "announced_at": r[6]})
+                for r in cur.fetchall()}
+    cur.execute("select id, name, budget, notice_at from bid_notice where id = any(%s)", (ref_ids,))
+    return {r[0]: (r[1], {"name": r[1], "budget": r[2], "notice_at": r[3]}) for r in cur.fetchall()}
+
+
+def latest_versions(cur, keys) -> dict[tuple[str, str], tuple[int, str]]:
+    """(kind, ref_id) → (마지막 source_version.id, content_hash). keys 가 None 이면 전부."""
+    if keys is None:
+        cur.execute("select distinct on (kind, ref_id) kind, ref_id, id, content_hash"
+                    " from source_version order by kind, ref_id, id desc")
+    else:
+        keys = list(keys)
+        cur.execute("select distinct on (kind, ref_id) kind, ref_id, id, content_hash from source_version"
+                    " where (kind, ref_id) in (select * from unnest(%s::text[], %s::text[]))"
+                    " order by kind, ref_id, id desc", ([k for k, _ in keys], [r for _, r in keys]))
+    return {(k, r): (i, h) for k, r, i, h in cur.fetchall()}
+
+
+def run_snapshot(conn, check: bool = False) -> tuple[int, set[int]]:
+    """연결된 근거 기록마다 직전 버전과 해시가 다르면 새 버전 한 줄. LLM 없음.
+
+    check=True 면 쓰지 않고 '버전이 없거나 달라진 근거' 수만 센다 — 판정 직후 0 이어야 한다
+    (문서 변경 감지 누락률). 바뀐 근거에 이미 고른 구절이 있으면 새 본문에서 다시 찾는다.
+    """
+    with conn.cursor() as cur:
+        cur.execute("select distinct kind, ref_id from pledge_evidence where kind in ('bill','ordin','bid')")
+        refs: dict[str, list[str]] = defaultdict(list)
+        for k, r in cur.fetchall():
+            refs[k].append(r)
+        latest = latest_versions(cur, None)
+        new, texts = [], {}
+        for kind, ids in refs.items():
+            for ref, (text, facts) in source_rows(cur, kind, ids).items():
+                h = content_hash(text, facts)
+                if latest.get((kind, ref), (None, None))[1] != h:
+                    new.append((kind, ref, h, json.dumps(facts, ensure_ascii=False, default=str)))
+                    texts[(kind, ref)] = norm(text)
+        total = sum(len(v) for v in refs.values())
+        if check:
+            print(f"[snapshot --check] 연결 근거 {total:,}건 중 버전과 다른 것 {len(new):,}건", file=sys.stderr)
+            return len(new), set()
+
+        cur.executemany("insert into source_version (kind, ref_id, content_hash, facts)"
+                        " values (%s,%s,%s,%s::jsonb)", new)
+        affected: set[int] = set()
+        if new:
+            vid = latest_versions(cur, texts)
+            cur.execute("select id, pledge_id, kind, ref_id, quote from pledge_evidence"
+                        " where (kind, ref_id) in (select * from unnest(%s::text[], %s::text[]))",
+                        ([k for k, _ in texts], [r for _, r in texts]))
+            upd = []
+            for eid, pid, k, r, q in cur.fetchall():
+                affected.add(pid)
+                if q is None:  # 아직 구절이 없다 — quote 단계가 채운다
+                    continue
+                span = locate(texts[(k, r)], q)
+                v = vid[(k, r)][0]
+                a, b = span or (None, None)
+                upd.append((v, a, b, span is not None, eid, v, a, b, span is not None))
+            cur.executemany("update pledge_evidence set version_id = %s, quote_start = %s, quote_end = %s, quote_ok = %s"
+                            " where id = %s and (version_id, quote_start, quote_end, quote_ok)"
+                            "   is distinct from (%s, %s, %s, %s)", upd)
+    conn.commit()
+    print(f"[snapshot] 연결 근거 {total:,}건 · 새 버전 {len(new):,} · 영향 공약 {len(affected):,}", file=sys.stderr)
+    return len(new), affected
+
+
+def run_quote(conn, limit: int | None) -> None:
+    """근거마다 원문 구절. 조례·발주는 본문이 이름뿐이라 이름 전체가 구절이다(LLM 없음).
+    법안은 사람 단위로 모델에게 제안이유에서 고르게 하고, **서버가 원문에서 다시 찾아** quote_ok 를 단다.
+    quote_ok is null 인 것만 집으므로 한도에서 멈춰도 다음 실행이 이어받는다. 재시도 루프는 없다."""
+    with conn.cursor() as cur:
+        cur.execute("select id, kind, ref_id from pledge_evidence where quote_ok is null and kind in ('ordin','bid')")
+        rows = cur.fetchall()
+        upd = []
+        for kind in ("ordin", "bid"):
+            ids = [r for _, k, r in rows if k == kind]
+            if not ids:
+                continue
+            src = source_rows(cur, kind, ids)
+            ver = latest_versions(cur, [(kind, r) for r in ids])
+            for eid, k, r in rows:
+                if k == kind and r in src:
+                    t = norm(src[r][0])
+                    upd.append((t, len(t), bool(t), ver.get((k, r), (None,))[0], eid))
+        cur.executemany("update pledge_evidence set quote = %s, quote_start = 0, quote_end = %s, quote_ok = %s,"
+                        " version_id = %s where id = %s", [u for u in upd if u[1] > 0])
+        conn.commit()
+        print(f"[quote] 조례·발주 {len(upd):,}건(이름 구절)", file=sys.stderr)
+
+        cur.execute("select p.member_code, e.id, p.title, coalesce(p.body,''), e.ref_id"
+                    " from pledge_evidence e join pledge p on p.id = e.pledge_id"
+                    " where e.quote_ok is null and e.kind = 'bill' order by p.member_code, e.id")
+        by: dict[str, list] = defaultdict(list)
+        for code, *rest in cur.fetchall():
+            by[code].append(rest)
+    people = list(by.items())[:limit] if limit is not None else list(by.items())
+    print(f"  법안 구절 대상 {len(people)}명", file=sys.stderr)
+
+    done = ok = bad = 0
+    for i, (code, items) in enumerate(people, 1):
+        items = items[:30]
+        with conn.cursor() as cur:
+            src = source_rows(cur, "bill", sorted({r for *_, r in items}))
+            ver = latest_versions(cur, [("bill", r) for *_, r in items])
+        text = {eid: norm(src[r][0]) for eid, _, _, r in items if r in src}
+        listing = "\n\n".join(f"[{eid}] 공약: {t} / {b[:150]}\n법안 원문: {text[eid][:800]}"
+                               for eid, t, b, r in items if eid in text)
+        if not listing:
+            continue
+        try:
+            out = llm.complete_json(QUOTE_PROMPT.replace("{items}", listing), QUOTE_SCHEMA)
+        except llm.QuotaExhausted as e:
+            print(f"\n  중단: {e}", file=sys.stderr)
+            print(f"  {len(people) - i + 1}명이 남았습니다. 다음 실행이 이어받습니다.", file=sys.stderr)
+            break
+        except llm.LLMError as e:
+            print(f"  [{i}/{len(people)}] {code} 실패: {str(e)[:120]}", file=sys.stderr)
+            continue
+        ref = {eid: r for eid, _, _, r in items}
+        upd = []
+        for it in out.get("items", []):
+            eid = it.get("id")
+            if eid not in text:  # 목록에 없는 id 는 버린다(대조와 같은 화이트리스트)
+                continue
+            q = norm(it.get("quote") or "")
+            span = locate(text[eid], q)
+            a, b = span or (None, None)
+            # 찾았으면 본문[a:b] 와 같은 글자다. 못 찾은 구절은 화면에 싣지 않고 원인 확인용으로만 남긴다.
+            upd.append((q if span else q[:300], a, b, span is not None,
+                        ver.get(("bill", ref[eid]), (None,))[0], eid))
+            ok += span is not None
+            bad += span is None
+        with conn.cursor() as cur:
+            # 연결한 모델·판(match)이 있으면 그대로 두고, 이 칸이 생기기 전 근거만 구절을 고른 쪽을 적는다.
+            cur.executemany("update pledge_evidence set quote = %s, quote_start = %s, quote_end = %s, quote_ok = %s,"
+                            " version_id = %s, model = coalesce(model, %s), prompt = coalesce(prompt, %s)"
+                            " where id = %s",
+                            [(q, a, b, k, v, llm.model_id(), PROMPT_VERSION["quote"], eid)
+                             for q, a, b, k, v, eid in upd])
+        conn.commit()
+        done += 1
+    print(f"[quote] 법안 {done}명 · 원문에서 확인 {ok} · 못 찾음·없음 {bad}", file=sys.stderr)
+
+
+def run_repro(conn, n: int) -> tuple[int, int]:
+    """표본 n명을 같은 프롬프트로 두 번 대조해 근거 집합 {(공약, 법안)} 이 똑같은 사람 수.
+    DB 에 근거를 쓰지 않는다. ingest_run 에 'repro:<match 판>:<본 사람 수>' 로 일치 수를 남긴다.
+    ponytail: 분모를 source 끝에 싣는다 — 지표가 늘면 표로."""
+    with conn.cursor() as cur:
+        cur.execute("""select p.member_code from pledge p
+                       where '입법' = any(p.kinds)
+                         and exists (select 1 from bill_sponsor s
+                                      where s.member_code = p.member_code and s.role = 'rep')
+                       group by 1 order by random() limit %s""", (n,))
+        sample = [c for (c,) in cur.fetchall()]
+    same = seen = 0
+    for code in sample:
+        with conn.cursor() as cur:
+            cur.execute("select id, title, coalesce(body,'') from pledge"
+                        " where member_code = %s and '입법' = any(kinds) order by id", (code,))
+            pledges = cur.fetchall()
+            cur.execute("select bill_id, name, coalesce(proc_result,'계류') from member_bill"
+                        " where member_code = %s and role = 'rep' order by proposed_at desc", (code,))
+            bills = cur.fetchall()
+        try:
+            a = {(p, b) for p, b, _, _ in match_once(pledges, bills)}
+            b2 = {(p, b) for p, b, _, _ in match_once(pledges, bills)}
+        except llm.QuotaExhausted as e:
+            print(f"  중단: {e}", file=sys.stderr)
+            break
+        except llm.LLMError as e:
+            print(f"  {code} 실패: {str(e)[:120]}", file=sys.stderr)
+            continue
+        seen += 1
+        same += a == b2
+    if seen:
+        with conn.cursor() as cur:
+            log_run(cur, f"repro:{PROMPT_VERSION['match']}:{seen}", same)
+        conn.commit()
+    print(f"[repro] {same}/{seen}명 근거 집합 일치 ({PROMPT_VERSION['match']})", file=sys.stderr)
+    return same, seen
 
 
 # --------------------------------------------------------------------------- match_race
@@ -926,6 +1259,8 @@ with ev as (
   -- 날짜와 법률명만으로도 모호하지 않다 — 실측으로 한 원안에 대안이 둘 이상 붙는
   -- 경우가 0건이다. 4,101건 중 3,830건이 이어졌고 그중 3,828건이 가결이었다.
   --
+  -- supabase/schema.sql 의 bill_alt 뷰가 이 조인과 같은 규칙이다(스냅숏·/pledge/[id] 가 쓴다). 한쪽을 고치면 다른 쪽도.
+  --
   -- 남은 271건은 이름이 아예 다른 대안에 통합된 것이다 ('북극항로 개척 및 활성화
   -- 지원 특별법안' 이 '북극항로 활용 촉진 및 연관산업 육성에 관한 특별법안(대안)'
   -- 으로). 이름으로는 같은 것인지 알 수 없어 통과했다고 치지 않는다.
@@ -1041,12 +1376,24 @@ where pledge_status.decided_by = 'auto'
 """
 
 
-def run_decide(conn) -> None:
+# 판정 규칙 판. 규칙표·기준일이 한 글자라도 바뀌면 달라진다. 트리거가 판정 이력(pledge_status_log.rule)에 남긴다.
+RULE_VERSION = version("rule", DECIDE_SQL, MP_TERM_START, HEAD_TERM_START, str(GRACE_YEARS)).split(":")[1]
+
+
+def run_decide(conn, check: bool = False) -> int:
+    """check=True 면 판정을 돌린 뒤 되돌리고 바뀔 행 수만 돌려준다(판정 결정성 점검 — 판정 직후 0)."""
     with conn.cursor() as cur:
+        # 판정 이력 트리거(log_pledge_status)가 이 판을 rule 칸에 남긴다. 트랜잭션 안에서만 유효하다.
+        cur.execute("select set_config('judge.rule', %s, true)", (RULE_VERSION,))
         cur.execute(DECIDE_SQL, {"mp_start": MP_TERM_START,
                                  "head_start": HEAD_TERM_START,
                                  "grace": GRACE_YEARS})
         n = cur.rowcount
+        if check:
+            conn.rollback()
+            print(f"[decide --check] 다시 판정하면 바뀔 것 {n:,}건 (쓰지 않음, 규칙 판 {RULE_VERSION})",
+                  file=sys.stderr)
+            return n
         cur.execute("refresh materialized view concurrently member_stats")
     conn.commit()
     with conn.cursor() as cur:
@@ -1054,7 +1401,8 @@ def run_decide(conn) -> None:
                     " group by status, note order by count(*) desc")
         for st, note, c in cur.fetchall():
             print(f"  {st:6} {note:22} {c:6,}건", file=sys.stderr)
-    print(f"[decide] {n:,}건 판정 (규칙 적용, LLM 없음)", file=sys.stderr)
+    print(f"[decide] {n:,}건 판정 (규칙 적용, LLM 없음, 규칙 판 {RULE_VERSION})", file=sys.stderr)
+    return n
 
 
 def main():
@@ -1062,8 +1410,10 @@ def main():
     p.add_argument(
         "step",
         choices=["classify", "match", "match_ordin", "match_bid",
-                 "match_race", "decide", "all"])
+                 "match_race", "decide", "snapshot", "quote", "repro", "all"])
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--check", action="store_true", help="decide·snapshot: 쓰지 않고 바뀔 수만 센다")
+    p.add_argument("--n", type=int, default=5, help="repro: 표본 사람 수")
     p.add_argument("--redo", action="store_true")
     p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다")
     a = p.parse_args()
@@ -1084,7 +1434,14 @@ def main():
         if a.step == "match_race":
             run_match_race(conn, a.limit, a.redo, a.since)
         if a.step in ("decide", "all"):
-            run_decide(conn)
+            run_decide(conn, a.check)
+        # 아래 셋은 all 에 넣지 않는다. evidence.yml 이 decide 앞뒤에 따로 부른다.
+        if a.step == "snapshot":
+            run_snapshot(conn, a.check)
+        if a.step == "quote":
+            run_quote(conn, a.limit)
+        if a.step == "repro":
+            run_repro(conn, a.n)
 
 
 if __name__ == "__main__":

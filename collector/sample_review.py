@@ -36,7 +36,7 @@ order by id
 
 MATCH_SQL = """
 select m.name, p.title, e.score, e.summary,
-       b.name as bill_name, coalesce(b.proc_result, '계류') as result
+       b.name as bill_name, coalesce(b.proc_result, '계류') as result, e.quote, e.quote_ok
 from pledge_evidence e
 join pledge p on p.id = e.pledge_id
 join member m on m.code = p.member_code
@@ -69,11 +69,14 @@ def main():
                     print(f"    └ {body[:150].replace(chr(10), ' ')}")
         else:
             cur.execute(MATCH_SQL, {"n": a.n})
-            for name, title, score, why, bill, result in cur.fetchall():
+            for name, title, score, why, bill, result, quote, ok in cur.fetchall():
                 print(f"{name} | 신뢰도 {score}")
                 print(f"  공약: {title}")
                 print(f"  법안: {bill} [{result}]")
                 print(f"  이유: {why}")
+                # 원문 구절(judge.py quote). ok=False 면 모델이 고른 글이 원문에 없거나 '해당 없음' 이다.
+                if ok is not None:
+                    print(f"  구절: {'원문 확인' if ok else '원문에 없음'} {quote!r}")
 
 
 if __name__ == "__main__":
