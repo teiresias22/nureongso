@@ -23,7 +23,8 @@ export const metadata = {
 
 const OFFICE_ORDER = ["국회의원", "구시군의장", "시도지사", "교육감"];
 
-/** '서울 중구성동구갑' 에 '성동구' 가 있나. 시군구 이름이 시작하는 자리에서만 센다. */
+/** '서울 중구성동구갑' 에 '성동구' 가 있나. 시군구 이름이 시작하는 자리에서만 센다.
+ *  collector/digest.py 의 in_district·resolve 가 같은 규칙이다 — 한쪽을 고치면 다른 쪽도. */
 function inDistrict(district: string, wiw: string): boolean {
   for (let i = district.indexOf(wiw); i >= 0; i = district.indexOf(wiw, i + 1)) {
     if (i === 0 || " 시군구".includes(district[i - 1])) return true;

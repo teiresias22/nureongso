@@ -15,6 +15,7 @@ const SD_MERGED: Record<string, string> = {
 export const sido = (v: string | null) => (v ? SD_MERGED[v] ?? v : "");
 
 /** 시도 → 시군구 목록(가나다순). /my 고르기와 구독 신청 검사(api/subscription)가 같은 목록을 쓴다.
+ *  sido 는 collector/digest.py 의 sido 와 같은 표다 — 한쪽을 고치면 다른 쪽도.
  *  import 가 없어야 subscription.check.mjs 가 node 로 바로 읽는다. */
 export function regionsOf(areas: Area[]): Record<string, string[]> {
   const by = new Map<string, Set<string>>();
