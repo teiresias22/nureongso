@@ -1018,8 +1018,8 @@ grant execute on function subscription_request(text, text, text), subscription_c
 -- 판정은 지금처럼 규칙표(judge.py DECIDE_SQL)가 하고, 판정이 바뀔 때마다 "어떤 근거 기록의 어떤 버전
 -- 때문인지" 를 남긴다. 설계: docs/superpowers/specs/2026-10-12-pledge-evidence-tracking.md
 --
--- 운영 적용 순서(백필): 아래 A–E 를 적용 → `python judge.py snapshot` → 맨 아래 '기준선 + 트리거' 를
--- 한 트랜잭션으로. 기준선의 versions 가 비면 첫 변경이 전부 '근거 연결' 로 잘못 찍힌다.
+-- 운영 적용 순서(백필): 이 덩어리(A–E) → `python judge.py snapshot` → 다음 덩어리 '기준선과 트리거'.
+-- 기준선의 versions 가 비면 첫 변경이 전부 '근거 연결' 로 잘못 찍힌다.
 
 -- A. 수집 시각. 주간 기록 메일의 bill.created_at 과 같은 칸이다(새 기록·증분 대조가 같이 쓴다).
 --    기존 행은 '-infinity' 상수 — 표를 다시 쓰지 않고(Disk IO), 칸을 단 주에 전부 '새 기록' 이 되지 않는다.
@@ -1141,7 +1141,9 @@ drop policy if exists public_read on pledge_status_log;
 create policy public_read on pledge_status_log for select using (true);
 revoke execute on function pledge_versions(bigint) from public, anon, authenticated;
 
--- 기준선 + 트리거. 운영에서는 `judge.py snapshot` 이 첫 버전을 다 만든 뒤 이 둘을 한 트랜잭션으로 돌린다.
+-- ==== 공약 판정 이력: 기준선과 트리거 ====
+-- 위 덩어리와 따로 둔다. 운영에서는 `judge.py snapshot` 이 첫 버전을 다 만든 **뒤에** 이 덩어리를 한 트랜잭션으로
+-- 돌린다 — 먼저 돌리면 기준선의 versions 가 비어 첫 변경이 전부 '근거 연결' 로 찍힌다.
 -- 지난 판정 이력은 되살릴 수 없다 — 기준선 at 은 pledge_status.updated_at(마지막으로 판정이 바뀐 때)이고
 -- 화면에는 '기록 시작 시점 판정' 으로 적는다.
 insert into pledge_status_log (pledge_id, at, status, note, decided_by, versions, rule, reason)
