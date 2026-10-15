@@ -142,6 +142,8 @@ export type Bill = {
   proc_result: string | null;
   proposer: string | null;
   detail_link: string | null;
+  /** 대안반영폐기면 그 내용을 담은 위원장 대안. 이름·날짜로 잇고 못 이으면 null (/rules#merged). */
+  alt_bill_id?: string | null;
 };
 
 /** 직위 배지 색. 목록에 네 직위가 섞여 있어 글씨만으로는 한눈에 안 갈린다.

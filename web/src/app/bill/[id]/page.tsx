@@ -19,6 +19,10 @@ type Sponsor = {
 /** 국회 원문 첫 줄이 제목('제안이유 및 주요내용')을 되풀이한다. 그 줄만 뗀다. 나머지는 원문 그대로. */
 const stripHead = (s: string) => s.replace(/^\s*제안이유\s*및\s*주요내용\s*/, "").trim();
 
+/** 대안·반영 법안 목록에 쓰는 줄. */
+type BillRef = Pick<Bill, "bill_id" | "bill_no" | "name" | "proposer" | "proc_result">;
+const REF_COLS = "bill_id, bill_no, name, proposer, proc_result";
+
 export async function generateMetadata(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Metadata> {
@@ -53,7 +57,7 @@ export default async function BillPage({
 }) {
   const { id } = await params;
 
-  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: votes }] =
+  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: votes }, { data: merged }] =
     await Promise.all([
       db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
       db
@@ -65,16 +69,25 @@ export default async function BillPage({
       db.from("plenary_bill").select("*").eq("bill_id", id).maybeSingle(),
       // 의원별 표결과 그 의원의 정당. 한 법안에 300행 남짓이라 1000행 상한 아래다.
       db.from("vote_member").select("member_code, result, name, party").eq("bill_id", id),
+      // 이 법안이 위원장 대안이면 그 안에 반영된 원안들. 많아야 수십 건이다.
+      db.from("bill").select(REF_COLS).eq("alt_bill_id", id).order("bill_no"),
     ]);
 
   // DB 오류를 '없는 법안' 404 로 내지 않는다(의원 페이지와 같은 이유).
   if (billError) throw billError;
   if (!bill) notFound();
   const b = bill as Bill & { summary: string | null };
+  const absorbed = b.proc_result === "대안반영폐기";
+  const alt = absorbed && b.alt_bill_id
+    ? ((await db.from("bill").select(REF_COLS).eq("bill_id", b.alt_bill_id).maybeSingle()).data as BillRef | null)
+    : null;
+  const mergedList = (merged ?? []) as BillRef[];
 
   const list = (sponsors ?? []) as Sponsor[];
   const rep = list.filter((s) => s.role === "rep");
   const co = list.filter((s) => s.role === "co");
+  // 위원장 대안·정부안은 발의 의원이 없다. 빈 '대표발의 0' 대신 제안자를 적는다.
+  const bySponsors = list.length > 0 || !b.proposer;
 
   const vrows = (votes ?? []) as { member_code: string; result: string; name: string | null; party: string | null }[];
   const byParty = new Map<string, Record<string, number>>();
@@ -146,7 +159,7 @@ export default async function BillPage({
       <header className="rounded-lg border border-line bg-card p-4">
         <h1 className="text-lg font-bold">{b.name}</h1>
         <p className="mt-1 text-sm text-muted">
-          {[b.bill_no && `의안번호 ${b.bill_no}`, b.proposed_at && `제안 ${b.proposed_at}`, b.committee ?? "위원회 미배정"]
+          {[b.bill_no && `의안번호 ${b.bill_no}`, !bySponsors && `제안자 ${b.proposer}`, b.proposed_at && `제안 ${b.proposed_at}`, b.committee ?? "위원회 미배정"]
             .filter(Boolean).join(" · ")}
         </p>
         <p className="mt-2 text-sm">
@@ -165,6 +178,54 @@ export default async function BillPage({
           </a>
         )}
       </header>
+
+      {absorbed && (
+        <section className="rounded-lg border border-line bg-card p-4">
+          <h2 className="text-base font-semibold">반영된 대안</h2>
+          <p className="mt-1 text-sm text-muted">
+            대안반영폐기는 위원회가 이 법안의 내용을 위원장 대안에 담고 원안은 따로 처리하지 않은
+            것입니다. 이름은 폐기지만 내용은 대안에 남습니다.
+          </p>
+          {alt ? (
+            <ul className="-mx-4 mt-2">
+              <BillRow b={alt} />
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-muted">
+              어느 대안에 들어갔는지 찾지 못했습니다. 이름이 다른 대안에 합쳐진 경우입니다.
+              {b.detail_link && (
+                <>
+                  {" "}
+                  <a href={b.detail_link} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                    의안정보시스템
+                  </a>
+                  의 &lsquo;대안정보&rsquo;에서 볼 수 있습니다.
+                </>
+              )}
+            </p>
+          )}
+          <p className="mt-3 text-xs text-muted">
+            국회 공개 자료에는 원안과 대안의 연결이 없어, 같은 날 처리된 같은 법률명의 위원장 대안으로
+            잇습니다.{" "}
+            <Link href="/rules#merged" className="underline underline-offset-2 hover:text-foreground">어떻게 잇나</Link>
+          </p>
+        </section>
+      )}
+
+      {mergedList.length > 0 && (
+        <section className="overflow-hidden rounded-lg border border-line bg-card">
+          <h2 className="border-b border-line px-4 py-3 text-base font-semibold">
+            이 대안에 반영된 법안 <span className="font-normal text-muted">{mergedList.length}</span>
+          </h2>
+          <ul className="divide-y divide-line">
+            {mergedList.map((m) => <BillRow key={m.bill_id} b={m} />)}
+          </ul>
+          <p className="border-t border-line px-4 py-2 text-xs text-muted">
+            같은 날 대안반영폐기된 같은 법률명의 법안입니다. 이름이 다른 법안은 빠져 있을 수 있습니다.{" "}
+            <Link href="/rules#merged" className="underline underline-offset-2 hover:text-foreground">어떻게 잇나</Link>
+          </p>
+        </section>
+      )}
 
       {summary && (
         <section className="rounded-lg border border-line bg-card">
@@ -283,8 +344,12 @@ export default async function BillPage({
         </section>
       )}
 
-      <Group title="대표발의" members={rep} />
-      <Group title="공동발의" members={co} />
+      {bySponsors && (
+        <>
+          <Group title="대표발의" members={rep} />
+          <Group title="공동발의" members={co} />
+        </>
+      )}
     </div>
   );
 }
@@ -296,6 +361,18 @@ const VOTE_COLOR: Record<string, string> = {
 };
 const votePartsOf = (count: (k: string) => number): Part[] =>
   VOTE_KEYS.map((k) => ({ key: k, label: k, value: count(k), color: VOTE_COLOR[k] }));
+
+function BillRow({ b }: { b: BillRef }) {
+  return (
+    <li className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm">
+      <Link href={`/bill/${b.bill_id}`} className="min-w-0 hover:underline">
+        {b.name}
+        {b.proposer && <span className="ml-1.5 text-xs text-muted">{b.proposer}</span>}
+      </Link>
+      <span className="shrink-0 text-xs text-muted">{b.proc_result ?? "계류 중"}</span>
+    </li>
+  );
+}
 
 function Group({ title, members }: { title: string; members: Sponsor[] }) {
   return (
