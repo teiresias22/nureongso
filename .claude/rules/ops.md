@@ -31,6 +31,9 @@ paths:
 1. `schema.sql` 을 고친다(되살릴 수 있게 지운 것은 주석으로 커밋·이유를 남긴다).
 2. 바뀐 문만 SQL Editor 에서 실행한다. 파일 전체를 다시 돌리지 않는다.
 3. `drop`·`truncate` 는 사용자 확인 뒤에만. 운영 DB 하나뿐이고 스테이징이 없다.
+4. 뷰는 `with (security_invoker = true)` 로 만든다. Supabase 기본 권한이 anon 에 뷰 INSERT·UPDATE·DELETE 를
+   주고 단순 뷰는 저절로 쓰기가 돼서, 소유자 권한 뷰는 RLS 를 건너 anon 이 원본 표를 고칠 수 있다
+   (2026-10-15 `pledge_doc_link`). 표의 칸 일부만 열 때는 칸 단위 grant 와 읽기 정책으로.
 
 ## 장애 런북 — 사이트 목록·통계·인물 페이지가 응답하지 않을 때
 
@@ -44,3 +47,6 @@ paths:
    - 요청마다 큰 표를 정렬하지 않는가 — 미리 머티리얼라이즈드 뷰로(`bid_notice_first`, `bid.py fetch` 끝에 refresh).
    - OFFSET 으로 끝까지 훑지 않는가 — 기본키 keyset.
 4. 급하면 해당 워크플로를 Actions 에서 비활성화하고, 예산이 회복될 때까지 기다린다.
+5. Supabase 로그 수집은 무료 1GB/월(조직 전체, 2027 부터 과금). 평소 하루 16MB 남짓 — Vercel 서버 렌더의
+   REST 요청 약 6,500건(edge_logs)과 플랫폼 pgbouncer 상태 확인. 2026-09-26~27 장애 이틀에 3.2GB 가 쌓였고
+   같은 날 로그 조회도 80GB(한도 100GB)를 썼다. 장애 중 로그·Reports 는 짧은 구간으로만 연다.
