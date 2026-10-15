@@ -115,6 +115,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               alternateName: "선출직 공약·의정활동 기록",
               url: SITE,
               inLanguage: "ko",
+              // 누가 이 기록을 내는지. 정치 기록이라 출처 주체가 구조화돼 있어야 인용이 붙는다.
+              publisher: {
+                "@type": "Organization",
+                name: "누렁소검은소",
+                url: SITE,
+                logo: `${SITE}/icon.png`,
+                sameAs: ["https://github.com/teiresias22/nureongso"],
+              },
               potentialAction: {
                 "@type": "SearchAction",
                 target: { "@type": "EntryPoint", urlTemplate: `${SITE}/?q={search_term_string}` },

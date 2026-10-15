@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { db } from "@/lib/db";
+import { db, myPath, regionsOf, type Area } from "@/lib/db";
 import { SITE } from "@/lib/site";
 
 export const revalidate = 86400;
@@ -34,7 +34,7 @@ async function all<T extends Record<string, unknown>>(
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
-  const [members, bills] = await Promise.all([
+  const [members, bills, areas] = await Promise.all([
     all<{ code: string; updated_at: string | null }>(
       "member", "code, updated_at", "code", ["is_incumbent", true],
     ),
@@ -43,6 +43,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     all<{ bill_id: string; proc_dt: string | null; proposed_at: string | null }>(
       "bill", "bill_id, proc_dt, proposed_at", "bill_id",
     ),
+    // 지역 허브(/my?sd=&wiw=). '송파구 국회의원' 같은 검색을 받는 곳이다.
+    all<Area>("member_area", "member_code, office, sd_name, wiw_name", "member_code"),
+  ]);
+  const hubs = Object.entries(regionsOf(areas)).flatMap(([sd, wiws]) => [
+    myPath(sd),
+    ...wiws.map((w) => myPath(sd, w)),
   ]);
 
   return [
@@ -51,6 +57,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: now,
       priority: p === "" ? 1 : 0.5,
     })),
+    // Next 는 url 을 <loc> 에 이스케이프 없이 넣는다(resolve-route-data.js). 날 '&' 하나면
+    // 사이트맵 XML 전체가 깨져 2만 주소가 통째로 읽히지 않는다.
+    ...hubs.map((p) => ({ url: `${SITE}${p}`.replaceAll("&", "&amp;"), priority: 0.6 })),
     ...members.map((m) => ({
       url: `${SITE}/m/${m.code}`,
       lastModified: m.updated_at ? new Date(m.updated_at) : now,

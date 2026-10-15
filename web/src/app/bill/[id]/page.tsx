@@ -16,7 +16,8 @@ type Sponsor = {
   party: string | null;
 };
 
-type SP = { from?: string };
+/** 국회 원문 첫 줄이 제목('제안이유 및 주요내용')을 되풀이한다. 그 줄만 뗀다. 나머지는 원문 그대로. */
+const stripHead = (s: string) => s.replace(/^\s*제안이유\s*및\s*주요내용\s*/, "").trim();
 
 export async function generateMetadata(
   { params }: { params: Promise<{ id: string }> },
@@ -32,28 +33,27 @@ export async function generateMetadata(
   const b = data as Pick<Bill, "name" | "bill_no" | "proc_result"> & { summary: string | null };
   // 국회가 준 제안이유 원문을 그대로 줄인다. 새로 요약하지 않는다.
   const description = b.summary
-    ? b.summary.replace(/\s+/g, " ").slice(0, 160)
+    ? stripHead(b.summary).replace(/\s+/g, " ").slice(0, 160)
     : `${[b.bill_no && `의안번호 ${b.bill_no}`, b.proc_result ?? "계류 중"].filter(Boolean).join(" · ")}. 발의자와 처리 결과를 봅니다.`;
+  // '형법 일부개정법률안' 같은 이름이 수백 건씩 겹친다. 의안번호로 제목을 가른다.
+  const title = b.bill_no ? `${b.name} (의안 ${b.bill_no})` : b.name;
   return {
-    title: b.name,
+    title,
     description,
-    // 어디서 왔는지 표시하는 ?from= 이 붙는다. 같은 법안이 의원 수만큼 색인될 수 있다.
+    // 예전 링크의 ?from= 같은 검색어가 붙어 와도 한 주소로 모은다.
     alternates: { canonical: `/bill/${id}` },
-    ...pageOg(b.name, description, `/bill/${id}`, { type: "article" }),
+    ...pageOg(title, description, `/bill/${id}`, { type: "article" }),
   };
 }
 
 export default async function BillPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<SP>;
 }) {
   const { id } = await params;
-  const { from } = await searchParams;
 
-  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: backTo }, { data: votes }] =
+  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: votes }] =
     await Promise.all([
       db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
       db
@@ -63,10 +63,6 @@ export default async function BillPage({
         .order("role")
         .order("name"),
       db.from("plenary_bill").select("*").eq("bill_id", id).maybeSingle(),
-      // 어느 의원 페이지에서 왔는지 알면 그리로 돌아간다
-      from
-        ? db.from("member").select("code, name").eq("code", from).maybeSingle()
-        : Promise.resolve({ data: null }),
       // 의원별 표결과 그 의원의 정당. 한 법안에 300행 남짓이라 1000행 상한 아래다.
       db.from("vote_member").select("member_code, result, name, party").eq("bill_id", id),
     ]);
@@ -79,7 +75,6 @@ export default async function BillPage({
   const list = (sponsors ?? []) as Sponsor[];
   const rep = list.filter((s) => s.role === "rep");
   const co = list.filter((s) => s.role === "co");
-  const back = backTo as { code: string; name: string } | null;
 
   const vrows = (votes ?? []) as { member_code: string; result: string; name: string | null; party: string | null }[];
   const byParty = new Map<string, Record<string, number>>();
@@ -118,8 +113,7 @@ export default async function BillPage({
       return line && line !== m.result;
     })
     .sort((a, c) => partyLine(a.party).localeCompare(partyLine(c.party), "ko") || (a.name ?? "").localeCompare(c.name ?? "", "ko"));
-  // 국회 원문 첫 줄이 제목('제안이유 및 주요내용')을 되풀이한다. 그 줄만 뗀다. 나머지는 원문 그대로.
-  const summary = b.summary?.replace(/^\s*제안이유\s*및\s*주요내용\s*/, "").trim() ?? null;
+  const summary = b.summary ? stripHead(b.summary) : null;
 
   return (
     <div className="space-y-5">
@@ -132,21 +126,21 @@ export default async function BillPage({
             "@type": "Legislation",
             name: b.name,
             legislationIdentifier: b.bill_no || undefined,
-            legislationDate: b.proposed_at || undefined,
+            // legislationDate 는 제정·의결일이다. 제안일은 dateCreated, 처리 상태는 따로 둔다.
+            dateCreated: b.proposed_at || undefined,
+            creativeWorkStatus: b.proc_result ?? "계류",
             legislationType: "법률안",
             legislationJurisdiction: "대한민국",
             inLanguage: "ko",
-            abstract: b.summary ? b.summary.replace(/\s+/g, " ").slice(0, 400) : undefined,
-            author: rep.map((r) => ({ "@type": "Person", name: r.name })),
+            abstract: summary ? summary.replace(/\s+/g, " ").slice(0, 400) : undefined,
+            author: rep.map((r) => ({ "@type": "Person", name: r.name, url: `${SITE}/m/${r.code}` })),
+            isBasedOn: b.detail_link || undefined,
             url: `${SITE}/bill/${id}`,
           }),
         }}
       />
-      <Link
-        href={back ? `/m/${back.code}` : "/"}
-        className="text-xs text-muted hover:underline"
-      >
-        ← {back ? `${back.name} 의원` : "전체 목록"}
+      <Link href="/" className="text-xs text-muted hover:underline">
+        ← 전체 목록
       </Link>
 
       <header className="rounded-lg border border-line bg-card p-4">

@@ -261,7 +261,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
 
       {/* prefetch 를 끈다. 카드가 558개라 스크롤하면 Next 가 보이는 링크마다 RSC
           페이로드를 미리 받는다. 요청 수백 건이 사진과 대역폭을 두고 다툰다. */}
-      <ul className="grid gap-2 sm:grid-cols-2">
+      {/* grid-cols-1(minmax(0,1fr)) 이 없으면 모바일 한 줄 칸이 auto 라 가장 긴 truncate 줄
+          (긴 지역구 이름)만큼 늘어나 화면 밖으로 밀렸다(375px 에서 472px). */}
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {rows.map((m) => {
           const s = statById.get(m.code);
           const r = recById.get(m.code);
