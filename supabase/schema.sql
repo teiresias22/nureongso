@@ -26,7 +26,8 @@ create index if not exists member_office_idx on member (office) where is_incumbe
 create index if not exists member_name_idx on member (name);
 create index if not exists member_incumbent_idx on member (is_incumbent) where is_incumbent;
 
--- 법률안
+-- 법률안. 의원 발의(nzmimeepazxkubdpn) + 위원장·정부 법률안(TVBPMBILL11).
+-- 위원장·정부안은 bill_sponsor 가 없어 의원별 집계(member_stats·member_bill)에 끼지 않는다.
 create table if not exists bill (
   bill_id       text primary key,
   age           int not null,
@@ -39,9 +40,13 @@ create table if not exists bill (
   proposer      text,                      -- "홍길동의원 등 10인"
   detail_link   text,
   summary       text,                      -- 제안이유·주요내용 (BPMBILLSUMMARY 원문)
+  alt_bill_id   text,                      -- 대안반영폐기면 그 내용을 담은 위원장 대안 (ingest.link_alternatives)
   updated_at    timestamptz not null default now()
 );
+alter table bill add column if not exists alt_bill_id text;
 create index if not exists bill_age_idx on bill (age);
+-- 대안 페이지의 '이 대안에 반영된 법안' 목록
+create index if not exists bill_alt_idx on bill (alt_bill_id) where alt_bill_id is not null;
 create index if not exists bill_proposed_idx on bill (proposed_at desc);
 
 -- 발의 / 공동발의
