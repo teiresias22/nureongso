@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/lib/link";
 import { useMemo, useState, useSyncExternalStore } from "react";
 
 const KEY = "nrs.compare";

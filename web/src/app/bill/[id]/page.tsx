@@ -1,11 +1,20 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Suspense } from "react";
+import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
 import { ldJson, pageOg, SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
+import { BackLink } from "./back";
 
 export const revalidate = 3600;
+
+/** 빈 목록 = 빌드 때는 안 그리고 처음 열릴 때 그려 ISR 로 둔다. 법안 1.9만 쪽을 크롤러가 돌 때
+ *  리전마다 따로인 CDN 캐시가 아니라 전역 ISR 캐시에서 내준다. 그래서 검색어(?from=)는 서버에서
+ *  읽지 않는다(back.tsx). */
+export async function generateStaticParams() {
+  return [];
+}
 
 /** 발의자 조인 뷰. bill_sponsor.member_code 에는 외래키가 없어 PostgREST 가
  *  member 를 임베드하지 못한다. member_bill 과 같은 방식으로 뷰를 쓴다. */
@@ -15,8 +24,6 @@ type Sponsor = {
   name: string;
   party: string | null;
 };
-
-type SP = { from?: string };
 
 export async function generateMetadata(
   { params }: { params: Promise<{ id: string }> },
@@ -43,17 +50,10 @@ export async function generateMetadata(
   };
 }
 
-export default async function BillPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<SP>;
-}) {
+export default async function BillPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { from } = await searchParams;
 
-  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: backTo }, { data: votes }] =
+  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: votes }] =
     await Promise.all([
       db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
       db
@@ -63,10 +63,6 @@ export default async function BillPage({
         .order("role")
         .order("name"),
       db.from("plenary_bill").select("*").eq("bill_id", id).maybeSingle(),
-      // 어느 의원 페이지에서 왔는지 알면 그리로 돌아간다
-      from
-        ? db.from("member").select("code, name").eq("code", from).maybeSingle()
-        : Promise.resolve({ data: null }),
       // 의원별 표결과 그 의원의 정당. 한 법안에 300행 남짓이라 1000행 상한 아래다.
       db.from("vote_member").select("member_code, result, name, party").eq("bill_id", id),
     ]);
@@ -79,7 +75,6 @@ export default async function BillPage({
   const list = (sponsors ?? []) as Sponsor[];
   const rep = list.filter((s) => s.role === "rep");
   const co = list.filter((s) => s.role === "co");
-  const back = backTo as { code: string; name: string } | null;
 
   const vrows = (votes ?? []) as { member_code: string; result: string; name: string | null; party: string | null }[];
   const byParty = new Map<string, Record<string, number>>();
@@ -142,12 +137,9 @@ export default async function BillPage({
           }),
         }}
       />
-      <Link
-        href={back ? `/m/${back.code}` : "/"}
-        className="text-xs text-muted hover:underline"
-      >
-        ← {back ? `${back.name} 의원` : "전체 목록"}
-      </Link>
+      <Suspense fallback={<Link href="/" className="text-xs text-muted hover:underline">← 전체 목록</Link>}>
+        <BackLink names={Object.fromEntries(list.map((s) => [s.code, s.name]))} />
+      </Suspense>
 
       <header className="rounded-lg border border-line bg-card p-4">
         <h1 className="text-lg font-bold">{b.name}</h1>

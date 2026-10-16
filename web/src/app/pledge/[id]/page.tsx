@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { db, eok, electionYear, KIND_LABEL, noteText, STATUS_BG } from "@/lib/db";
 import { pageOg, REPORT_URL } from "@/lib/site";
 import { kstDate, REASON_LABEL, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
 
 export const revalidate = 3600;
+
+/** 처음 열릴 때 그려 ISR 로 둔다(법안 페이지와 같은 이유). */
+export async function generateStaticParams() {
+  return [];
+}
 
 /** 공약 하나의 판정·근거 원문·판정 이력. 판정은 규칙표(judge.py decide)가 하고, 이 화면은
  *  그 판정이 언제 어떤 공개 기록 때문에 바뀌었는지를 보인다. 신뢰도(score)는 싣지 않는다 — 점수처럼 읽힌다.
