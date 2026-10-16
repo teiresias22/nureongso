@@ -1,11 +1,18 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
 import { ldJson, pageOg, SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
 
 export const revalidate = 3600;
+
+/** 빈 목록 = 빌드 때는 안 그리고 처음 열릴 때 그려 ISR 로 둔다. 이게 없으면 검색어를 안 읽어도
+ *  요청마다 그린다. 법안 1.9만 쪽을 크롤러가 돌 때 리전마다 따로인 CDN 캐시가 아니라 전역 ISR
+ *  캐시에서 내준다. 서버에서 검색어(searchParams)를 읽으면 다시 요청마다 그려지니 읽지 않는다. */
+export async function generateStaticParams() {
+  return [];
+}
 
 /** 발의자 조인 뷰. bill_sponsor.member_code 에는 외래키가 없어 PostgREST 가
  *  member 를 임베드하지 못한다. member_bill 과 같은 방식으로 뷰를 쓴다. */

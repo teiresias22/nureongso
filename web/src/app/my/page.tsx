@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import Link from "@/lib/link";
 import { Photo } from "../page";
 import { AreaPicker } from "./picker";
 import { pageOg } from "@/lib/site";

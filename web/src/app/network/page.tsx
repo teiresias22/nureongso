@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/lib/link";
 import { db, partyColor, partyLine, pct, shortDistrict, type Cosponsor } from "@/lib/db";
 import { forceLayout, labelBox, separate } from "@/lib/force";
 import { pageOg } from "@/lib/site";

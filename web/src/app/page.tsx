@@ -1,5 +1,5 @@
 import Image from "next/image";
-import Link from "next/link";
+import Link from "@/lib/link";
 import {
   attendRate, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, OFFICES, partyColor, pct, shortDistrict, termText,
   type CardRecord, type CardStats, type Member, type OfficeTerm,

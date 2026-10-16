@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "next/link";
+import Link from "@/lib/link";
 import { kstYear, ldJson, REPO, REPORT_URL, SITE } from "@/lib/site";
 import "./globals.css";
 

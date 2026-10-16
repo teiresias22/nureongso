@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/lib/link";
 import { db, eok, OFFICES, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
 import { pageOg } from "@/lib/site";
 

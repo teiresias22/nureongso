@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/lib/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LABEL_FONT, labelBox } from "@/lib/force";
 

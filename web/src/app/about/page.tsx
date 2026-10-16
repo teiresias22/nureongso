@@ -1,5 +1,5 @@
 import Image from "next/image";
-import Link from "next/link";
+import Link from "@/lib/link";
 import { pageOg, REPORT_URL } from "@/lib/site";
 import { Showreel } from "./Showreel";
 

@@ -16,6 +16,16 @@ const nextConfig: NextConfig = {
     // 인물 사진은 임기 중에 바뀌지 않으므로 길게 잡는다.
     minimumCacheTTL: 2678400, // 31일
   },
+  // Vercel 기본 주소가 본 주소와 똑같은 사이트로 열려 있어 크롤러가 두 벌을 돌았다(2026-10 로그의
+  // OAI-SearchBot). CDN 캐시도 주소마다 따로라 같은 페이지를 두 번 그렸다. 라우팅 단계에서 돌려보낸다.
+  async redirects() {
+    return [{
+      source: "/:path*",
+      has: [{ type: "host", value: "nureongso-puce.vercel.app" }],
+      destination: "https://nureongso.joon.is-a.dev/:path*",
+      permanent: true,
+    }];
+  },
   // 주소 검색어를 읽는 페이지는 Next 가 `private, no-store` 를 붙여 매 요청이 함수까지 갔다.
   // 크롤러가 사이트맵 2만 개를 돌 때마다 Vercel Fast Origin Transfer 무료 10GB 의 75% 를 썼다(2026-10).
   // 누구에게나 같은 화면이라(쿠키·로그인 없음) Vercel CDN 에만 하루 캐시를 건다.
@@ -23,7 +33,8 @@ const nextConfig: NextConfig = {
   // 브라우저용 Cache-Control 은 그대로 두고, HTML·RSC 응답은 `_rsc` 검색어로 키가 갈린다.
   async headers() {
     const cdn = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=86400, stale-while-revalidate=86400" }];
-    return ["/", "/m/:path*", "/bill/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn }));
+    // `/bill` 은 검색어를 안 읽어 ISR(전역 캐시)로 돈다. 여기 넣지 않는다.
+    return ["/", "/m/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn }));
   },
 };
 
