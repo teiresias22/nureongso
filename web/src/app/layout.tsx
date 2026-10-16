@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "@/lib/link";
 import { kstYear, ldJson, REPO, REPORT_URL, SITE } from "@/lib/site";
 import "./globals.css";
 
-/** 헤더에는 찾아보는 길만 둔다. */
+/** 헤더에는 찾아보는 길만 둔다.
+ *
+ *  머리글·바닥글은 Link 가 아니라 <a> 다. OAI-SearchBot 이 쪽마다 이 링크들을 눌러 보는데, Link 면
+ *  클라이언트 이동이라 `_rsc` 키가 보던 쪽마다 달라져 CDN 을 못 타고 `/` 를 통째로 그렸다(332ms,
+ *  prefetch 를 끈 뒤에도 그대로 — 2026-10-16 로그). <a> 면 `/` 문서 요청이라 CDN 하루 캐시가 받는다. */
 const NAV = [
   { href: "/my", label: "내 지역" },
   { href: "/stats", label: "통계" },
@@ -135,23 +138,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* items-center. 로고가 이미지라 items-baseline 이면 글자 기준선에 맞추려고
               이미지가 위로 떠서 한 줄이 어긋나 보인다. */}
           <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
-            <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- 일부러 <a>(NAV 주석) */}
+            <a href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
               {/* 바탕이 투명한 가로 그림(약 1.8:1). 크림색 테두리가 있어 어두운 화면에서도 검은소가 보인다. */}
               <Image src="/logo-mark.png" alt="" width={58} height={32} preload />
               누렁소검은소
-            </Link>
+            </a>
             <span className="hidden text-xs text-muted sm:inline">공적 기록으로 보는 약속과 실천</span>
             {/* 글씨만 있으면 본문과 구별이 안 돼 누를 수 있는 줄 모른다. 테두리를 준다. */}
             {/* 누르는 자리: 모바일은 44px(손가락), 넓은 화면은 36px. 예전엔 30px 였다. */}
             <nav className="ml-auto flex gap-1.5 text-sm">
               {NAV.map(({ href, label }) => (
-                <Link
+                <a
                   key={href}
                   href={href}
                   className="flex min-h-11 items-center rounded-md border border-line px-3 text-muted transition hover:border-muted hover:text-foreground sm:min-h-9"
                 >
                   {label}
-                </Link>
+                </a>
               ))}
             </nav>
           </div>
@@ -163,10 +167,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 한 칸으로 쌓으면 바닥글만 한 화면이 넘었다. */}
             <div className="grid grid-cols-2 gap-x-6 gap-y-8 lg:grid-cols-[1.4fr_1fr_1fr_1.3fr]">
               <div className="col-span-2 space-y-3 lg:col-span-1">
-                <Link href="/" className="flex items-center gap-2 text-base font-bold text-foreground">
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- 일부러 <a>(NAV 주석) */}
+                <a href="/" className="flex items-center gap-2 text-base font-bold text-foreground">
                   <Image src="/logo-mark.png" alt="" width={43} height={24} />
                   누렁소검은소
-                </Link>
+                </a>
                 <p className="leading-6">
                   선출직의 약속과 실천을 공적 기록으로 나란히 봅니다. 판단은 보는 분의 몫입니다.
                 </p>
@@ -200,7 +205,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                             {label} <span aria-hidden>↗</span>
                           </a>
                         ) : (
-                          <Link href={href} className="inline-block py-1.5 hover:text-foreground">{label}</Link>
+                          <a href={href} className="inline-block py-1.5 hover:text-foreground">{label}</a>
                         )}
                       </li>
                     ))}
@@ -224,7 +229,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="mt-8 flex flex-col gap-2 border-t border-line pt-5 text-xs sm:flex-row sm:items-center sm:justify-between">
               <p>
                 수치는 수집 시점 기준이며, 집계 방식은 이 서비스가 정한 것입니다(
-                <Link href="/rules" className="underline underline-offset-2 hover:text-foreground">판정 기준</Link>).
+                <a href="/rules" className="underline underline-offset-2 hover:text-foreground">판정 기준</a>).
                 공공데이터는 각 기관의 이용 조건에 따라 출처를 밝혀 씁니다.
               </p>
               <p className="shrink-0">
