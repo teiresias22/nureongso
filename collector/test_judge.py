@@ -109,3 +109,9 @@ def test_sql_converts():
         pass
     else:
         raise AssertionError("psycopg 가 '%' 하나를 받아들였다 — 이 시험이 아무것도 막지 못한다")
+
+
+def test_rule_version_listed():
+    # 지금 판이 /rules '판정 기준 변경 기록'(#changes)에 있어야 한다. 빠뜨리면 배포하지 않는다(절차 R).
+    rules = open(os.path.join(WEB, "app", "rules", "page.tsx")).read()
+    assert f'ver: "{judge.RULE_VERSION}"' in rules, judge.RULE_VERSION

@@ -42,6 +42,25 @@ export function kstDate(v: string | null | undefined): string {
 /** n일 전 시각(ISO). 인물 페이지의 '최근 30일 안에 바뀐 판정' 에 쓴다(kstYear 처럼 렌더 밖 도우미). */
 export const daysAgo = (n: number) => new Date(Date.now() - n * 86400e3).toISOString();
 
+/** 인물 페이지 공약 줄의 'MM.DD 바뀜' / 'MM.DD 기준 변경'. 상태가 실제로 바뀐 줄만 센다(사유만 바뀐 줄은 아님).
+ *  규칙 변경('rule')이 아닌 변화가 하나라도 있으면 가장 최근 그 줄의 날짜로 '바뀜', 'rule' 만 있으면 '기준 변경'.
+ *  규칙 주에는 털어 내기·규칙 적용·정기 판정이 같은 날 줄을 여럿 남긴다 — rows 는 이력 id 순이어야 한다. */
+export function changeMarks(
+  rows: { pledge_id: number; at: string; status: string; prev_status: string | null; reason: string }[],
+): Map<number, string> {
+  const byRecord = new Map<number, string>();
+  const byRule = new Map<number, string>();
+  for (const r of rows) {
+    if (r.prev_status == null || r.prev_status === r.status) continue;
+    const day = kstDate(r.at).slice(5).replace("-", ".");
+    (r.reason === "rule" ? byRule : byRecord).set(r.pledge_id, day);
+  }
+  const out = new Map<number, string>();
+  for (const [id, day] of byRule) out.set(id, `${day} 기준 변경`);
+  for (const [id, day] of byRecord) out.set(id, `${day} 바뀜`);
+  return out;
+}
+
 /** 두 버전의 facts 에서 달라진 칸 [키, 이전, 지금]. 첫 버전이면(prev 없음) 비교하지 않는다. */
 export function versionDiff(prev: Facts | null, cur: Facts): [string, unknown, unknown][] {
   if (!prev) return [];

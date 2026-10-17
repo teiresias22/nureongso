@@ -1,7 +1,7 @@
 // 실행: node web/src/lib/timeline.check.mjs  (Node 24 가 .ts 를 그대로 읽는다)
 // 공약 상세의 타임라인: 날짜순, 같은 날은 일어난 일 → 확인한 일, 기준선은 '기록 시작 시점'.
 import assert from "node:assert";
-import { kstDate, REASON_LABEL, timeline, versionDiff } from "./timeline.ts";
+import { changeMarks, kstDate, REASON_LABEL, timeline, versionDiff } from "./timeline.ts";
 
 assert.equal(kstDate("20261101"), "2026-11-01");
 assert.equal(kstDate("2026-09-14"), "2026-09-14");
@@ -44,4 +44,14 @@ assert.deepStrictEqual(
   ],
 );
 assert.equal(ev[1].href, "https://example.com/bid");
+// 인물 페이지 'MM.DD 바뀜' / '기준 변경'. 규칙 주에는 같은 날 털어 내기(input)와 규칙 적용(rule) 줄이 같이 생긴다.
+const marks = changeMarks([
+  { pledge_id: 1, at: "2026-10-25T20:05:00+00:00", status: "진행", prev_status: "판단불가", reason: "input" },
+  { pledge_id: 1, at: "2026-10-25T20:06:00+00:00", status: "판단불가", prev_status: "진행", reason: "rule" },
+  { pledge_id: 2, at: "2026-10-25T20:06:00+00:00", status: "판단불가", prev_status: "진행", reason: "rule" },
+  { pledge_id: 3, at: "2026-10-25T20:06:00+00:00", status: "진행", prev_status: "진행", reason: "rule" },  // 사유만
+]);
+assert.equal(marks.get(1), "10.26 바뀜");      // 기록 변화가 있으면 그것을 적는다
+assert.equal(marks.get(2), "10.26 기준 변경"); // 규칙 변경만
+assert.equal(marks.has(3), false);             // 상태가 그대로면 표시 없음
 console.log("timeline ok");
