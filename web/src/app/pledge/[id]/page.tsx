@@ -183,7 +183,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
             </p>
             {quoted > 0 && (
               <p className="mt-1 text-xs text-muted">
-                ✓ 원문 구절 확인됨 (근거 {p.pledge_evidence.length}건 중 {quoted}건) — 판정에는 쓰지 않는 표시입니다.
+                ✓ 원문 구절 확인됨 (법안 근거 {p.pledge_evidence.filter((e) => e.kind === "bill").length}건 중 {quoted}건) — 판정에는 쓰지 않는 표시입니다.
               </p>
             )}
             <p className="mt-1 text-xs text-muted">

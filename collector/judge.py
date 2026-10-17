@@ -913,28 +913,11 @@ def run_snapshot(conn, check: bool = False) -> tuple[int, set[int]]:
 
 
 def run_quote(conn, limit: int | None) -> None:
-    """근거마다 원문 구절. 조례·발주는 본문이 이름뿐이라 이름 전체가 구절이다(LLM 없음).
-    법안은 사람 단위로 모델에게 제안이유에서 고르게 하고, **서버가 원문에서 다시 찾아** quote_ok 를 단다.
+    """법안 근거마다 원문 구절. 사람 단위로 모델에게 제안이유에서 고르게 하고, **서버가 원문에서 다시 찾아** quote_ok 를 단다.
+    조례·발주는 본문이 이름뿐이라 구절 확인을 하지 않는다(quote·quote_ok 는 null). 이름을 구절로 넣으면 화면에
+    '원문 구절 확인됨' 이 떠 확인하지 않은 것이 확인된 것처럼 읽혔다(계획 P13).
     quote_ok is null 인 것만 집으므로 한도에서 멈춰도 다음 실행이 이어받는다. 재시도 루프는 없다."""
     with conn.cursor() as cur:
-        cur.execute("select id, kind, ref_id from pledge_evidence where quote_ok is null and kind in ('ordin','bid')")
-        rows = cur.fetchall()
-        upd = []
-        for kind in ("ordin", "bid"):
-            ids = [r for _, k, r in rows if k == kind]
-            if not ids:
-                continue
-            src = source_rows(cur, kind, ids)
-            ver = latest_versions(cur, [(kind, r) for r in ids])
-            for eid, k, r in rows:
-                if k == kind and r in src:
-                    t = norm(src[r][0])
-                    upd.append((t, len(t), bool(t), ver.get((k, r), (None,))[0], eid))
-        cur.executemany("update pledge_evidence set quote = %s, quote_start = 0, quote_end = %s, quote_ok = %s,"
-                        " version_id = %s where id = %s", [u for u in upd if u[1] > 0])
-        conn.commit()
-        print(f"[quote] 조례·발주 {len(upd):,}건(이름 구절)", file=sys.stderr)
-
         cur.execute("select p.member_code, e.id, p.title, coalesce(p.body,''), e.ref_id"
                     " from pledge_evidence e join pledge p on p.id = e.pledge_id"
                     " where e.quote_ok is null and e.kind = 'bill' order by p.member_code, e.id")
