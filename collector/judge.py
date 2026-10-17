@@ -273,7 +273,8 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
 
 def save_evidence(cur, rows, prompt: str) -> None:
     """근거 (pledge_id, kind, ref_id, score, why) 를 넣는다. 쓴 모델·프롬프트 판을 함께 남기고,
-    값이 그대로면 다시 쓰지 않는다(Disk IO — pledges.md 의 'judge 의 직접 SQL 도 is distinct from')."""
+    값이 그대로면 다시 쓰지 않는다(Disk IO — pledges.md 의 'judge 의 직접 SQL 도 is distinct from').
+    review 가 달린 근거는 건드리지 않는다 — pledge_evidence.review 칸(schema.sql, 결정 F)이 있어야 돈다."""
     if not rows:
         return
     model = llm.model_id()
@@ -284,7 +285,9 @@ def save_evidence(cur, rows, prompt: str) -> None:
         "   score = excluded.score, summary = excluded.summary,"
         "   model = excluded.model, prompt = excluded.prompt"
         " where (e.score, e.summary, e.model, e.prompt)"
-        "   is distinct from (excluded.score, excluded.summary, excluded.model, excluded.prompt)",
+        "   is distinct from (excluded.score, excluded.summary, excluded.model, excluded.prompt)"
+        # 사람이 표시한 근거는 재대조가 덮지 않는다(판정 계획 T0.5).
+        "   and e.review is null",
         [(*r, model, prompt) for r in rows])
 
 

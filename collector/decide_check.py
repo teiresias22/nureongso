@@ -21,7 +21,7 @@ import judge
 MP, HEAD = "국회의원", "구시군의장"
 
 # (번호, 설명, 직위, 당선 선거들[(선거일, 당선)], 공약 선거일, 유형, 대조 기록, 근거들, 기대 (상태, note))
-# 근거: ("bill", 발의일, 처리결과, 대안 처리결과|None) · ("ordin", 공포일) · ("bid", 공고일)
+# 근거: ("bill", 발의일, 처리결과, 대안 처리결과|None[, review]) · ("ordin", 공포일) · ("bid", 공고일)
 # 대안 처리결과: "-" 면 대안반영폐기인데 대안을 못 이은 것.
 CASES = [
     (1, "2024 국회의원·입법·본인 법안 가결", MP, [("20240410", True)], "20240410", ["입법"], ["match"],
@@ -53,9 +53,13 @@ CASES = [
      [("bid", "2026-08-10")], ("진행", "bid_ordered")),     # T2.2(J-B) → no_measure:예산사업
     (15, "단체장 입법 단독", HEAD, [("20260603", True)], "20260603", ["입법"], [], [],
      ("판단불가", "not_checked")),                # T1.4 → no_measure:입법
+    (16, "가결 법안 근거 review='reject:…'", MP, [("20240410", True)], "20240410", ["입법"], ["match"],
+     [("bill", "2024-07-01", "원안가결", None, "reject:2026-10-18")], ("완료", "law_passed")),   # T1.1 → 미착수 none_2y
     (17, "선언", MP, [("20240410", True)], "20240410", ["선언"], ["match"], [], ("판단불가", "no_measure:선언")),
     (18, "국회의원 예산사업+입법, 근거 없음, 2년 지남", MP, [("20240410", True)], "20240410", ["예산사업", "입법"],
      ["match"], [], ("미착수", "none_2y")),       # T2.1(K-B) → 판단불가 none_partial
+    (19, "가결 법안 근거 review='partial:…'", MP, [("20240410", True)], "20240410", ["입법"], ["match"],
+     [("bill", "2024-07-01", "원안가결", None, "partial:2026-10-18")], ("완료", "law_passed")),  # T1.1 → 진행 review_partial
     (20, "철회 법안만, 입법 단독, 2년 지남", MP, [("20240410", True)], "20240410", ["입법"], ["match"],
      [("bill", "2024-07-01", "철회", None)], ("진행", "law_filed")),   # T1.5 → 미착수 law_withdrawn
     (21, "단체장 조례, 2026-07-01 공포", HEAD, [("20260603", True)], "20260603", ["조례제도"], ["ordin"],
@@ -68,13 +72,25 @@ CASES = [
      [("20200415", True), ("20260603", True)], "20200415", ["조례제도"], [], [],
      ("판단불가", "past_term")),                  # T1.3 → no_measure:조례제도
 ]
-# 16·19(근거 review 표시)는 pledge_evidence.review 칸(T0.5) 뒤에 넣는다.
+# 근거 끝에 review 값을 붙일 수 있다(16·19). pledge_evidence.review 칸이 없는 DB(결정 F 전)면 그 경우는 건너뛴다.
+
+
+def has_review(cur) -> bool:
+    cur.execute("select exists (select 1 from information_schema.columns"
+                " where table_name = 'pledge_evidence' and column_name = 'review')")
+    return cur.fetchone()[0]
+
+
+def cases(cur) -> list[tuple]:
+    if has_review(cur):
+        return CASES
+    return [c for c in CASES if not any(len(ev) > 4 for ev in c[7])]
 
 
 def load(cur) -> dict[int, int]:
     """경우마다 가짜 사람·공약·근거를 넣고 {경우 번호: pledge_id}."""
     ids = {}
-    for no, _, office, runs, el, kinds, checked, evs, _ in CASES:
+    for no, _, office, runs, el, kinds, checked, evs, _ in cases(cur):
         code = f"ZZDC{no:02d}"
         cur.execute("insert into member (code, name, office) values (%s, %s, %s)", (code, f"점검{no}", office))
         for sg, won in runs:
@@ -89,7 +105,7 @@ def load(cur) -> dict[int, int]:
         for k, ev in enumerate(evs):
             ref = f"ZZDC{no:02d}-{k}"
             if ev[0] == "bill":
-                _, at, result, alt = ev
+                _, at, result, alt = ev[:4]
                 alt_id = None
                 if alt and alt != "-":
                     alt_id = ref + "-alt"
@@ -103,24 +119,40 @@ def load(cur) -> dict[int, int]:
                 cur.execute("insert into bid_notice (id, name, notice_at) values (%s, '점검 공고', %s)", (ref, ev[1]))
             cur.execute("insert into pledge_evidence (pledge_id, kind, ref_id, score) values (%s, %s, %s, 0.9)",
                         (pid, ev[0], ref))
+            if len(ev) > 4:
+                cur.execute("update pledge_evidence set review = %s where pledge_id = %s and ref_id = %s",
+                            (ev[4], pid, ref))
     return ids
 
 
 def check(conn, cte: str = judge.JUDGED_CTE) -> list[str]:
-    """기대와 다른 경우의 설명 목록. 언제나 롤백한다."""
+    """기대와 다른 경우의 설명 목록(끝에 본 경우 수). 언제나 롤백한다."""
     try:
         with conn.cursor() as cur:
             ids = load(cur)
             cur.execute(cte + " select pledge_id, status, note from judged where pledge_id = any(%(ids)s)",
                         judge.PARAMS | {"ids": list(ids.values())})
             got = {pid: (st, note) for pid, st, note in cur.fetchall()}
+            if has_review(cur):
+                # 사람이 표시한 근거는 재대조가 덮지 않는다(T0.5): 16번 근거에 다른 점수·이유를 넣어 본다.
+                ref = "ZZDC16-0"
+                model_id, judge.llm.model_id = judge.llm.model_id, lambda: "gemini:check"  # 모델 목록을 부르지 않게
+                try:
+                    judge.save_evidence(cur, [(ids[16], "bill", ref, 0.1, "다른 이유")], "match:test")
+                finally:
+                    judge.llm.model_id = model_id
+                cur.execute("select score::float, summary from pledge_evidence where ref_id = %s", (ref,))
+                if cur.fetchone() != (0.9, None):
+                    got["guard"] = "덮어씀"
+            used = cases(cur)
     finally:
         conn.rollback()
-    bad = []
-    for no, label, *_, want in CASES:
+    bad = ["  검수 표시 근거를 save_evidence 가 덮었다"] if got.get("guard") else []
+    for no, label, *_, want in used:
         have = got.get(ids[no])
         if have != want:
             bad.append(f"  {no:2}. {label}: 기대 {want[0]}·{want[1]} / 실제 {have}")
+    check.seen = len(used)
     return bad
 
 
@@ -128,10 +160,12 @@ def main():
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         bad = check(conn)
     if bad:
-        print(f"[decide_check] {len(bad)}/{len(CASES)}건이 기대와 다르다 (규칙 판 {judge.RULE_VERSION})", file=sys.stderr)
+        print(f"[decide_check] {len(bad)}건이 기대와 다르다 (규칙 판 {judge.RULE_VERSION})", file=sys.stderr)
         print("\n".join(bad), file=sys.stderr)
         sys.exit(1)
-    print(f"[decide_check] {len(CASES)}건 모두 기대대로 (규칙 판 {judge.RULE_VERSION})", file=sys.stderr)
+    skipped = len(CASES) - check.seen
+    print(f"[decide_check] {check.seen}건 모두 기대대로 (규칙 판 {judge.RULE_VERSION})"
+          + (f" · review 칸이 없어 {skipped}건 건너뜀" if skipped else ""), file=sys.stderr)
 
 
 if __name__ == "__main__":

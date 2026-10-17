@@ -109,7 +109,15 @@ def parse_one(text: str, pdf: bytes | None = None) -> list[dict]:
     return clean
 
 
-def run(conn, sg_id: str, limit: int | None, redo: bool, empty: bool = False) -> None:
+def reviewed(conn, doc_id: int) -> list[int]:
+    """이 문서 공약 중 근거에 사람 검수 표시(pledge_evidence.review)가 있는 공약 id."""
+    with conn.cursor() as cur:
+        cur.execute("select distinct p.id from pledge p join pledge_evidence e on e.pledge_id = p.id"
+                    " where p.doc_id = %s and e.review is not null order by p.id", (doc_id,))
+        return [r[0] for r in cur.fetchall()]
+
+
+def run(conn, sg_id: str, limit: int | None, redo: bool, empty: bool = False, force: bool = False) -> None:
     with conn.cursor() as cur:
         cur.execute(
             # raw_text 가 '' 인 공보는 이미지 스캔본이라 pdfplumber 가 한 글자도 못 읽은 것이다.
@@ -149,6 +157,12 @@ def run(conn, sg_id: str, limit: int | None, redo: bool, empty: bool = False) ->
         if blank and not pdf:
             fail += 1
             print(f"  [{i}] 텍스트도 PDF 도 없어 건너뜀 ({mcode})", file=sys.stderr)
+            continue
+        # 사람이 근거에 검수 표시를 단 공약은 지우지 않는다. 다시 파싱하면 LLM 이 글자를 바꿔 새 공약이 되고
+        # 근거는 cascade 로 사라진다 — 내용 비교(nec.py 처럼)로는 못 막는다. --force 일 때만 진행(판정 계획 T0.5).
+        kept = [] if force else reviewed(conn, doc_id)
+        if kept:
+            print(f"  [{i}] 검수 표시 근거가 있어 건너뜀 (문서 {doc_id}, {mcode}, 공약 {kept})", file=sys.stderr)
             continue
         try:
             items = parse_one(text, pdf)
@@ -194,13 +208,14 @@ def main():
     p.add_argument("--empty", action="store_true",
                    help="공약이 0건으로 남은 공보만 다시 (실패분 재시도)")
     p.add_argument("--redo", action="store_true")
+    p.add_argument("--force", action="store_true", help="근거에 검수 표시가 있는 문서도 다시 파싱한다(표시가 사라진다)")
     a = p.parse_args()
 
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         sys.exit("DATABASE_URL 이 없습니다.")
     with psycopg.connect(dsn) as conn:
-        run(conn, a.sg, a.limit, a.redo, a.empty)
+        run(conn, a.sg, a.limit, a.redo, a.empty, a.force)
 
 
 if __name__ == "__main__":

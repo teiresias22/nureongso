@@ -1078,6 +1078,13 @@ alter table pledge_evidence drop constraint if exists pledge_evidence_quote_span
 alter table pledge_evidence add constraint pledge_evidence_quote_span
   check (quote_start is null or (quote_start >= 0 and quote_end > quote_start));
 create index if not exists pledge_evidence_ref_idx on pledge_evidence (kind, ref_id);  -- 바뀐 기록 → 영향 공약
+-- 사람 검수 표시(판정 계획 T0.5, 결정 M). 사람은 판정을 고치지 않고 근거에 표시만 단다 — 판정은 규칙표가 이것을 읽어 낸다(T1.1).
+-- null 미검수 · 'ok:YYYY-MM-DD' 맞음 · 'reject:YYYY-MM-DD' 관련 없음(판정에 안 씀) · 'partial:YYYY-MM-DD' 일부·미공포(진행까지).
+-- model 칸은 '누가 연결했나' 로 그대로 둔다. 표시한 근거는 재대조(judge.save_evidence)·공보 재파싱(parse_pledges)이 덮지 않는다.
+alter table pledge_evidence add column if not exists review text;
+alter table pledge_evidence drop constraint if exists pledge_evidence_review_form;
+alter table pledge_evidence add constraint pledge_evidence_review_form
+  check (review is null or review ~ '^(ok|reject|partial):[0-9]{4}-[0-9]{2}-[0-9]{2}');
 
 -- E. 판정 변경 이력. 현재 상태는 pledge_status 그대로.
 --    공약 원문이 바뀌어 공약이 새로 만들어지면(nec.py·parse_pledges.py 의 delete → insert) 이력도 새로 시작한다.
