@@ -130,7 +130,7 @@ def run_gold(cur, layer: str, n: int, seed: str) -> str:
         sys.exit(f"{path} 가 이미 있다. 라벨을 덮지 않는다 — 지우거나 다른 --seed 로.")
     with open(path, "w", newline="") as f:
         f.write(HEADER + "\n")
-        w = csv.DictWriter(f, COLS)
+        w = csv.DictWriter(f, COLS, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
     print(f"[gold] {layer} 공약 {len({r['pledge_id'] for r in rows})}건 · {len(rows)}줄 → {path}", file=sys.stderr)
