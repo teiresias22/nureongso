@@ -29,6 +29,7 @@ pledge_status 를 건드리지 않고 pledge_overlap 에만 쌓는다.
     python judge.py decide                # 규칙만 다시 적용
     python judge.py match_race            # 선거 때만. all 에 들어 있지 않다.
     python judge.py decide --check        # 쓰지 않고 바뀔 판정 수만 (판정 결정성 점검)
+    python judge.py decide --diff [--base <커밋>]  # 쓰지 않고 판정 전이표. --base 는 그 커밋 규칙 대비
     python judge.py snapshot [--check]    # 근거 버전. --check 는 쓰지 않고 바뀐 근거 수만
     python judge.py quote [--limit N]     # 원문 구절 (이어받기 됨)
     python judge.py repro --n 5           # 대조 재현성 표본
@@ -1212,7 +1213,9 @@ def run_match_race(conn, limit: int | None, redo: bool, since: str | None = None
 # 한 공약에 유형이 섞여 있고 잴 수 없는 쪽이 남아 있으면 '완료' 라고 하지 않는다.
 # '노인복지 확대 — 노인복지법 개정, 복지관 건립' 에서 법 개정이 통과됐다고 복지관이
 # 지어진 건 아니다. 이런 건 '진행' 까지만 간다.
-DECIDE_SQL = """
+# 규칙표. 판정 부분(JUDGED_CTE)만 판 이름에 들어간다 — 쓰는 방식(DECIDE_SQL)을 고쳐도 판이 바뀌지 않는다.
+# decide --diff 가 이 부분을 지난 커밋 것과 같은 스냅숏에서 맞대어 순수 규칙 전이를 낸다.
+JUDGED_CTE = """
 with ev as (
   select e.pledge_id,
          max(e.score) as conf,
@@ -1328,8 +1331,15 @@ judged as (
     conf
   from flag
 )
+"""
+
+# 바뀔 행만 SELECT 에서 고른다. on conflict 의 where 만으로는 값이 같아도 21,336행을 다 잠근다(계획 P19).
+DECIDE_SQL = JUDGED_CTE + """
 insert into pledge_status (pledge_id, status, confidence, decided_by, note, updated_at)
-select pledge_id, status, conf, 'auto', note, now() from judged
+select j.pledge_id, j.status, j.conf, 'auto', j.note, now()
+from judged j left join pledge_status s on s.pledge_id = j.pledge_id
+where s.pledge_id is null
+   or (s.decided_by = 'auto' and (s.status, s.confidence, s.note) is distinct from (j.status, j.conf, j.note))
 on conflict (pledge_id) do update set
   status = excluded.status, confidence = excluded.confidence,
   note = excluded.note, updated_at = now()
@@ -1342,24 +1352,162 @@ where pledge_status.decided_by = 'auto'
 
 
 # 판정 규칙 판. 규칙표·기준일이 한 글자라도 바뀌면 달라진다. 트리거가 판정 이력(pledge_status_log.rule)에 남긴다.
-RULE_VERSION = version("rule", DECIDE_SQL, MP_TERM_START, HEAD_TERM_START, str(GRACE_YEARS)).split(":")[1]
+RULE_VERSION = version("rule", JUDGED_CTE, MP_TERM_START, HEAD_TERM_START, str(GRACE_YEARS)).split(":")[1]
 
 
-def run_decide(conn, check: bool = False) -> int:
-    """check=True 면 판정을 돌린 뒤 되돌리고 바뀔 행 수만 돌려준다(판정 결정성 점검 — 판정 직후 0)."""
+PARAMS = {"mp_start": MP_TERM_START, "head_start": HEAD_TERM_START, "grace": GRACE_YEARS}
+
+
+def base_judged(sha: str) -> tuple[str, dict]:
+    """지난 커밋의 JUDGED_CTE 와 기준일. 매개변수는 old_ 를 붙여 지금 것과 한 SELECT 에 같이 넣는다.
+    JUDGED_CTE 가 생긴 커밋(T0.2) 뒤끼리만 비교할 수 있다."""
+    import subprocess
+    src = subprocess.run(["git", "show", f"{sha}:collector/judge.py"], capture_output=True, text=True,
+                         check=True, cwd=os.path.dirname(os.path.abspath(__file__))).stdout
+    m = re.search(r'^JUDGED_CTE = """(.*?)"""', src, re.S | re.M)
+    if not m:
+        sys.exit(f"{sha} 에 JUDGED_CTE 가 없습니다(T0.2 전 커밋).")
+    const = dict(re.findall(r'^(MP_TERM_START|HEAD_TERM_START|GRACE_YEARS) = "?([^"\s]+)"?', src, re.M))
+    sql = re.sub(r"%\((\w+)\)s", r"%(old_\1)s", m.group(1))
+    return sql, {"old_mp_start": const["MP_TERM_START"], "old_head_start": const["HEAD_TERM_START"],
+                 "old_grace": int(const["GRACE_YEARS"])}
+
+
+def diff_rows(cur, base: str | None = None) -> tuple[list[tuple], int]:
+    """판정 전이표 [(지금 상태, 지금 note, 새 상태, 새 note, 직위, 건수, 표본 id)] 와 신뢰도만 바뀌는 행 수.
+    쓰지 않는다(SELECT 만). base 가 없으면 운영 pledge_status 와, 있으면 그 커밋의 규칙과 같은 스냅숏에서 맞댄다.
+    대상은 자동 판정이거나 판정 행이 없는 공약 — 사람이 확정한 판정은 decide 가 덮지 않는다."""
+    # a = 비교 기준(운영 판정 또는 지난 규칙), j = 지금 규칙.
+    if base:
+        old_sql, params = base_judged(base)
+        params |= PARAMS
+        src = (f"(select pledge_id, status, note, conf from ({old_sql} select * from judged) x) a"
+               f" full join (select pledge_id, status, note, conf from ({JUDGED_CTE} select * from judged) y) j"
+               " using (pledge_id)")
+        a = "a.status, a.note, a.conf"
+    else:
+        params = PARAMS
+        src = f"(select pledge_id, status, note, conf from ({JUDGED_CTE} select * from judged) y) j"
+        a = "s.status, s.note, s.confidence"
+    cur.execute(f"""
+      with d as (
+        select pledge_id, coalesce(m.office, '국회의원') as office, j.status as j_status, j.note as j_note,
+               j.conf as j_conf, a_status, a_note, a_conf
+        from {src}
+        left join pledge_status s using (pledge_id)
+        cross join lateral (select {a}) x(a_status, a_note, a_conf)
+        left join pledge p on p.id = pledge_id left join member m on m.code = p.member_code
+        where s.pledge_id is null or s.decided_by = 'auto')
+      select a_status, a_note, j_status, j_note, office, count(*), (array_agg(pledge_id order by pledge_id))[1:5]
+      from d where (a_status, a_note) is distinct from (j_status, j_note)
+      group by 1, 2, 3, 4, 5
+      union all
+      select null, null, null, null, '', count(*), null
+      from d where (a_status, a_note) is not distinct from (j_status, j_note) and a_conf is distinct from j_conf
+      order by 6 desc""", params)
+    rows = cur.fetchall()
+    # 신뢰도만 바뀌는 줄은 office 가 '' 인 한 줄이다(이력에 남지 않는 변화).
+    return [r for r in rows if r[4] != ""], sum(r[5] for r in rows if r[4] == "")
+
+
+def print_diff(rows: list[tuple], conf_only: int, label: str) -> int:
+    n = sum(r[5] for r in rows)
+    print(f"[decide --diff] {label}: 판정이 바뀔 것 {n:,}건 · 신뢰도만 {conf_only:,}건 (쓰지 않음, 규칙 판 {RULE_VERSION})",
+          file=sys.stderr)
+    for a_st, a_note, st, note, office, c, ids in rows:
+        print(f"  {office:5} {a_st or '(없음)'}·{a_note or ''} → {st or '(없음)'}·{note or ''}  {c:,}건  예 {ids}",
+              file=sys.stderr)
+    return n
+
+
+# 불변식(계획 §4). 지금 규칙이 공개 문구와 어긋나는 몫을 매주 센다. 목표 0 인 것은 R1·R2·검수가 줄인다.
+# 사람별 임기 시작일은 R1(T1.2) 전이라 '직위 기준일과 그 선거일 중 늦은 날' 로 잰다. SELECT 만.
+INVARIANTS = [
+    ("I1", "진행·완료인데 임기 중 근거(약속 뒤 법안·취임 뒤 조례·발주, 철회 아님)가 없는 공약", """
+      select count(*) from pledge_status s join pledge p on p.id = s.pledge_id
+      where s.status in ('완료','진행') and not exists (
+        select 1 from pledge_evidence e
+        left join bill b on e.kind = 'bill' and b.bill_id = e.ref_id
+        left join ordinance o on e.kind = 'ordin' and o.id = e.ref_id
+        left join bid_notice n on e.kind = 'bid' and n.id = e.ref_id
+        where e.pledge_id = p.id and (
+             (b.bill_id is not null and b.proposed_at >= to_date(p.election_id, 'YYYYMMDD')
+              and coalesce(b.proc_result, '') not like '%%철회%%')
+          or o.announced_at >= to_char(%(head_start)s::date, 'YYYYMMDD')
+          or n.notice_at >= %(head_start)s::date))"""),
+    ("I2", "미착수인데 그 선거·임기 시작 + 2년이 안 지난 공약", """
+      select count(*) from pledge_status s join pledge p on p.id = s.pledge_id
+      left join member m on m.code = p.member_code
+      where s.status = '미착수'
+        and greatest(to_date(p.election_id, 'YYYYMMDD'),
+                     case when coalesce(m.office, '국회의원') = '국회의원' then %(mp_start)s::date
+                          else %(head_start)s::date end) + (%(grace)s || ' years')::interval > now()"""),
+    ("I3", "낙선 공약인데 사유가 not_checked·past_term", """
+      select count(*) from pledge_status s join pledge p on p.id = s.pledge_id
+      where s.note in ('not_checked', 'past_term')
+        and not exists (select 1 from candidacy c where c.member_code = p.member_code
+                        and c.election_id = p.election_id and c.elected)"""),
+    ("I4", "현 임기 단체장·교육감의 입법 공약 not_checked (조례 대조 대기는 뺌)", """
+      select count(*) from pledge_status s join pledge p on p.id = s.pledge_id
+      join member m on m.code = p.member_code
+      where s.note = 'not_checked' and '입법' = any(p.kinds) and m.office <> '국회의원'
+        and exists (select 1 from candidacy c where c.member_code = p.member_code
+                    and c.election_id = p.election_id and c.elected)
+        and not ('조례제도' = any(p.kinds)
+                 and not exists (select 1 from ingest_run r where r.source = 'ordin:' || p.member_code))"""),
+    ("I5", "연결 이유에 부정어가 든 근거가 붙은 진행·완료", None),
+    ("I7", "완료인데 사람이 확인한 근거가 없는 공약", None),
+    ("I8", "사람이 확정한 판정(decided_by <> 'auto')", "select count(*) from pledge_status where decided_by <> 'auto'"),
+    ("I11", "잴 수 없는 유형이 섞였는데 미착수", """
+      select count(*) from pledge_status s join pledge p on p.id = s.pledge_id
+      left join member m on m.code = p.member_code
+      where s.status = '미착수' and exists (
+        select 1 from unnest(p.kinds) k where k <> '입법'
+          and not (k = '조례제도' and coalesce(m.office, '국회의원') <> '국회의원'))"""),
+]
+
+
+def run_invariants(conn) -> list[tuple[str, str, int | None]]:
+    """[(ID, 설명, 건수)]. review 칸이 없는 DB(결정 F 전)면 그 칸을 쓰는 것은 None."""
+    with conn.cursor() as cur:
+        cur.execute("select exists (select 1 from information_schema.columns"
+                    " where table_name = 'pledge_evidence' and column_name = 'review')")
+        has_review = cur.fetchone()[0]
+        out = []
+        for key, label, sql in INVARIANTS:
+            if key == "I5":
+                deny = " or ".join(f"e.summary like '%%{w}%%'" for w in DENY_WORDS)
+                sql = ("select count(distinct s.pledge_id) from pledge_status s join pledge_evidence e"
+                       f" on e.pledge_id = s.pledge_id where s.status in ('완료','진행') and ({deny})"
+                       + (" and e.review is null" if has_review else ""))
+            if key == "I7":
+                sql = ("select count(*) from pledge_status s where s.status = '완료'"
+                       + (" and not exists (select 1 from pledge_evidence e where e.pledge_id = s.pledge_id"
+                          " and (e.review like 'ok:%%' or e.review like 'partial:%%'))" if has_review else ""))
+            cur.execute(sql, PARAMS)
+            out.append((key, label, cur.fetchone()[0]))
+        rows, _ = diff_rows(cur)
+        out.append(("I6", "판정 직후 --diff 행 수(판정 결정성)", sum(r[5] for r in rows)))
+    conn.rollback()
+    return out
+
+
+def run_decide(conn, check: bool = False, diff: bool = False, base: str | None = None) -> int:
+    """check·diff 는 쓰지 않고 바뀔 판정 수만 돌려준다(판정 직후 0 이어야 한다 — 판정 결정성).
+    diff 는 전이표까지 찍고, base 를 주면 그 커밋의 규칙과 비교한 순수 규칙 전이다."""
+    if check or diff:
+        with conn.cursor() as cur:
+            rows, conf_only = diff_rows(cur, base)
+        conn.rollback()
+        return print_diff(rows, conf_only, f"{base} 의 규칙 대비" if base else "운영 판정 대비")
     with conn.cursor() as cur:
         # 판정 이력 트리거(log_pledge_status)가 이 판을 rule 칸에 남긴다. 트랜잭션 안에서만 유효하다.
         cur.execute("select set_config('judge.rule', %s, true)", (RULE_VERSION,))
-        cur.execute(DECIDE_SQL, {"mp_start": MP_TERM_START,
-                                 "head_start": HEAD_TERM_START,
-                                 "grace": GRACE_YEARS})
+        cur.execute(DECIDE_SQL, PARAMS)
         n = cur.rowcount
-        if check:
-            conn.rollback()
-            print(f"[decide --check] 다시 판정하면 바뀔 것 {n:,}건 (쓰지 않음, 규칙 판 {RULE_VERSION})",
-                  file=sys.stderr)
-            return n
-        cur.execute("refresh materialized view concurrently member_stats")
+        # 바뀐 판정이 없으면 집계를 다시 만들지 않는다(ingest.py 가 매일 refresh 한다).
+        if n:
+            cur.execute("refresh materialized view concurrently member_stats")
     conn.commit()
     with conn.cursor() as cur:
         cur.execute("select status, note, count(*) from pledge_status"
@@ -1378,6 +1526,8 @@ def main():
                  "match_race", "decide", "snapshot", "quote", "repro", "all"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--check", action="store_true", help="decide·snapshot: 쓰지 않고 바뀔 수만 센다")
+    p.add_argument("--diff", action="store_true", help="decide: 쓰지 않고 판정 전이표를 낸다")
+    p.add_argument("--base", help="decide --diff: 이 커밋의 규칙과 같은 스냅숏에서 비교한다")
     p.add_argument("--n", type=int, default=5, help="repro: 표본 사람 수")
     p.add_argument("--redo", action="store_true")
     p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다")
@@ -1399,7 +1549,7 @@ def main():
         if a.step == "match_race":
             run_match_race(conn, a.limit, a.redo, a.since)
         if a.step in ("decide", "all"):
-            run_decide(conn, a.check)
+            run_decide(conn, a.check, a.diff, a.base)
         # 아래 셋은 all 에 넣지 않는다. evidence.yml 이 decide 앞뒤에 따로 부른다.
         if a.step == "snapshot":
             run_snapshot(conn, a.check)

@@ -227,8 +227,11 @@ jobs:
                       refs = cur.fetchone()[0]
                   miss, _ = judge.run_snapshot(c, check=True)
                   print(f"\n근거 버전 감지 누락: {miss:,} / {refs:,}건 (판정 직후 0 이어야 한다)")
-                  changed = judge.run_decide(c, check=True)
-                  print(f"판정 결정성: 다시 판정하면 바뀔 것 {changed:,}건 (0 이어야 한다, 규칙 판 {judge.RULE_VERSION})")
+                  # 불변식(판정 계획 §4). I6 이 판정 결정성 — 판정 직후 0 이어야 한다.
+                  print(f"\n| 불변식 (규칙 판 {judge.RULE_VERSION}) | 건수 |")
+                  print("|---|---|")
+                  for key, label, n in judge.run_invariants(c):
+                      print(f"| {key} {label} | {'—' if n is None else f'{n:,}'} |")
                   with c.cursor() as cur:
                       cur.execute("""select count(*) filter (where quote_ok), count(*), count(*) filter (where quote = '')
                                      from pledge_evidence
