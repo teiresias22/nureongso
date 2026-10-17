@@ -1098,7 +1098,7 @@ create index if not exists pledge_status_log_pledge_idx on pledge_status_log (pl
 create index if not exists pledge_status_log_at_idx on pledge_status_log (at);   -- 주간 메일·지표
 
 create or replace function pledge_versions(p_pledge bigint) returns bigint[]
-language sql stable as $$
+language sql stable set search_path = public, pg_temp as $$
   select coalesce(array_agg(v.id order by v.id), '{}')
   from pledge_evidence e
   cross join lateral (select s.id from source_version s
@@ -1110,7 +1110,7 @@ $$;
 -- 덕에 바뀐 행에서만 돈다. 신뢰도(confidence)만 바뀐 것은 사건이 아니라 건너뛴다.
 -- 사유 순서: 근거 쪽(evidence·source)이 규칙 판 변경보다 먼저 — 출처 추적이 우선이다.
 create or replace function log_pledge_status() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = public, pg_temp as $$
 declare
   prev pledge_status_log;
   v    bigint[] := pledge_versions(new.pledge_id);
@@ -1146,6 +1146,8 @@ create policy public_read on source_version    for select using (true);
 drop policy if exists public_read on pledge_status_log;
 create policy public_read on pledge_status_log for select using (true);
 revoke execute on function pledge_versions(bigint) from public, anon, authenticated;
+-- Supabase 기본 권한이 새 표·뷰에 anon 쓰기까지 준다(pledge_doc_link 사건, ops.md). 정책이 막아도 권한부터 거둔다.
+revoke insert, update, delete on bill_alt, source_version, pledge_status_log from anon, authenticated;
 
 -- ==== 공약 판정 이력: 기준선과 트리거 ====
 -- 위 덩어리와 따로 둔다. 운영에서는 `judge.py snapshot` 이 첫 버전을 다 만든 **뒤에** 이 덩어리를 한 트랜잭션으로

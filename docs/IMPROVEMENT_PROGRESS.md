@@ -54,6 +54,18 @@
 
 ## 출시 준비 (순서대로, 모두 사용자가)
 
+**2026-10-17 적용 결과.** 주간 기록 메일은 **보류** — Resend 가 is-a.dev 도메인을 받지 않는다(아래 1·3·5 와 2-1·2-5 는 하지 않음).
+메일 코드는 브랜치에 그대로 있고 키가 없으니 꺼져 있다(폼 안 뜸, `digest.py` 는 `subscriber` 표가 없어 건너뜀).
+판정 이력 쪽만 운영 DB 에 넣었다:
+- 2-2 적용(DB 308MB 에서). 새 뷰·표에 Supabase 기본 권한이 anon 쓰기까지 줘서 `insert, update, delete` 를 거뒀고,
+  lint 0011 이 잡은 새 함수 둘에 `search_path` 를 박았다(둘 다 `schema.sql` 에 반영).
+- 2-3 snapshot: 연결 근거 1,190건(근거 1,288행) 전부 첫 버전, 영향 공약 901.
+- 2-4 기준선 21,336행 = `pledge_status` 행 수, versions 있는 줄 901. 트리거 켜짐.
+- 2-6 `pledge_history.check.sql` 통과(남은 행 없음). `subscription.check.sql` 은 표가 없어 안 돌렸다.
+- 2-7 `decide --check` 0건, `snapshot --check` 0건.
+- anon REST: 새 표·뷰 GET 200, PATCH·`rpc/pledge_versions` 401. 운영 DB 로 `npm run build` 통과(`/pledge/[id]` ●).
+- 남은 것: 4(병합), 수동 확인 4·5·6.
+
 1. **Resend** 가입 → 보내는 도메인 확인 → API 키 발급.
    - `nureongso.joon.is-a.dev` 를 쓰면 is-a.dev 저장소에 PR 로 Resend 가 알려 주는 레코드(MX·SPF TXT `send.…`, DKIM TXT `resend._domainkey.…`)를 올려야 한다.
      공유 무료 도메인이라 평판이 약할 수 있다 — 따로 도메인을 쓸지 정한다(계획서 '열린 질문').
