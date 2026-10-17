@@ -210,11 +210,13 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
         orgs = tracked_orgs(cur)
     print(f"  추적 지자체 {len(orgs)}곳, 예산 {floor/1e8:.1f}억 이상", file=sys.stderr)
 
-    kept = seen = 0
+    kept = scanned = 0
     with httpx.Client(timeout=90, headers={"User-Agent": "nureongso/0.1"}) as client, \
             conn.cursor() as cur:
         for bgn, end in months(since, until):
-            page = 1
+            # seen 은 그달 total 과 견준다. 달 밖에서 세면 둘째 달부터 첫 쪽만 받고 끊겼다
+            # (2026-09-22 실행: 7월 전부 + 8월·9월 첫 쪽만. 08-05~12 783행이 45일 겹침 밖으로 빠졌다).
+            page, seen = 1, 0
             while True:
                 rows, total = fetch_page(client, bgn, end, page)
                 if not rows:
@@ -248,6 +250,7 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
                        batch, "id")
                 conn.commit()
                 seen += len(rows)
+                scanned += len(rows)
                 kept += len(batch)
                 if seen >= total or len(rows) < PAGE:
                     print(f"  {bgn[:6]} 전국 {total:,}건 → 보관 {kept:,}", file=sys.stderr)
@@ -257,7 +260,7 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
         log_run(cur, "bid", kept)
         conn.commit()
         refresh_first(conn)
-    print(f"[bid] 전국 {seen:,}건 훑어 {kept:,}건 보관", file=sys.stderr)
+    print(f"[bid] 전국 {scanned:,}건 훑어 {kept:,}건 보관", file=sys.stderr)
     return kept
 
 
