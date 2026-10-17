@@ -111,8 +111,8 @@ def gemini_models() -> list[str]:
 
 
 def gemini_pick(models: list[str]) -> str:
-    """미리보기·실험판은 피하고, 싼 것부터 고른다."""
-    stable = [m for m in models if not re.search(r"preview|exp|thinking", m)]
+    """미리보기·실험판·`-latest` 별칭(가리키는 모델이 바뀜)은 피하고, 싼 것부터 고른다."""
+    stable = [m for m in models if not re.search(r"preview|exp|thinking|latest", m)]
     for kind in GEMINI_PREFER:
         hit = sorted((m for m in (stable or models) if kind in m), reverse=True)
         if hit:
@@ -211,13 +211,16 @@ def ollama_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> s
 
 # --------------------------------------------------------------------------- Anthropic
 
+ANTHROPIC_DEFAULT = "claude-haiku-4-5-20251001"
+
+
 def anthropic_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> str:
     if pdf:
         raise LLMError("이 경로는 PDF 입력을 지원하지 않습니다. LLM_PROVIDER=gemini 로 바꾸세요.")
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise LLMError("ANTHROPIC_API_KEY 가 없습니다. (무료 등급 없음 — 사용량만큼 과금됩니다)")
-    model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    model = os.getenv("ANTHROPIC_MODEL", ANTHROPIC_DEFAULT)
     r = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
@@ -270,6 +273,15 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
             if attempt >= retries:
                 raise
             time.sleep(5)
+
+
+def model_id() -> str:
+    """근거 행의 model 칸('gemini:gemini-3.5-flash'). 모델이 조용히 바뀌면 재현성 지표가 흔들려서 남긴다."""
+    if PROVIDER == "gemini":
+        return f"gemini:{gemini_model()}"
+    if PROVIDER == "anthropic":
+        return f"anthropic:{os.getenv('ANTHROPIC_MODEL', ANTHROPIC_DEFAULT)}"
+    return f"{PROVIDER}:{os.getenv('OLLAMA_MODEL', 'qwen3:8b')}"
 
 
 def key_usage() -> str:

@@ -15,7 +15,7 @@ paths:
   2026-10 Active CPU 무료 4시간이 이걸로 찼다. `<a>` 면 문서 요청이라 CDN 하루 캐시가 받는다.
 - 본문 링크는 `@/lib/link`(prefetch 기본 꺼짐). `next/link` 는 eslint 가 막는다. 동적 경로의 prefetch 는 부분 응답이라
   싸지만, 보이는 링크마다 함수 호출이 하나씩 붙는다.
-- 경로 인자만 읽는 페이지는 `generateStaticParams() { return [] }` 로 ISR(전역 캐시)에 둔다(`/bill`).
+- 경로 인자만 읽는 페이지는 `generateStaticParams() { return [] }` 로 ISR(전역 캐시)에 둔다(`/bill`·`/pledge`).
   서버에서 검색어를 읽으면 다시 요청마다 그려진다 — 필요하면 클라이언트 컴포넌트(`useSearchParams`)에서. CDN 헤더는 리전마다 따로라 덜 먹힌다.
 - `nureongso-puce.vercel.app` 은 본 주소로 308(`next.config.ts` `redirects`). 크롤러가 두 벌을 돌았다.
 - 사용량은 Vercel → Observability → Functions(경로별 Active CPU, 12시간)와 Logs(요청별 User-Agent·실행 시간, 1시간).
@@ -29,4 +29,6 @@ paths:
 - `/my` 의 지역 키는 `member.district` 가 아니라 선관위 `sd_name`/`wiw_name`(`member_area` 뷰). 국회의원만 `district` 부분일치.
 - '한눈에 보기' 요약에 국외활동·연구단체·연구용역 **건수**를 올리지 않는다 — 건수가 실적처럼 읽힌다.
 - 기록 없는 사람은 정렬에서 0 이 아니라 맨 뒤.
+- 쓰기는 `app/api/subscription/route.ts` 하나뿐이다(구독 신청·확인·해지, POST → `/subscription` 으로 303). service_role 키는
+  거기서만 읽는다. `/subscription` 은 토큰을 읽는 화면이라 CDN 캐시 목록(`next.config.ts`)에 넣지 않는다.
 - 확인: `npm run lint && npm run build`(둘 다 `dotenvx` 를 거친다).

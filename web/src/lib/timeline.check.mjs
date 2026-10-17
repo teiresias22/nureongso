@@ -1,0 +1,47 @@
+// 실행: node web/src/lib/timeline.check.mjs  (Node 24 가 .ts 를 그대로 읽는다)
+// 공약 상세의 타임라인: 날짜순, 같은 날은 일어난 일 → 확인한 일, 기준선은 '기록 시작 시점'.
+import assert from "node:assert";
+import { kstDate, REASON_LABEL, timeline, versionDiff } from "./timeline.ts";
+
+assert.equal(kstDate("20261101"), "2026-11-01");
+assert.equal(kstDate("2026-09-14"), "2026-09-14");
+// 서버는 UTC 다. UTC 10월 18일 20시는 한국 10월 19일 새벽.
+assert.equal(kstDate("2026-10-18T20:00:00+00:00"), "2026-10-19");
+
+assert.deepStrictEqual(versionDiff({ name: "주차장법", proc_result: null }, { name: "주차장법", proc_result: "대안반영폐기" }), [
+  ["proc_result", null, "대안반영폐기"],
+]);
+assert.deepStrictEqual(versionDiff(null, { proc_result: "가결" }), []);
+
+const ev = timeline({
+  election: { date: "20260603", label: "공약 (선거공약서)" },
+  records: [
+    { date: "2026-09-14", text: "공사 입찰 공고 · ○○동 공영주차장 건립공사", href: "https://example.com/bid" },
+    { date: "20261019", text: "조례 일부개정 공포 · 서구 주차장 조례" },
+    { date: null, text: "날짜 없는 기록은 싣지 않는다" },
+  ],
+  log: [
+    { at: "2026-10-18T20:05:00+00:00", status: "판단불가", note: "none_early", prev_status: null, prev_note: null, reason: "baseline" },
+    { at: "2026-10-25T20:05:00+00:00", status: "진행", note: "bid_ordered", prev_status: "판단불가", prev_note: "none_early", reason: "evidence" },
+    { at: "2026-11-01T20:05:00+00:00", status: "진행", note: "law_filed", prev_status: "진행", prev_note: "bid_ordered", reason: "evidence" },
+  ],
+  versions: [
+    { ref: "bill:B1", label: "주차장법", seen_at: "2026-10-18T20:00:00+00:00", facts: { proc_result: null } },
+    { ref: "bill:B1", label: "주차장법", seen_at: "2026-12-06T20:00:00+00:00", facts: { proc_result: "대안반영폐기" } },
+  ],
+});
+assert.deepStrictEqual(
+  ev.map((e) => `${e.date} ${e.kind} ${e.text}`),
+  [
+    "2026-06-03 happened 공약 (선거공약서)",
+    "2026-09-14 happened 공사 입찰 공고 · ○○동 공영주차장 건립공사",
+    // 같은 날: 공포(일어난 일)가 기준선(확인한 일)보다 위
+    "2026-10-19 happened 조례 일부개정 공포 · 서구 주차장 조례",
+    `2026-10-19 seen 판정 판단불가 · ${REASON_LABEL.baseline}`,
+    "2026-10-26 seen 판정 판단불가 → 진행 · 근거 연결",
+    "2026-11-02 seen 판정 사유 바뀜(진행 유지) · 근거 연결",
+    "2026-12-07 seen 기록 변화 · 주차장법 · proc_result 없음 → proc_result 대안반영폐기",
+  ],
+);
+assert.equal(ev[1].href, "https://example.com/bid");
+console.log("timeline ok");

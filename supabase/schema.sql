@@ -949,3 +949,277 @@ left join member m on m.code = h.member_code
 where not coalesce(m.is_incumbent, false) or m.office is distinct from '국회의원';
 
 grant select on vacant_seat to anon, authenticated;
+
+-- ==== 주간 기록 메일: 구독 ====
+-- /my 에서 지역을 고르고 메일 주소를 넣은 사람. 메일 주소·지역·신청/확인 시각만 둔다.
+-- 해지하면 행을 지운다(남겨 둘 이유가 없다). 확인하지 않은 주소는 digest.py 가 7일 뒤 지운다.
+-- token 은 확인·해지 링크의 열쇠다. 로그인이 없으니 이것을 가진 사람이 곧 주인이다.
+--
+-- 다른 표와 달리 공개 읽기 정책이 없다. RLS 만 켜고 anon·authenticated 권한까지 거둔다 — anon 키는
+-- 공개값이라 정책 하나만 잘못 붙어도 메일 주소가 통째로 나간다. 쓰기는 web/src/app/api/subscription/route.ts
+-- 가 service_role 키로 아래 세 함수만 부른다. 발송(collector/digest.py)은 postgres 로 직접 붙는다.
+create table if not exists subscriber (
+  id              bigserial primary key,
+  email           text not null unique check (email = lower(email) and length(email) <= 254),
+  sd_name         text not null,                 -- /my 의 시도 (광주·전남은 '전남광주통합특별시')
+  wiw_name        text not null default '',      -- '' 이면 시도 전체
+  token           uuid not null unique default gen_random_uuid(),
+  created_at      timestamptz not null default now(),   -- 신청
+  confirm_sent_at timestamptz,                           -- 확인 메일을 마지막으로 보낸 때
+  confirmed_at    timestamptz                            -- 동의(메일 링크의 '구독 확인')
+);
+alter table subscriber enable row level security;
+
+-- 주마다 누구를 처리했나. (구독자, 주) 기본키라 같은 주에 두 번 보내지 않는다 — digest.py 는
+-- 보내기 전에 여기 먼저 적고, 못 보냈으면 지운다. sent = false 는 그 주 기록이 없어 안 보낸 것.
+create table if not exists digest_log (
+  subscriber_id bigint  not null references subscriber(id) on delete cascade,
+  week          date    not null,                -- 그 주 월요일(KST). 담는 기간은 앞 7일
+  sent          boolean not null,
+  at            timestamptz not null default now(),
+  primary key (subscriber_id, week)
+);
+alter table digest_log enable row level security;
+revoke all on subscriber, digest_log from anon, authenticated;
+
+-- 신청. 확인 메일을 보내야 하면 token, 아니면 null.
+-- - 이미 확인된 주소는 아무것도 바꾸지 않는다. 남이 내 구독의 지역을 바꾸지 못하게. 지역을 바꾸려면 해지 후 다시.
+-- - 확인 메일은 주소마다 10분에 한 통, 전체 한 시간에 30통까지 — 남의 주소로 메일 폭탄을 쏘는 데 쓰이지
+--   않게. IP 를 저장하지 않는 대신 이것으로 막는다. 넘으면 'subscription_busy'.
+create or replace function subscription_request(p_email text, p_sd text, p_wiw text) returns uuid
+language plpgsql as $$
+declare t uuid; last_sent timestamptz;
+begin
+  if (select count(*) from subscriber where confirm_sent_at > now() - interval '1 hour') >= 30 then
+    raise exception 'subscription_busy';
+  end if;
+  insert into subscriber (email, sd_name, wiw_name) values (lower(trim(p_email)), p_sd, p_wiw)
+  on conflict (email) do update set sd_name = excluded.sd_name, wiw_name = excluded.wiw_name
+    where subscriber.confirmed_at is null
+  returning token, confirm_sent_at into t, last_sent;
+  if t is null or last_sent > now() - interval '10 minutes' then
+    return null;
+  end if;
+  update subscriber set confirm_sent_at = now() where token = t;
+  return t;
+end $$;
+
+-- 확인. 마지막 확인 메일이 7일 안이어야 한다. 이미 확인된 것은 그대로 true(다시 쓰지 않는다).
+create or replace function subscription_confirm(p_token uuid) returns boolean
+language sql as $$
+  update subscriber set confirmed_at = now()
+  where token = p_token and confirmed_at is null and confirm_sent_at > now() - interval '7 days';
+  select exists (select 1 from subscriber where token = p_token and confirmed_at is not null);
+$$;
+
+-- 해지. 행을 지운다(digest_log 도 함께). 없는 토큰이면 false.
+create or replace function subscription_stop(p_token uuid) returns boolean
+language sql as $$
+  with gone as (delete from subscriber where token = p_token returning 1)
+  select exists (select 1 from gone);
+$$;
+
+revoke execute on function subscription_request(text, text, text), subscription_confirm(uuid), subscription_stop(uuid)
+  from public, anon, authenticated;
+grant execute on function subscription_request(text, text, text), subscription_confirm(uuid), subscription_stop(uuid)
+  to service_role;
+
+-- ==== 공약 판정 이력·근거 원문 ====
+-- 판정은 지금처럼 규칙표(judge.py DECIDE_SQL)가 하고, 판정이 바뀔 때마다 "어떤 근거 기록의 어떤 버전
+-- 때문인지" 를 남긴다. 설계: docs/superpowers/specs/2026-10-12-pledge-evidence-tracking.md
+--
+-- 운영 적용 순서(백필): 이 덩어리(A–E) → `python judge.py snapshot` → 다음 덩어리 '기준선과 트리거'.
+-- 기준선의 versions 가 비면 첫 변경이 전부 '근거 연결' 로 잘못 찍힌다.
+
+-- A. 수집 시각. 주간 기록 메일의 bill.created_at 과 같은 칸이다(새 기록·증분 대조가 같이 쓴다).
+--    기존 행은 '-infinity' 상수 — 표를 다시 쓰지 않고(Disk IO), 칸을 단 주에 전부 '새 기록' 이 되지 않는다.
+--    상수 기본값으로 더한 뒤 기본값만 now() 로 바꾼다. 수집기는 이 칸을 쓰지 않아 insert 때의 now() 가 남는다.
+alter table bill       add column if not exists created_at timestamptz not null default '-infinity';
+alter table bill       alter column created_at set default now();
+alter table ordinance  add column if not exists created_at timestamptz not null default '-infinity';
+alter table ordinance  alter column created_at set default now();
+alter table bid_notice add column if not exists created_at timestamptz not null default '-infinity';
+alter table bid_notice alter column created_at set default now();
+create index if not exists ordinance_ordin_id_idx on ordinance (ordin_id);  -- 같은 조례의 다음 제·개정(폐지 포함)
+
+-- B. 대안반영폐기 법안 → 그 대안. 잇는 규칙은 ingest.LINK_ALT_SQL 이 bill.alt_bill_id 에 적고,
+--    judge.py DECIDE_SQL 도 같은 칸으로 잇는다. 스냅숏(source_version.facts)과 /pledge/[id] 가 쓴다.
+create or replace view bill_alt with (security_invoker = true) as
+select b.bill_id, alt.bill_id as alt_id, alt.name as alt_name, alt.proc_result as alt_result, alt.proc_dt as alt_dt
+from bill b
+join bill alt on alt.bill_id = b.alt_bill_id;
+grant select on bill_alt to anon, authenticated;
+
+-- C. 근거 기록의 버전. 본문은 원천 표(bill·ordinance·bid_notice)에 있고 여기엔 판정에 쓰이는 칸과 해시만.
+--    직전 버전과 해시가 다를 때만 한 줄(judge.py snapshot) — A→B→A 도 세 줄로 남는다.
+create table if not exists source_version (
+  id           bigserial primary key,
+  kind         text not null check (kind in ('bill','ordin','bid')),
+  ref_id       text not null,                 -- pledge_evidence.ref_id 와 같은 값
+  content_hash text not null,                 -- judge.content_hash(정규화 본문, facts)
+  facts        jsonb not null,                -- bill {name,proc_result,proc_dt,alt_id,alt_result}
+                                              -- ordin {last_id,name,rr_kind,effective_at,announced_at} · bid {name,budget,notice_at}
+  seen_at      timestamptz not null default now()
+);
+create index if not exists source_version_ref_idx on source_version (kind, ref_id, id desc);
+
+-- D. 근거 = 기존 pledge_evidence 에 칸을 더한다. 기존 행은 전부 null 로 시작(표를 다시 쓰지 않음).
+alter table pledge_evidence
+  add column if not exists version_id  bigint references source_version(id) on delete set null,
+  add column if not exists quote       text,     -- norm(본문)[quote_start:quote_end] 그대로. '' = 모델이 "해당 부분 없음"
+  add column if not exists quote_start int,      -- 유니코드 코드포인트 오프셋(파이썬 str 인덱스)
+  add column if not exists quote_end   int,
+  add column if not exists quote_ok    boolean,  -- null 미확인 · true 원문에 있음 · false 없음/빈 구절
+  add column if not exists model       text,     -- 'gemini:gemini-3.5-flash' | 'reviewer:#123' | null(이 칸 전 연결)
+  add column if not exists prompt      text,     -- 'match:9c41e2ab' (judge.PROMPT_VERSION)
+  add column if not exists linked_at   timestamptz;  -- 기존 행 null
+alter table pledge_evidence alter column linked_at set default now();
+alter table pledge_evidence drop constraint if exists pledge_evidence_quote_span;
+alter table pledge_evidence add constraint pledge_evidence_quote_span
+  check (quote_start is null or (quote_start >= 0 and quote_end > quote_start));
+create index if not exists pledge_evidence_ref_idx on pledge_evidence (kind, ref_id);  -- 바뀐 기록 → 영향 공약
+
+-- E. 판정 변경 이력. 현재 상태는 pledge_status 그대로.
+--    공약 원문이 바뀌어 공약이 새로 만들어지면(nec.py·parse_pledges.py 의 delete → insert) 이력도 새로 시작한다.
+create table if not exists pledge_status_log (
+  id          bigserial primary key,
+  pledge_id   bigint not null references pledge(id) on delete cascade,
+  at          timestamptz not null default now(),
+  status      text not null,
+  note        text,
+  decided_by  text not null,
+  prev_status text,                              -- null = 기준선(첫 줄)
+  prev_note   text,
+  versions    bigint[] not null default '{}',    -- 그때 연결돼 있던 근거들의 최신 source_version.id
+  rule        text,                              -- judge.RULE_VERSION, 사람이 SQL 로 고치면 'manual', 기준선 null
+  reason      text not null check (reason in ('baseline','reviewer','evidence','source','rule','elapsed','input'))
+);
+create index if not exists pledge_status_log_pledge_idx on pledge_status_log (pledge_id, id);
+create index if not exists pledge_status_log_at_idx on pledge_status_log (at);   -- 주간 메일·지표
+
+create or replace function pledge_versions(p_pledge bigint) returns bigint[]
+language sql stable set search_path = public, pg_temp as $$
+  select coalesce(array_agg(v.id order by v.id), '{}')
+  from pledge_evidence e
+  cross join lateral (select s.id from source_version s
+                      where s.kind = e.kind and s.ref_id = e.ref_id order by s.id desc limit 1) v
+  where e.pledge_id = p_pledge
+$$;
+
+-- 판정을 쓰는 모든 길(judge.py decide, 검수자의 SQL Editor)이 여기를 지난다. DECIDE_SQL 의 is distinct from
+-- 덕에 바뀐 행에서만 돈다. 신뢰도(confidence)만 바뀐 것은 사건이 아니라 건너뛴다.
+-- 사유 순서: 근거 쪽(evidence·source)이 규칙 판 변경보다 먼저 — 출처 추적이 우선이다.
+create or replace function log_pledge_status() returns trigger
+language plpgsql set search_path = public, pg_temp as $$
+declare
+  prev pledge_status_log;
+  v    bigint[] := pledge_versions(new.pledge_id);
+  r    text := coalesce(nullif(current_setting('judge.rule', true), ''), 'manual');
+  now_refs text[]; prev_refs text[];
+begin
+  if tg_op = 'UPDATE' and (old.status, old.note, old.decided_by)
+     is not distinct from (new.status, new.note, new.decided_by) then
+    return null;
+  end if;
+  select * into prev from pledge_status_log where pledge_id = new.pledge_id order by id desc limit 1;
+  select array_agg(kind || ':' || ref_id order by kind, ref_id) into now_refs  from source_version where id = any(v);
+  select array_agg(kind || ':' || ref_id order by kind, ref_id) into prev_refs from source_version where id = any(prev.versions);
+  insert into pledge_status_log (pledge_id, status, note, decided_by, prev_status, prev_note, versions, rule, reason)
+  values (new.pledge_id, new.status, new.note, new.decided_by, prev.status, prev.note, v, r,
+    case
+      when prev.id is null                      then 'baseline'
+      when new.decided_by = 'reviewer'          then 'reviewer'
+      when now_refs is distinct from prev_refs  then 'evidence'   -- 근거가 붙거나 떨어짐
+      when v is distinct from prev.versions     then 'source'     -- 같은 근거, 원천 기록이 바뀜
+      when r <> 'manual' and coalesce(prev.rule, r) not in (r, 'manual') then 'rule'
+      when prev.note = 'none_early' and new.note = 'none_2y' then 'elapsed'
+      else 'input'                                                 -- 유형 분류·대조 실행 여부가 바뀜
+    end);
+  return null;
+end $$;
+
+alter table source_version    enable row level security;
+alter table pledge_status_log enable row level security;
+-- 파일 앞쪽 public_read 배열은 이 덩어리보다 먼저 돌아 새 표가 아직 없다. 다시 돌려도 되게 drop 을 앞에 단다.
+drop policy if exists public_read on source_version;
+create policy public_read on source_version    for select using (true);
+drop policy if exists public_read on pledge_status_log;
+create policy public_read on pledge_status_log for select using (true);
+revoke execute on function pledge_versions(bigint) from public, anon, authenticated;
+-- Supabase 기본 권한이 새 표·뷰에 anon 쓰기까지 준다(pledge_doc_link 사건, ops.md). 정책이 막아도 권한부터 거둔다.
+revoke insert, update, delete on bill_alt, source_version, pledge_status_log from anon, authenticated;
+
+-- ==== 공약 판정 이력: 기준선과 트리거 ====
+-- 위 덩어리와 따로 둔다. 운영에서는 `judge.py snapshot` 이 첫 버전을 다 만든 **뒤에** 이 덩어리를 한 트랜잭션으로
+-- 돌린다 — 먼저 돌리면 기준선의 versions 가 비어 첫 변경이 전부 '근거 연결' 로 찍힌다.
+-- 지난 판정 이력은 되살릴 수 없다 — 기준선 at 은 pledge_status.updated_at(마지막으로 판정이 바뀐 때)이고
+-- 화면에는 '기록 시작 시점 판정' 으로 적는다.
+insert into pledge_status_log (pledge_id, at, status, note, decided_by, versions, rule, reason)
+select s.pledge_id, s.updated_at, s.status, s.note, s.decided_by, pledge_versions(s.pledge_id), null, 'baseline'
+from pledge_status s
+where not exists (select 1 from pledge_status_log l where l.pledge_id = s.pledge_id);
+drop trigger if exists pledge_status_log_trg on pledge_status;
+create trigger pledge_status_log_trg after insert or update on pledge_status
+  for each row execute function log_pledge_status();
+
+-- ==== 주간 기록 메일: 새 기록 ====
+-- '이번 주에 새로 들어온 기록' 을 가르는 시각. 수집기는 이 칸을 쓰지 않아 insert 때의 now() 가 남는다
+-- (ingest.upsert·replace 는 넘긴 칸만 쓴다). 사건 날짜(proposed_at·voted_at)로 가르지 않는 이유:
+-- 국회 API 가 며칠 늦게 주는 기록이 이미 보낸 주에 떨어져 영영 빠진다. 수집 시각이면 주와 주가 이어 붙는다.
+-- 이미 있던 행은 '-infinity' 로 둔다. now() 로 더하면 칸을 더한 주에 법안 1.9만 건이 전부 '새 기록' 이 된다.
+-- 상수 기본값으로 더한 뒤 기본값만 now() 로 바꾼다 — 상수라 표를 다시 쓰지 않는다(Disk IO, ops.md).
+-- bill.created_at 은 위 '공약 판정 이력·근거 원문' 덩어리(A)가 만든다(증분 대조도 같이 쓴다).
+alter table vote add column if not exists created_at timestamptz not null default '-infinity';
+alter table vote alter column created_at set default now();
+-- attendance 는 ingest.py attendance 가 내용이 바뀐 날 그 대수를 통째로 다시 넣는다(replace). 그래서 이 칸은
+-- '이 누적값이 들어온 때' 다 — 새 회기 파일이 오면 그 대수 전원이 그 주에 한 줄씩 잡힌다.
+alter table attendance add column if not exists created_at timestamptz not null default '-infinity';
+alter table attendance alter column created_at set default now();
+-- 공약은 칸을 더하지 않는다. pledge_status.updated_at 은 신뢰도만 바뀌어도 움직이므로(judge.py DECIDE_SQL)
+-- 판정 이력 pledge_status_log 에서 상태가 실제로 바뀐 줄만 쓴다.
+
+-- 이번 주(p_week = 월요일, KST) 메일을 아직 처리하지 않은 확인된 구독자. 그 주가 시작되기 전에 확인한
+-- 사람만 — 수요일에 확인하면 다음 월요일부터 받는다.
+create or replace function digest_due(p_week date)
+returns table (id bigint, email text, sd_name text, wiw_name text, token uuid)
+language sql stable as $$
+  select s.id, s.email, s.sd_name, s.wiw_name, s.token
+  from subscriber s
+  where s.confirmed_at < (p_week::timestamp at time zone 'Asia/Seoul')
+    and not exists (select 1 from digest_log d where d.subscriber_id = s.id and d.week = p_week)
+  order by s.id
+$$;
+
+-- 사람들(p_codes)의 [p_from, p_to) 새 기록. 화면과 같은 정의다 — 대표발의만(공동발의는 합산하지 않는다),
+-- 표결은 결과별 건수, 출결은 누적값, 공약은 판정 변화(이전 → 지금)와 자동/검수.
+create or replace function digest_changes(p_codes text[], p_from timestamptz, p_to timestamptz)
+returns table (member_code text, kind text, data jsonb)
+language sql stable as $$
+  select s.member_code, 'bill'::text,
+         jsonb_build_object('bill_id', b.bill_id, 'name', b.name, 'proposed_at', b.proposed_at)
+  from bill_sponsor s join bill b on b.bill_id = s.bill_id
+  where s.member_code = any(p_codes) and s.role = 'rep'
+    and b.created_at >= p_from and b.created_at < p_to
+  union all
+  select v.member_code, 'vote'::text, jsonb_build_object('result', v.result, 'n', count(*))
+  from vote v
+  where v.member_code = any(p_codes) and v.created_at >= p_from and v.created_at < p_to
+  group by v.member_code, v.result
+  union all
+  select a.member_code, 'attendance'::text,
+         jsonb_build_object('age', a.age, 'session_no', a.session_no, 'as_of', a.as_of,
+                            'present', a.present, 'days', a.days)
+  from attendance a
+  where a.member_code = any(p_codes) and a.created_at >= p_from and a.created_at < p_to
+  union all
+  -- 기준선(prev_status null)·사유만 바뀐 줄·규칙 판 변경(reason 'rule')은 싣지 않는다. 한 주에 두 번 바뀌면 두 줄.
+  select p.member_code, 'pledge'::text,
+         jsonb_build_object('pledge_id', p.id, 'title', p.title, 'order_no', p.order_no,
+                            'status', l.status, 'prev', l.prev_status, 'decided_by', l.decided_by)
+  from pledge_status_log l join pledge p on p.id = l.pledge_id
+  where p.member_code = any(p_codes) and l.at >= p_from and l.at < p_to
+    and l.prev_status is not null and l.prev_status <> l.status and l.reason <> 'rule'
+$$;
+
+revoke execute on function digest_due(date), digest_changes(text[], timestamptz, timestamptz)
+  from public, anon, authenticated;

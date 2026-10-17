@@ -101,9 +101,18 @@ def test_overload_is_retried_then_raised():
         llm.time.sleep = sleep
 
 
+def test_pick_skips_latest_alias():
+    # `-latest` 는 가리키는 모델이 예고 없이 바뀐다 — 버전이 박힌 이름을 고른다.
+    models = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite",
+              "gemini-3.1-flash-lite-preview", "gemini-3.1-flash"]
+    assert llm.gemini_pick(models) == "gemini-3.1-flash-lite"
+
+
 if __name__ == "__main__":
     test_parsing()
     test_rotation_stops_at_the_end()
     test_complete_switches_keys_then_gives_up()
     test_overload_is_retried_then_raised()
+    test_pick_skips_latest_alias()
     print("ok")
+

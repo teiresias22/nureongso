@@ -33,7 +33,7 @@ const nextConfig: NextConfig = {
   // 브라우저용 Cache-Control 은 그대로 두고, HTML·RSC 응답은 `_rsc` 검색어로 키가 갈린다.
   async headers() {
     const cdn = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=86400, stale-while-revalidate=86400" }];
-    // `/bill` 은 검색어를 안 읽어 ISR(전역 캐시)로 돈다. 여기 넣지 않는다.
+    // `/bill`·`/pledge` 는 검색어를 안 읽어 ISR(전역 캐시)로 돈다. 여기 넣지 않는다.
     return ["/", "/m/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn }));
   },
 };

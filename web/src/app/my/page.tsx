@@ -3,6 +3,7 @@ import Link from "@/lib/link";
 import { Photo } from "../page";
 import { AreaPicker } from "./picker";
 import { pageOg } from "@/lib/site";
+import { subscriptionOn } from "@/lib/subscription";
 import {
   attendRate, districtArea, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, myPath, partyColor, pct, regionsOf, shortDistrict, sido,
   type Area, type CardRecord, type CardStats, type Member,
@@ -45,7 +46,8 @@ export async function generateMetadata(
 
 const OFFICE_ORDER = ["국회의원", "구시군의장", "시도지사", "교육감"];
 
-/** '서울 중구성동구갑' 에 '성동구' 가 있나. 시군구 이름이 시작하는 자리에서만 센다. */
+/** '서울 중구성동구갑' 에 '성동구' 가 있나. 시군구 이름이 시작하는 자리에서만 센다.
+ *  collector/digest.py 의 in_district·resolve 가 같은 규칙이다 — 한쪽을 고치면 다른 쪽도. */
 function inDistrict(district: string, wiw: string): boolean {
   for (let i = district.indexOf(wiw); i >= 0; i = district.indexOf(wiw, i + 1)) {
     if (i === 0 || " 시군구".includes(district[i - 1])) return true;
@@ -143,6 +145,43 @@ export default async function MyPage({
             </Link>
             하세요.
           </p>
+          {/* 구독 신청. 자바스크립트 없이 도는 보통 폼이다 — 결과는 /subscription 이 보여 준다.
+              지역은 위에서 고른 값 그대로 보내고, route 가 이 목록에 있는지 다시 본다.
+              메일 키가 다 들어오기 전에는 보이지 않는다(subscriptionOn). */}
+          {subscriptionOn() && (
+            <form
+              method="post"
+              action="/api/subscription?do=subscribe"
+              className="space-y-2 rounded-lg border border-line bg-card p-4"
+            >
+              <label htmlFor="sub-email" className="block text-sm font-medium">
+                {[sd, wiw].filter(Boolean).join(" ")}의 공개 기록이 새로 들어온 주에 메일 받기
+              </label>
+              <input type="hidden" name="sd" value={sd} />
+              <input type="hidden" name="wiw" value={wiw} />
+              {/* 사람에게는 보이지 않는 칸. 채워 오면 봇으로 보고 받은 척만 한다. */}
+              <input type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
+              <div className="flex flex-wrap gap-2">
+                <input
+                  id="sub-email"
+                  type="email"
+                  name="email"
+                  required
+                  maxLength={254}
+                  placeholder="메일 주소"
+                  className="min-w-60 flex-1 rounded-md border border-line bg-card px-3 py-2 text-sm"
+                />
+                <button className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background">
+                  구독 신청
+                </button>
+              </div>
+              <p className="text-xs text-muted">
+                매주 월요일, 지난주에 새로 수집된 대표발의 법안·본회의 표결·출결·공약 판정을 보냅니다. 기록이 없는
+                주에는 보내지 않습니다. 메일 주소·지역·신청과 확인 시각만 저장하고, 확인 메일의 링크를 눌러야
+                시작합니다. 메일마다 해지 링크가 있습니다.
+              </p>
+            </form>
+          )}
         </>
       )}
     </div>

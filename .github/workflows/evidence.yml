@@ -37,6 +37,12 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # 모델을 고정한다. 비워 두면 llm.py 가 쓸 수 있는 것 중 고르는데, 그 결과가 별칭
+    # gemini-flash-lite-latest 라 구글이 가리키는 모델을 바꾸면 조용히 바뀐다 — 대조 재현성 지표가
+    # 그만큼 흔들린다. 그 별칭이 가리키던 판(gemini-3.1-flash-lite)을 박는다.
+    # 바꾸는 것은 따로 커밋한다(근거 행의 model 칸에 남아 바뀐 때가 보인다). race.yml 은 따로 고정.
+    env:
+      GEMINI_MODEL: gemini-3.1-flash-lite
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -123,11 +129,38 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python judge.py match_bid
 
+      # 근거 기록(법안·조례·발주)의 버전. 판정 바로 앞에 둬야 판정 이력이 '어느 버전 때문인지' 를
+      # 가리킨다. LLM 없음. 판정 이력 표가 없는 DB 면 실패하지만 판정은 그대로 돈다.
+      - name: 근거 버전
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python judge.py snapshot
+
       - name: 판정 다시 적용
         working-directory: collector
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python judge.py decide
+
+      # 아래 둘은 LLM 을 쓴다. 판정과 무관하게 이어서 하고, 한도에 걸리면 다음 주가 잇는다.
+      # quote: 근거마다 원문 구절(서버가 원문에서 다시 찾아 확인). repro: 표본 5명 대조 두 번.
+      - name: 근거 원문 구절
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python judge.py quote
+
+      - name: 대조 재현성 표본
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python judge.py repro --n 5
 
       - name: 결과 요약
         if: always()
@@ -184,4 +217,45 @@ jobs:
               print("|---|---|")
               for st, n in cur.fetchall():
                   print(f"| {st} | {n:,} |")
+          # 판정 근거 지표. 정의는 docs/superpowers/specs/2026-10-12-pledge-evidence-tracking.md ⑧.
+          # 판정 이력·근거 버전 표가 없는 DB(적용 전)면 한 줄만 적고 넘어간다.
+          import ingest, judge
+          with psycopg.connect(os.environ["DATABASE_URL"]) as c:
+              try:
+                  with c.cursor() as cur:
+                      cur.execute("select count(distinct (kind, ref_id)) from pledge_evidence where kind in ('bill','ordin','bid')")
+                      refs = cur.fetchone()[0]
+                  miss, _ = judge.run_snapshot(c, check=True)
+                  print(f"\n근거 버전 감지 누락: {miss:,} / {refs:,}건 (판정 직후 0 이어야 한다)")
+                  changed = judge.run_decide(c, check=True)
+                  print(f"판정 결정성: 다시 판정하면 바뀔 것 {changed:,}건 (0 이어야 한다, 규칙 판 {judge.RULE_VERSION})")
+                  with c.cursor() as cur:
+                      cur.execute("""select count(*) filter (where quote_ok), count(*), count(*) filter (where quote = '')
+                                     from pledge_evidence
+                                     where kind = 'bill' and model like 'gemini:%' and quote_ok is not null""")
+                      ok, n, empty = cur.fetchone()
+                      # 구절을 '완료' 조건에 넣을지는 이 비율을 몇 주 본 뒤 정한다(설계 열린 질문 1).
+                      print(f"원문 일치율(AI 가 고른 법안 구절): {ok:,} / {n:,}" + (f" ({ok / n:.0%})" if n else "")
+                            + f" · '해당 부분 없음' {empty:,} · 모델 {os.environ.get('GEMINI_MODEL') or '자동'}")
+                      cur.execute("""select sum(rows), sum(split_part(source, ':', -1)::int) from ingest_run
+                                     where source like 'repro:%' and finished_at > now() - interval '28 days'""")
+                      same, seen = cur.fetchone()
+                      print(f"대조 재현성(4주 표본): {same or 0} / {seen or 0}명 근거 집합 일치")
+                      cur.execute("""select count(*) filter (where error is not null or finished_at is null), count(*)
+                                     from ingest_run
+                                     where split_part(source, ':', 1) = any(%s) and started_at > now() - interval '28 days'""",
+                                  (list(ingest.STEPS),))
+                      bad, runs = cur.fetchone()
+                      print(f"수집 실패(ingest.py 4주): {bad:,} / {runs:,}회")
+                      cur.execute("""select count(*) filter (where cardinality(versions) > 0), count(*),
+                                            count(*) filter (where at > now() - interval '7 days')
+                                     from pledge_status_log
+                                     where prev_status is not null and prev_status <> status and status in ('완료','진행')""")
+                      linked, ups, week = cur.fetchone()
+                      print(f"완료·진행으로 바뀐 판정 중 근거 버전이 있는 것: {linked:,} / {ups:,}건 (이번 주 {week:,}건)")
+                      cur.execute("""select reason, count(*) from pledge_status_log
+                                     where at > now() - interval '7 days' group by 1 order by 2 desc""")
+                      print("이번 주 판정 이력: " + (" · ".join(f"{r} {n:,}" for r, n in cur.fetchall()) or "없음"))
+              except psycopg.Error as e:
+                  print(f"\n판정 근거 지표: 아직 잴 수 없음({type(e).__name__}) — schema.sql '공약 판정 이력' 적용 전")
           PY

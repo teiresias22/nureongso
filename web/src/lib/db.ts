@@ -99,6 +99,15 @@ export const NOTE_LABEL: Record<string, string> = {
   none_2y: "임기 2년이 지났지만 관련 기록이 없습니다",
   none_early: "관련 기록이 아직 없습니다 (임기 2년 미만)",
   not_checked: "아직 공식 기록과 대조하지 않았습니다",
+  past_term: "지난 임기 공약이라 판정하지 않습니다",
+};
+
+/** 판정 배지 색. 인물 페이지 공약 목록과 공약 상세(/pledge/[id])가 같이 쓴다. */
+export const STATUS_BG: Record<string, string> = {
+  완료: "bg-green-700 text-white",
+  진행: "bg-amber-700 text-white",
+  미착수: "bg-stone-500 text-white",
+  판단불가: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200",
 };
 
 /** judge.py 의 note 를 사람이 읽는 말로. 접두사가 붙는 두 가지는 따로 푼다. */
@@ -197,39 +206,8 @@ export function partyLine(v?: string | null) {
 export const districtArea = (district?: string | null): string =>
   (DISTRICT_AREA as Record<string, string>)[lastPart(district)] ?? "";
 
-/** 선관위가 주는 시도·시군구(member_area 뷰). member.district 는 직위마다 모양이 달라 못 쓴다. */
-export type Area = {
-  member_code: string;
-  office: string;
-  sd_name: string | null;
-  wiw_name: string | null;
-};
-
-/** 2026년 지방선거에서 광주·전남이 통합됐다. 새 시도지사·교육감만 통합 이름으로 넘어가고
- *  국회의원·구청장은 옛 시도 이름 그대로라, 합치지 않으면 광주 주민이 자기 시도지사를 놓친다. */
-const SD_MERGED: Record<string, string> = {
-  광주광역시: "전남광주통합특별시",
-  전라남도: "전남광주통합특별시",
-};
-export const sido = (v: string | null) => (v ? SD_MERGED[v] ?? v : "");
-
-/** 시도 → 시군구 목록(가나다순). /my 화면·메타데이터·사이트맵이 같은 목록을 써야
- *  사이트맵에 화면에 없는 지역 주소가 나가지 않는다. */
-export function regionsOf(areas: Area[]): Record<string, string[]> {
-  const by = new Map<string, Set<string>>();
-  for (const a of areas) {
-    // '전국' 은 비례대표다. 지역으로 찾는 화면에 넣을 자리가 없다.
-    if (!a.sd_name || a.sd_name === "전국") continue;
-    const k = sido(a.sd_name);
-    if (!by.has(k)) by.set(k, new Set());
-    if (a.wiw_name) by.get(k)!.add(a.wiw_name);
-  }
-  return Object.fromEntries(
-    [...by]
-      .sort(([a], [b]) => a.localeCompare(b, "ko"))
-      .map(([k, v]) => [k, [...v].sort((x, y) => x.localeCompare(y, "ko"))]),
-  );
-}
+// 시도·시군구 목록은 import 없는 area.ts 에 둔다(subscription.check.mjs 가 node 로 바로 읽는다).
+export { regionsOf, sido, type Area } from "./area";
 
 /** /my 의 지역 주소. 이 주소가 곧 지역 허브의 canonical 이다. */
 export const myPath = (sd: string, wiw = "") =>
