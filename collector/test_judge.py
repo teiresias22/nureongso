@@ -115,3 +115,16 @@ def test_rule_version_listed():
     # 지금 판이 /rules '판정 기준 변경 기록'(#changes)에 있어야 한다. 빠뜨리면 배포하지 않는다(절차 R).
     rules = open(os.path.join(WEB, "app", "rules", "page.tsx")).read()
     assert f'ver: "{judge.RULE_VERSION}"' in rules, judge.RULE_VERSION
+
+
+def test_gold_score():
+    import sample_review as sr
+    lo, hi = sr.wilson(10, 19)                      # 설계서 X18 표본: 10/19 → 32~73%
+    assert round(lo, 2) == 0.32 and round(hi, 2) == 0.73, (lo, hi)
+    assert sr.wilson(0, 0) == (0.0, 1.0)
+    row = dict.fromkeys(sr.COLS, "")
+    rows = [dict(row, layer="done", pledge_id="1", ev="bill:A", label="ok", scope="전부", enacted="예"),
+            dict(row, layer="done", pledge_id="2", ev="ordin:B", label="wrong", scope="전부", enacted="예"),
+            dict(row, layer="done", pledge_id="3", ev="bill:C")]                 # 아직 안 채움 — 세지 않는다
+    out = "\n".join(sr.score_gold(rows))
+    assert "근거 정밀도 bill: 1/1" in out and "근거 정밀도 ordin: 0/1" in out and "완료 정밀도(맞는 근거·전부·공포): 1/2" in out, out
