@@ -4,7 +4,7 @@
 -- 또는 SQL Editor 에 통째로 붙여 실행. assert 가 틀리면 그 문장에서 멈춘다.
 begin;
 
--- 1) 사유 일곱 가지 중 여섯: 기준선 → (신뢰도만: 줄 없음) → 기간 경과 → 근거 연결 → 원천 변화 → 규칙 판 → 검수
+-- 1) 사유 일곱 가지 중 여섯: 기준선 → (신뢰도만: 줄 없음) → 기간 경과 → 근거 연결 → 원천 변화 → (판만 바뀜: input) → 규칙 판 적용 → 검수
 select set_config('judge.rule', 'v1', true);
 do $$
 declare pid bigint;
@@ -37,14 +37,51 @@ begin
   select reason into last_reason from pledge_status_log where pledge_id = pid order by id desc limit 1;
   assert last_reason = 'source', '같은 근거의 새 버전이 source 가 아니다: ' || last_reason;
 
+  -- (a) 판 이름만 바뀌고 실행 맥락이 없으면 규칙 변경으로 보지 않는다(입력 변화)
   perform set_config('judge.rule', 'v2', true);
   update pledge_status set note = 'law_filed' where pledge_id = pid;
   select reason into last_reason from pledge_status_log where pledge_id = pid order by id desc limit 1;
-  assert last_reason = 'rule', '규칙 판만 바뀌었는데 rule 이 아니다: ' || last_reason;
+  assert last_reason = 'input', 'judge.reason 없이 판만 바뀌었는데 input 이 아니다: ' || last_reason;
+
+  -- (b) 규칙 판 적용 실행(decide --rule)의 변화는 rule, 칸에는 그 판
+  perform set_config('judge.rule', 'v3', true);
+  perform set_config('judge.reason', 'rule', true);
+  update pledge_status set note = 'law_alt_unverified' where pledge_id = pid;
+  assert (select rule || '|' || reason from pledge_status_log where pledge_id = pid order by id desc limit 1) = 'v3|rule',
+    '규칙 판 적용이 v3|rule 이 아니다';
+
+  -- (c) 검수 실행이면 decided_by 가 auto 여도 reviewer
+  perform set_config('judge.reason', 'reviewer', true);
+  update pledge_status set note = 'law_filed' where pledge_id = pid;
+  select reason into last_reason from pledge_status_log where pledge_id = pid order by id desc limit 1;
+  assert last_reason = 'reviewer', '검수 실행이 reviewer 가 아니다: ' || last_reason;
+  perform set_config('judge.reason', '', true);
 
   update pledge_status set decided_by = 'reviewer', status = '완료', note = null where pledge_id = pid;
   select reason into last_reason from pledge_status_log where pledge_id = pid order by id desc limit 1;
   assert last_reason = 'reviewer', '검수가 reviewer 가 아니다: ' || last_reason;
+end $$;
+
+-- 1-1) 기준선(rule null)에서 첫 규칙 적용이 rule, none_early → none_partial 은 기간 경과
+do $$
+declare pid bigint; q bigint;
+begin
+  insert into pledge (member_code, title, order_no) values ('ZZHIST1', '점검 공약 3', 3) returning id into pid;
+  perform set_config('judge.rule', '', true);
+  insert into pledge_status (pledge_id, status, note) values (pid, '판단불가', 'none_early');
+  update pledge_status_log set rule = null where pledge_id = pid;   -- 운영 기준선처럼
+  perform set_config('judge.rule', 'v4', true);
+  perform set_config('judge.reason', 'rule', true);
+  update pledge_status set note = 'not_checked' where pledge_id = pid;
+  assert (select reason from pledge_status_log where pledge_id = pid order by id desc limit 1) = 'rule',
+    '기준선 rule null 에서 첫 규칙 적용이 rule 이 아니다';
+  perform set_config('judge.reason', '', true);
+
+  insert into pledge (member_code, title, order_no) values ('ZZHIST1', '점검 공약 4', 4) returning id into q;
+  insert into pledge_status (pledge_id, status, note) values (q, '판단불가', 'none_early');
+  update pledge_status set note = 'none_partial' where pledge_id = q;
+  assert (select reason from pledge_status_log where pledge_id = q order by id desc limit 1) = 'elapsed',
+    'none_early → none_partial 이 elapsed 가 아니다';
 end $$;
 
 -- 2) 판 없이(SQL Editor) 고친 판정은 rule = 'manual', 사유는 입력 변화

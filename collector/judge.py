@@ -30,6 +30,8 @@ pledge_status 를 건드리지 않고 pledge_overlap 에만 쌓는다.
     python judge.py match_race            # 선거 때만. all 에 들어 있지 않다.
     python judge.py decide --check        # 쓰지 않고 바뀔 판정 수만 (판정 결정성 점검)
     python judge.py decide --diff [--base <커밋>]  # 쓰지 않고 판정 전이표. --base 는 그 커밋 규칙 대비
+    python judge.py decide --rule         # 규칙 판 적용(evidence.yml 이 지난 판으로 털어 낸 뒤 부른다)
+    python judge.py rule-prev             # none | 빈 줄 | 지난 판 커밋 (evidence.yml 용)
     python judge.py snapshot [--check]    # 근거 버전. --check 는 쓰지 않고 바뀐 근거 수만
     python judge.py quote [--limit N]     # 원문 구절 (이어받기 됨)
     python judge.py repro --n 5           # 대조 재현성 표본
@@ -1492,19 +1494,68 @@ def run_invariants(conn) -> list[tuple[str, str, int | None]]:
     return out
 
 
-def run_decide(conn, check: bool = False, diff: bool = False, base: str | None = None) -> int:
+def applied_rule(cur) -> tuple[str, str] | None:
+    """마지막으로 적용한 규칙 판과 그 커밋. decide --rule 이 ingest_run 에 'rule:<판>@<sha>' 로 남긴다."""
+    cur.execute("select source from ingest_run where source like 'rule:%' order by id desc limit 1")
+    row = cur.fetchone()
+    if not row:
+        return None
+    ver, _, sha = row[0][len("rule:"):].partition("@")
+    return ver, sha
+
+
+def head_sha() -> str:
+    import subprocess
+    return os.environ.get("GITHUB_SHA") or subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
+        cwd=os.path.dirname(os.path.abspath(__file__))).stdout.strip()
+
+
+def run_rule_prev(conn) -> None:
+    """evidence.yml '규칙 판 적용' 단계가 읽는다. 진행 중인 수집이 끝나기를 기다린 뒤 한 줄을 낸다:
+    none(적용 기록 없음) · 빈 줄(지금 판이 적용됨) · 지난 판의 커밋(그 판으로 털어 낸 뒤 새 판을 적용한다).
+    수집과 판정은 동시 실행 그룹이 달라 겹쳐 돈다. 수집 중에 털어 내면 그 뒤 변화가 'rule' 로 섞인다."""
+    import time
+    for minute in range(61):
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from ingest_run where finished_at is null"
+                        " and started_at > now() - interval '3 hours'")
+            running = cur.fetchone()[0]
+        conn.rollback()
+        if not running:
+            break
+        if minute == 60:
+            sys.exit("수집이 60분째 진행 중이라 규칙 판을 적용하지 않습니다.")
+        print(f"  진행 중인 수집 {running}건 — 1분 뒤 다시 봅니다", file=sys.stderr)
+        time.sleep(60)
+    with conn.cursor() as cur:
+        last = applied_rule(cur)
+    print("none" if last is None else "" if last[0] == RULE_VERSION else last[1])
+
+
+def run_decide(conn, check: bool = False, diff: bool = False, base: str | None = None, rule: bool = False) -> int:
     """check·diff 는 쓰지 않고 바뀔 판정 수만 돌려준다(판정 직후 0 이어야 한다 — 판정 결정성).
-    diff 는 전이표까지 찍고, base 를 주면 그 커밋의 규칙과 비교한 순수 규칙 전이다."""
+    diff 는 전이표까지 찍고, base 를 주면 그 커밋의 규칙과 비교한 순수 규칙 전이다.
+    rule 은 규칙 판 적용이다: 이 실행의 변화를 이력에 'rule' 로 남기고 'rule:<판>@<커밋>' 을 기록한다.
+    보통 decide 는 마지막으로 적용한 판이 지금 판과 다르면 쓰지 않는다 — 판이 바뀐 변화가 입력 변화에 섞이지 않게."""
     if check or diff:
         with conn.cursor() as cur:
             rows, conf_only = diff_rows(cur, base)
         conn.rollback()
         return print_diff(rows, conf_only, f"{base} 의 규칙 대비" if base else "운영 판정 대비")
     with conn.cursor() as cur:
-        # 판정 이력 트리거(log_pledge_status)가 이 판을 rule 칸에 남긴다. 트랜잭션 안에서만 유효하다.
+        last = applied_rule(cur)
+        if not rule and last is not None and last[0] != RULE_VERSION:
+            print(f"[decide] 규칙 판 미적용 — 마지막 적용 {last[0]}, 지금 {RULE_VERSION}. decide --rule 먼저", file=sys.stderr)
+            sys.exit(1)
+        # 판정 이력 트리거(log_pledge_status)가 판을 rule 칸에, 실행 맥락을 사유에 쓴다. 트랜잭션 안에서만 유효하다.
         cur.execute("select set_config('judge.rule', %s, true)", (RULE_VERSION,))
+        if rule:
+            cur.execute("select set_config('judge.reason', 'rule', true)")
         cur.execute(DECIDE_SQL, PARAMS)
         n = cur.rowcount
+        if rule:
+            log_run(cur, f"rule:{RULE_VERSION}@{head_sha()}", n)
         # 바뀐 판정이 없으면 집계를 다시 만들지 않는다(ingest.py 가 매일 refresh 한다).
         if n:
             cur.execute("refresh materialized view concurrently member_stats")
@@ -1514,7 +1565,7 @@ def run_decide(conn, check: bool = False, diff: bool = False, base: str | None =
                     " group by status, note order by count(*) desc")
         for st, note, c in cur.fetchall():
             print(f"  {st:6} {note:22} {c:6,}건", file=sys.stderr)
-    print(f"[decide] {n:,}건 판정 (규칙 적용, LLM 없음, 규칙 판 {RULE_VERSION})", file=sys.stderr)
+    print(f"[decide{' --rule' if rule else ''}] {n:,}건 판정 (규칙 적용, LLM 없음, 규칙 판 {RULE_VERSION})", file=sys.stderr)
     return n
 
 
@@ -1523,11 +1574,12 @@ def main():
     p.add_argument(
         "step",
         choices=["classify", "match", "match_ordin", "match_bid",
-                 "match_race", "decide", "snapshot", "quote", "repro", "all"])
+                 "match_race", "decide", "rule-prev", "snapshot", "quote", "repro", "all"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--check", action="store_true", help="decide·snapshot: 쓰지 않고 바뀔 수만 센다")
     p.add_argument("--diff", action="store_true", help="decide: 쓰지 않고 판정 전이표를 낸다")
     p.add_argument("--base", help="decide --diff: 이 커밋의 규칙과 같은 스냅숏에서 비교한다")
+    p.add_argument("--rule", action="store_true", help="decide: 규칙 판 적용(이 실행의 변화는 이력에 'rule')")
     p.add_argument("--n", type=int, default=5, help="repro: 표본 사람 수")
     p.add_argument("--redo", action="store_true")
     p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다")
@@ -1549,7 +1601,9 @@ def main():
         if a.step == "match_race":
             run_match_race(conn, a.limit, a.redo, a.since)
         if a.step in ("decide", "all"):
-            run_decide(conn, a.check, a.diff, a.base)
+            run_decide(conn, a.check, a.diff, a.base, a.rule)
+        if a.step == "rule-prev":
+            run_rule_prev(conn)
         # 아래 셋은 all 에 넣지 않는다. evidence.yml 이 decide 앞뒤에 따로 부른다.
         if a.step == "snapshot":
             run_snapshot(conn, a.check)
