@@ -151,6 +151,8 @@ export type Bill = {
   proc_result: string | null;
   proposer: string | null;
   detail_link: string | null;
+  /** 대안반영폐기면 그 내용을 담은 위원장 대안. 이름·날짜로 잇고 못 이으면 null (/rules#merged). */
+  alt_bill_id?: string | null;
 };
 
 /** 직위 배지 색. 목록에 네 직위가 섞여 있어 글씨만으로는 한눈에 안 갈린다.
@@ -203,6 +205,13 @@ export function partyLine(v?: string | null) {
  *  갱신: collector/districts.py (선거구 재획정 때만). */
 export const districtArea = (district?: string | null): string =>
   (DISTRICT_AREA as Record<string, string>)[lastPart(district)] ?? "";
+
+// 시도·시군구 목록은 import 없는 area.ts 에 둔다(subscription.check.mjs 가 node 로 바로 읽는다).
+export { regionsOf, sido, type Area } from "./area";
+
+/** /my 의 지역 주소. 이 주소가 곧 지역 허브의 canonical 이다. */
+export const myPath = (sd: string, wiw = "") =>
+  `/my?sd=${encodeURIComponent(sd)}${wiw ? `&wiw=${encodeURIComponent(wiw)}` : ""}`;
 
 /** 시도 이름을 통용 약칭으로. '전남광주통합특별시 서구갑' 같은 긴 지역구를 줄인다. */
 const SIDO_SHORT: Record<string, string> = {

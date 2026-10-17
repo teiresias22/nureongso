@@ -26,7 +26,8 @@ create index if not exists member_office_idx on member (office) where is_incumbe
 create index if not exists member_name_idx on member (name);
 create index if not exists member_incumbent_idx on member (is_incumbent) where is_incumbent;
 
--- 법률안
+-- 법률안. 의원 발의(nzmimeepazxkubdpn) + 위원장·정부 법률안(TVBPMBILL11).
+-- 위원장·정부안은 bill_sponsor 가 없어 의원별 집계(member_stats·member_bill)에 끼지 않는다.
 create table if not exists bill (
   bill_id       text primary key,
   age           int not null,
@@ -39,9 +40,13 @@ create table if not exists bill (
   proposer      text,                      -- "홍길동의원 등 10인"
   detail_link   text,
   summary       text,                      -- 제안이유·주요내용 (BPMBILLSUMMARY 원문)
+  alt_bill_id   text,                      -- 대안반영폐기면 그 내용을 담은 위원장 대안 (ingest.link_alternatives)
   updated_at    timestamptz not null default now()
 );
+alter table bill add column if not exists alt_bill_id text;
 create index if not exists bill_age_idx on bill (age);
+-- 대안 페이지의 '이 대안에 반영된 법안' 목록
+create index if not exists bill_alt_idx on bill (alt_bill_id) where alt_bill_id is not null;
 create index if not exists bill_proposed_idx on bill (proposed_at desc);
 
 -- 발의 / 공동발의
@@ -203,17 +208,22 @@ create unique index if not exists pledge_evidence_key
 
 -- 선거공보 원문 PDF 주소만 밖으로 낸다.
 --
--- pledge_doc 자체는 내부 테이블이다(RLS 켜고 정책 없음). raw_text 에 공보 PDF 를
--- 통째로 뽑은 글이 들어 있어서, 테이블을 열면 anon 이 그걸 다 긁어갈 수 있다.
--- 공보 자체는 공개 자료지만 우리 대역폭으로 퍼줄 이유는 없다.
+-- pledge_doc 의 raw_text 에는 공보 PDF 를 통째로 뽑은 글이 들어 있다. 공보 자체는 공개
+-- 자료지만 우리 대역폭으로 퍼줄 이유는 없어서, anon 에는 아래 다섯 칸만 칸 단위로 연다.
 --
--- 그래서 security_invoker 를 켜지 않는다. 뷰 소유자 권한으로 돌아 RLS 를 지나가고,
--- 내보내는 칸은 아래 다섯 개뿐이다. 다른 뷰(bill_sponsor_member 등)가 invoker 인 것은
--- 그쪽 원본 테이블에 public_read 정책이 있기 때문이고, 여기는 그게 없다.
-create or replace view pledge_doc_link as
+-- 전에는 security_invoker 없이(소유자 권한) 돌려 RLS 를 지나갔다. 그런데 Supabase 기본 권한이
+-- anon 에 뷰 INSERT·UPDATE·DELETE 까지 주고, 단순 뷰는 저절로 쓰기가 되고, 소유자 postgres 는
+-- RLS 를 우회한다 — anon 키로 이 뷰에 PATCH·DELETE 하면 pledge_doc 이 바뀌었다
+-- (2026-10-15 Supabase lint 0010 으로 발견). 이제 다른 뷰처럼 invoker 로 돌고 쓰기 권한은 거둔다.
+create or replace view pledge_doc_link
+with (security_invoker = true) as
 select id, member_code, election_id, kind, pdf_url
 from pledge_doc where pdf_url is not null;
+revoke all on pledge_doc, pledge_doc_link from anon, authenticated;
+grant select (id, member_code, election_id, kind, pdf_url) on pledge_doc to anon, authenticated;
 grant select on pledge_doc_link to anon, authenticated;
+drop policy if exists pdf_link_read on pledge_doc;
+create policy pdf_link_read on pledge_doc for select using (pdf_url is not null);
 
 -- 자치법규(조례·규칙). 조례제도형 공약의 근거다 — 법안이 입법형의 근거인 것과 같다.
 -- 전국 것을 통째로 받되 취임일 이후만 받는다. 전 기간을 받으면 40만 행이지만
@@ -812,7 +822,7 @@ grant select on member_region, party_stats, region_stats, member_record, group_r
   to anon, authenticated;
 
 
--- 내부 테이블: 정책 없이 RLS 만 켜서 anon 접근을 전부 차단.
+-- 내부 테이블: RLS 를 켜서 anon 접근을 막는다(pledge_doc 은 pledge_doc_link 다섯 칸만 열었다).
 -- 수집기는 postgres 역할로 직접 접속하므로 RLS 를 우회한다.
 alter table pledge_doc enable row level security;
 alter table ingest_run enable row level security;
@@ -1032,16 +1042,12 @@ alter table bid_notice add column if not exists created_at timestamptz not null 
 alter table bid_notice alter column created_at set default now();
 create index if not exists ordinance_ordin_id_idx on ordinance (ordin_id);  -- 같은 조례의 다음 제·개정(폐지 포함)
 
--- B. 대안반영폐기 법안 → 그 대안. judge.py DECIDE_SQL 의 alt 조인과 **같은 규칙**이다 — 한쪽을 고치면
---    다른 쪽도(party_line / partyLine 처럼). 스냅숏(source_version.facts)과 /pledge/[id] 가 쓴다.
---    DECIDE_SQL 을 이 뷰로 바꾸는 것은 운영 적용 뒤 `judge.py decide --check` 가 0 인 것을 보고 한다.
+-- B. 대안반영폐기 법안 → 그 대안. 잇는 규칙은 ingest.LINK_ALT_SQL 이 bill.alt_bill_id 에 적고,
+--    judge.py DECIDE_SQL 도 같은 칸으로 잇는다. 스냅숏(source_version.facts)과 /pledge/[id] 가 쓴다.
 create or replace view bill_alt with (security_invoker = true) as
 select b.bill_id, alt.bill_id as alt_id, alt.name as alt_name, alt.proc_result as alt_result, alt.proc_dt as alt_dt
 from bill b
-join plenary_bill alt
-  on b.proc_result = '대안반영폐기' and alt.proc_dt = b.proc_dt
- and alt.name like regexp_replace(b.name, '\s*(일부개정|전부개정|폐지)?법률안.*$', '') || '%'
- and strpos(alt.name, '(대안)') > 0;
+join bill alt on alt.bill_id = b.alt_bill_id;
 grant select on bill_alt to anon, authenticated;
 
 -- C. 근거 기록의 버전. 본문은 원천 표(bill·ordinance·bid_notice)에 있고 여기엔 판정에 쓰이는 칸과 해시만.

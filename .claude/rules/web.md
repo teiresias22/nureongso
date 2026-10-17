@@ -10,11 +10,13 @@ paths:
 - DB 접근은 `src/lib/db.ts` 의 `db` 하나. GET 은 1시간 데이터 캐시(`cachedFetch`)를 탄다 — 페이지마다 fetch 옵션을 따로 달지 않는다.
 - 그 위에 Vercel CDN 하루 캐시(`next.config.ts` 의 `headers()`)가 있다. 검색어를 읽는 페이지는 Next 가 `no-store` 를 붙여
   매 요청이 함수까지 가서 무료 한도를 먹었다. 새 동적 경로를 만들면 그 목록에 넣을지 정한다(쿠키·로그인이 없어 누구에게나 같은 화면).
-- 링크는 `@/lib/link`(prefetch 기본 꺼짐). `next/link` 는 eslint 가 막는다. JS 를 돌리는 크롤러(OAI-SearchBot)가
-  법안 쪽마다 머리글 메뉴의 `/`·`/stats`·`/compare`·`/my` 를 prefetch 했고, `_rsc` 키가 쪽마다 달라 CDN 을 못 타
-  `/` 한 번에 313ms — 2026-10 Active CPU 무료 4시간이 이걸로 찼다.
+- 머리글·바닥글 링크는 `<a>`(클라이언트 이동 없음). JS 를 돌리는 크롤러(OAI-SearchBot)가 법안 쪽마다 이 링크를
+  눌러 보는데, Link 면 `_rsc` 요청이라 키가 보던 쪽마다 달라 CDN 을 못 타고 `/` 를 통째로 그렸다(332ms) —
+  2026-10 Active CPU 무료 4시간이 이걸로 찼다. `<a>` 면 문서 요청이라 CDN 하루 캐시가 받는다.
+- 본문 링크는 `@/lib/link`(prefetch 기본 꺼짐). `next/link` 는 eslint 가 막는다. 동적 경로의 prefetch 는 부분 응답이라
+  싸지만, 보이는 링크마다 함수 호출이 하나씩 붙는다.
 - 경로 인자만 읽는 페이지는 `generateStaticParams() { return [] }` 로 ISR(전역 캐시)에 둔다(`/bill`·`/pledge`).
-  검색어가 필요하면 서버가 아니라 클라이언트 컴포넌트에서 읽는다(`bill/[id]/back.tsx`). CDN 헤더는 리전마다 따로라 덜 먹힌다.
+  서버에서 검색어를 읽으면 다시 요청마다 그려진다 — 필요하면 클라이언트 컴포넌트(`useSearchParams`)에서. CDN 헤더는 리전마다 따로라 덜 먹힌다.
 - `nureongso-puce.vercel.app` 은 본 주소로 308(`next.config.ts` `redirects`). 크롤러가 두 벌을 돌았다.
 - 사용량은 Vercel → Observability → Functions(경로별 Active CPU, 12시간)와 Logs(요청별 User-Agent·실행 시간, 1시간).
 - 사진 변환 크기는 `imageSizes` 의 96·192 두 벌뿐이다. 다른 폭을 쓰면 변환 벌수가 늘어 무료 5천 건을 넘긴다.

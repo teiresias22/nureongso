@@ -3,7 +3,7 @@
 
 사용:
     python ingest.py members            # 역대+현역 의원
-    python ingest.py bills --age 22     # 발의법률안 + 발의/공동발의
+    python ingest.py bills --age 22     # 발의법률안 + 발의/공동발의 + 위원장·정부안 + 대안 연결
     python ingest.py plenary --age 22   # 본회의 처리 의안
     python ingest.py votes --age 22     # 본회의 표결 (plenary 먼저 실행)
     python ingest.py summaries --age 22 # 법안 제안이유·주요내용
@@ -41,6 +41,7 @@ SERVICES = {
     "incumbent": "nwvrqwxyaytdsfvhu",  # 현역 국회의원 인적사항
     "allmember": "ALLNAMEMBER",  # 역대 국회의원 인적사항
     "bills": "nzmimeepazxkubdpn",  # 국회의원 발의법률안
+    "allbills": "TVBPMBILL11",  # 법률안 심사 및 처리(의안검색) — 위원장·정부안까지
     "plenary": "ncocpgfiaoituanbr",  # 본회의 처리 의안 (표결 집계)
     "votes": "nojepdqqaweusdfbi",  # 국회의원 본회의 표결
     "summary": "BPMBILLSUMMARY",  # 법률안 제안이유 및 주요내용 (BILL_NO 필수)
@@ -379,7 +380,72 @@ def ingest_bills(cur, age: int) -> int:
     upsert(cur, "bill_sponsor", ["bill_id", "member_code", "role"],
            sponsors, "bill_id,member_code,role", update=False)
     print(f"  bills={len(bills)} (새로·바뀜 {len(changed)}) sponsors={len(sponsors)}", file=sys.stderr)
-    return len(bills)
+    return len(bills) + ingest_other_bills(cur, age, {b[0] for b in bills}) + link_alternatives(cur, age)
+
+
+def ingest_other_bills(cur, age: int, member_ids: set) -> int:
+    """위원장·정부가 낸 법률안. 발의법률안 API 는 의원 발의만 준다.
+
+    본회의에서 통과하는 법은 대부분 위원장 대안인데(22대 위원장 '(대안)' 895건) 이게 없으면
+    통과한 법이 사이트에 없고, 대안반영폐기 의안이 어느 대안에 들어갔는지도 이을 수 없다.
+    발의자가 없으니 bill_sponsor 는 넣지 않는다 — 그래서 의원별 집계에는 끼지 않는다.
+    """
+    rows = fetch("allbills", AGE=age)
+    out = [
+        (
+            bid, age, d(r.get("BILL_NO")), d(r.get("BILL_NAME")),
+            d(r.get("CURR_COMMITTEE")), d(r.get("PROPOSE_DT")),
+            d(r.get("PROC_RESULT_CD")), d(r.get("PROC_DT")),
+            d(r.get("PROPOSER")), d(r.get("LINK_URL")),
+        )
+        for r in rows
+        if (bid := d(r.get("BILL_ID"))) and bid not in member_ids and r.get("PROPOSER_KIND") != "의원"
+    ]
+    changed = upsert(
+        cur, "bill",
+        ["bill_id", "age", "bill_no", "name", "committee", "proposed_at",
+         "proc_result", "proc_dt", "proposer", "detail_link"],
+        out, "bill_id", returning="bill_id",
+    )
+    print(f"  위원장·정부안={len(out)} (새로·바뀜 {len(changed)})", file=sys.stderr)
+    return len(out)
+
+
+# 대안반영폐기 → 위원장 대안. 공개 API 에는 이 연결이 없다(2026-10 ALLBILL·BILLINFODETAIL·
+# BILLJUDGE·BILLRCPV2·TVBPMBILL11 출력값 전수 확인). 의안정보시스템 화면에는 있지만 robots.txt 가
+# 전부 막는다. 그래서 같은 날 처리된, 법률명으로 시작하는 위원장 '(대안)' 하나에 잇는다.
+#
+# 화면의 정답(selRefBillId)과 표본 대조: 이름이 이어진 것은 전부 맞았다. 예전에는 본회의 기록
+# (plenary_bill)에서 찾아서, 위원장 대안이 수정안으로 바뀌어 표결된 날(정부조직법 2025-09-26 등
+# 142건)엔 같은 날 표결한 의원 발의 대안을 잘못 골랐다.
+#
+# 이름이 아예 다른 대안에 들어간 것(군급식법안 → 군급식기본법안(대안), 4,308건 중 277건)은 잇지
+# 않는다. 같은 날 같은 위원회 대안이 하나뿐이어도 다른 법에 흡수된 경우가 있다(주세법 → 조세특례제한법).
+# 후보가 둘 이상이면 비운다.
+LINK_ALT_SQL = """
+with alt as (
+  select bill_id, name, proc_dt from bill
+  where age = %(age)s and proposer like '%%위원장' and strpos(name, '(대안)') > 0
+),
+m as (
+  select b.bill_id, case when count(a.bill_id) = 1 then min(a.bill_id) end as alt
+  from bill b
+  left join alt a
+    on a.proc_dt = b.proc_dt
+   and starts_with(a.name, regexp_replace(b.name, '\\s*(일부개정|전부개정|폐지)?법률안.*$', ''))
+  where b.age = %(age)s and b.proc_result = '대안반영폐기'
+  group by b.bill_id
+)
+update bill b set alt_bill_id = m.alt
+from m
+where b.bill_id = m.bill_id and b.alt_bill_id is distinct from m.alt
+"""
+
+
+def link_alternatives(cur, age: int) -> int:
+    cur.execute(LINK_ALT_SQL, {"age": age})
+    print(f"  대안 연결 바뀜 {cur.rowcount}", file=sys.stderr)
+    return cur.rowcount
 
 
 def ingest_plenary(cur, age: int) -> int:

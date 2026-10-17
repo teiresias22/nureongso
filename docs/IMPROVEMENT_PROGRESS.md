@@ -38,7 +38,8 @@
 
 - 공약 '새 기록' 은 `pledge_status.updated_at` 이 아니라 `pledge_status_log` 에서 상태가 바뀐 줄(`reason <> 'rule'`). updated_at 은 신뢰도만 바뀌어도 움직인다(`judge.py` DECIDE_SQL).
 - 켜는 스위치: 웹은 `SUPABASE_SERVICE_ROLE_KEY`·`RESEND_API_KEY`·`MAIL_FROM` 이 다 있어야 폼이 뜬다(`lib/subscription.ts subscriptionOn`), `digest.py` 는 키나 `subscriber` 표가 없으면 건너뛴다.
-- `DECIDE_SQL` 을 `bill_alt` 로 바꾸지 않았다(운영 적용 + `decide --check` 0 확인 뒤 별도 커밋). 둘은 같은 규칙이라는 주석으로 묶었다.
+- 대안 연결: master 의 `9775543`·`8866968` 이 원안 → 대안을 `bill.alt_bill_id`(`ingest.LINK_ALT_SQL`)로 옮겼다. 병합하면서 `bill_alt` 뷰도
+  그 칸을 읽게 바꿨다 — `DECIDE_SQL` 과 뷰가 같은 칸을 읽으니 따로 바꿀 것이 없다(전에 적은 '`bill_alt` 로 바꾸는 커밋' 은 없어졌다).
 - **모델 고정(소유자 결정 D, 설계 열린 질문 5)**: `evidence.yml` 잡 `env` 에 `GEMINI_MODEL: gemini-3.1-flash-lite`.
   자동 선택(`llm.py gemini_pick`, flash-lite 우선)은 실제로 별칭 `gemini-flash-lite-latest` 로 풀려(이름 역순 정렬) 구글이 별칭을 옮기면
   조용히 바뀐다. 별칭 대신 같은 계열의 판 이름을 박았다(이 저장소 작업 기록에서 쓴 판 이름; API 를 불러 확인하지는 않았다).
@@ -66,7 +67,7 @@
    4. `공약 판정 이력: 기준선과 트리거` — 한 트랜잭션. 기준선 수 = `pledge_status` 행 수인지 본다.
    5. `주간 기록 메일: 새 기록` — `vote`·`attendance.created_at`, `digest_due`·`digest_changes`.
    6. 점검(운영 DB 에서 begin…rollback, 파일 머리의 명령): `supabase/subscription.check.sql`, `supabase/pledge_history.check.sql`.
-   7. `judge.py decide --check` 가 0 인지 본다(판정 결정성). 0 이면 `DECIDE_SQL` 의 대안 조인을 `bill_alt` 로 바꾸는 커밋을 따로 낸다.
+   7. `judge.py decide --check` 가 0 인지 본다(판정 결정성).
 3. **비밀값** (값을 채팅·커밋에 적지 않는다)
    - Vercel 환경변수(서버 전용): `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `MAIL_FROM` — 셋이 다 들어가야 `/my` 에 폼이 뜬다.
    - 로컬 `web/.env.local`: `dotenvx set KEY 값 -f .env.local` 로 같은 셋.
@@ -90,7 +91,7 @@
 
 - SQL 점검 두 파일은 한 번도 돌지 않았다. 운영 적용 직후 2-6 에서 처음 돈다 — 실패하면 그 assert 메시지가 어긋난 곳이다.
   `subscription.check.sql` 9) 의 첫 assert 는 기존 행이 있는 DB 에서만 참이다.
-- `DECIDE_SQL` → `bill_alt` 전환은 운영 DDL 적용 뒤(출시 준비 2-7). 모델 고정·구절 확인은 결정됨(위 '계획·설계와 다르게 한 것').
+- 모델 고정·구절 확인은 결정됨(위 '계획·설계와 다르게 한 것').
 - 구절 확인을 판정에 넣을지 재검토: 첫 월요일부터 몇 주 '원문 일치율' 을 모은 뒤.
 - 로컬 실행(`GEMINI_MODEL` 비움)은 여전히 자동 선택이라 `-latest` 별칭을 고른다. 정기 워크플로는 모두 고정이라 두었다. 막으려면 `gemini_pick` 정규식에 `latest` 를 더한다.
 - 증분 대조의 한계(`ponytail:`): 대조와 같은 순간에 커밋 중이던 법안은 since 보다 앞선 시각으로 들어와 빠질 수 있다. 발주 변경공고(차수)는 새 id 라 따라가지 않는다.

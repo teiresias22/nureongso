@@ -823,7 +823,7 @@ PROMPT_VERSION = {
 def source_rows(cur, kind: str, ref_ids: list[str]) -> dict[str, tuple[str, dict]]:
     """근거 기록 {ref_id: (본문, facts)}. facts 는 판정에 쓰이는 칸만이다. 원천에서 사라진 ref 는 빠진다.
 
-    bill  본문 = 법안명 + 제안이유. 대안은 bill_alt(= DECIDE_SQL 의 alt 조인과 같은 규칙)에서.
+    bill  본문 = 법안명 + 제안이유. 대안은 bill_alt(= bill.alt_bill_id, DECIDE_SQL 과 같은 칸)에서.
     ordin 본문 = 연결된 조례 이름. facts 는 같은 자치법규ID 의 **최신** 제·개정(폐지 포함) — 다음 개정이 오면 새 버전.
     bid   본문 = 공고명. ponytail: 변경공고(차수)는 새 id 라 따라가지 않는다.
     """
@@ -1249,28 +1249,10 @@ with ev as (
   -- 국회의원이던 사람이 2026 지방선거에 나와 낸 공약에 2024~25년 법안이 붙었다.
   left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
                   and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
-  -- 그 대안이 실제로 통과했는지는 본회의 기록에서 직접 읽는다. 추정하지 않는다.
-  -- 같은 본회의 날짜에 처리된 같은 법률명 '(대안)' 이 유일하게 대응된다.
-  --
-  -- 위원회는 맞추지 않는다. 위원장 대안이 아니라 의원 발의 대안이면 본회의 기록의
-  -- 위원회 칸이 '본회의' 로 들어와 원안의 소관 위원회와 안 맞는다. 이것 때문에
-  -- 142건을 놓치고 있었다 (정보통신망법, 주택법, 정부조직법 …).
-  --
-  -- 날짜와 법률명만으로도 모호하지 않다 — 실측으로 한 원안에 대안이 둘 이상 붙는
-  -- 경우가 0건이다. 4,101건 중 3,830건이 이어졌고 그중 3,828건이 가결이었다.
-  --
-  -- supabase/schema.sql 의 bill_alt 뷰가 이 조인과 같은 규칙이다(스냅숏·/pledge/[id] 가 쓴다). 한쪽을 고치면 다른 쪽도.
-  --
-  -- 남은 271건은 이름이 아예 다른 대안에 통합된 것이다 ('북극항로 개척 및 활성화
-  -- 지원 특별법안' 이 '북극항로 활용 촉진 및 연관산업 육성에 관한 특별법안(대안)'
-  -- 으로). 이름으로는 같은 것인지 알 수 없어 통과했다고 치지 않는다.
-  left join plenary_bill alt
-    on b.proc_result = '대안반영폐기'
-   and alt.proc_dt = b.proc_dt
-   -- '%%(' 를 psycopg 가 이름 있는 파라미터로 읽어 버려 strpos 로 쓴다.
-   and alt.name like regexp_replace(
-         b.name, '\\s*(일부개정|전부개정|폐지)?법률안.*$', '') || '%%'
-   and strpos(alt.name, '(대안)') > 0
+  -- 그 대안이 실제로 통과했는지는 대안 자신의 처리 결과에서 읽는다. 추정하지 않는다.
+  -- 원안 → 대안 연결 규칙(같은 날, 법률명으로 시작하는 위원장 대안 하나)은 ingest.LINK_ALT_SQL.
+  -- 이름이 아예 다른 대안에 들어간 것은 비어 있어 통과했다고 치지 않는다.
+  left join bill alt on alt.bill_id = b.alt_bill_id
   where e.kind in ('bill', 'ordin', 'bid')
     and (e.kind <> 'bill' or b.bill_id is not null)
   group by e.pledge_id
@@ -1351,7 +1333,7 @@ judged as (
       when ordin_n > 0                    then 'ordin_enacted'
       when law_passed                     then 'law_passed'
       when law_merged                     then 'law_merged'
-      -- 대안에 반영은 됐는데 그 대안을 본회의 기록에서 못 찾았다. 통과했을 가능성이
+      -- 대안에 반영은 됐는데 그 대안을 찾지 못했다(이름이 다른 대안). 통과했을 가능성이
       -- 높지만(실측 99.9%%) 확인한 게 아니라 그렇게 적는다.
       when law_alt                        then 'law_alt_unverified'
       when law_n > 0                      then 'law_filed'

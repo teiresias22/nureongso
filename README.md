@@ -153,6 +153,7 @@ cd web && npm run dev
 | 현역 의원 인적사항 | 열린국회정보 `nwvrqwxyaytdsfvhu` |
 | 역대 의원 인적사항 | 열린국회정보 `ALLNAMEMBER` |
 | 발의법률안 + 공동발의자 | 열린국회정보 `nzmimeepazxkubdpn` |
+| 위원장 대안·정부 법률안 | 열린국회정보 `TVBPMBILL11` (발의법률안에 없는 것만) |
 | 본회의 처리 의안 | 열린국회정보 `ncocpgfiaoituanbr` |
 | 본회의 표결 | 열린국회정보 `nojepdqqaweusdfbi` |
 | 역대 선거 목록 (42건, 1987~) | 선관위 `CommonCodeService/getCommonSgCodeList` |

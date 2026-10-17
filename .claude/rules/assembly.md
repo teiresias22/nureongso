@@ -22,3 +22,7 @@ paths:
   못 잇는 줄은 억지로 붙이지 않고 비운다.
 - `staff` 는 API 가 현재 명단만 줘서 어제와 달라진 것만 `member_staff` 에 적는다.
 - 발의자 명단은 새로·바뀐 법안만 다시 넣는다(25만 행).
+- `bill` 에는 의원 발의 말고 위원장·정부 법률안(`TVBPMBILL11`)도 있다. 발의자(`bill_sponsor`)가 없어
+  의원별 집계엔 안 낀다. `bill` 만 세는 숫자(opengraph·llms.txt 의 '법안 N건')는 이걸 포함한다.
+- 대안반영폐기 → 대안(`bill.alt_bill_id`)은 공개 API 에 없어 이름·날짜로 잇는다(`ingest.LINK_ALT_SQL`).
+  이름이 다른 대안에 들어간 ~6% 는 비운다. 공약 판정(`judge.py` `law_merged`)도 이 컬럼을 읽는다.

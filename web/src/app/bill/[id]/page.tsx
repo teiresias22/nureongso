@@ -1,17 +1,15 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
 import { ldJson, pageOg, SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
-import { BackLink } from "./back";
 
 export const revalidate = 3600;
 
-/** 빈 목록 = 빌드 때는 안 그리고 처음 열릴 때 그려 ISR 로 둔다. 법안 1.9만 쪽을 크롤러가 돌 때
- *  리전마다 따로인 CDN 캐시가 아니라 전역 ISR 캐시에서 내준다. 그래서 검색어(?from=)는 서버에서
- *  읽지 않는다(back.tsx). */
+/** 빈 목록 = 빌드 때는 안 그리고 처음 열릴 때 그려 ISR 로 둔다. 이게 없으면 검색어를 안 읽어도
+ *  요청마다 그린다. 법안 1.9만 쪽을 크롤러가 돌 때 리전마다 따로인 CDN 캐시가 아니라 전역 ISR
+ *  캐시에서 내준다. 서버에서 검색어(searchParams)를 읽으면 다시 요청마다 그려지니 읽지 않는다. */
 export async function generateStaticParams() {
   return [];
 }
@@ -24,6 +22,13 @@ type Sponsor = {
   name: string;
   party: string | null;
 };
+
+/** 국회 원문 첫 줄이 제목('제안이유 및 주요내용')을 되풀이한다. 그 줄만 뗀다. 나머지는 원문 그대로. */
+const stripHead = (s: string) => s.replace(/^\s*제안이유\s*및\s*주요내용\s*/, "").trim();
+
+/** 대안·반영 법안 목록에 쓰는 줄. */
+type BillRef = Pick<Bill, "bill_id" | "bill_no" | "name" | "proposer" | "proc_result">;
+const REF_COLS = "bill_id, bill_no, name, proposer, proc_result";
 
 export async function generateMetadata(
   { params }: { params: Promise<{ id: string }> },
@@ -39,21 +44,27 @@ export async function generateMetadata(
   const b = data as Pick<Bill, "name" | "bill_no" | "proc_result"> & { summary: string | null };
   // 국회가 준 제안이유 원문을 그대로 줄인다. 새로 요약하지 않는다.
   const description = b.summary
-    ? b.summary.replace(/\s+/g, " ").slice(0, 160)
+    ? stripHead(b.summary).replace(/\s+/g, " ").slice(0, 160)
     : `${[b.bill_no && `의안번호 ${b.bill_no}`, b.proc_result ?? "계류 중"].filter(Boolean).join(" · ")}. 발의자와 처리 결과를 봅니다.`;
+  // '형법 일부개정법률안' 같은 이름이 수백 건씩 겹친다. 의안번호로 제목을 가른다.
+  const title = b.bill_no ? `${b.name} (의안 ${b.bill_no})` : b.name;
   return {
-    title: b.name,
+    title,
     description,
-    // 어디서 왔는지 표시하는 ?from= 이 붙는다. 같은 법안이 의원 수만큼 색인될 수 있다.
+    // 예전 링크의 ?from= 같은 검색어가 붙어 와도 한 주소로 모은다.
     alternates: { canonical: `/bill/${id}` },
-    ...pageOg(b.name, description, `/bill/${id}`, { type: "article" }),
+    ...pageOg(title, description, `/bill/${id}`, { type: "article" }),
   };
 }
 
-export default async function BillPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function BillPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = await params;
 
-  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: votes }] =
+  const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: votes }, { data: merged }] =
     await Promise.all([
       db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
       db
@@ -65,16 +76,25 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
       db.from("plenary_bill").select("*").eq("bill_id", id).maybeSingle(),
       // 의원별 표결과 그 의원의 정당. 한 법안에 300행 남짓이라 1000행 상한 아래다.
       db.from("vote_member").select("member_code, result, name, party").eq("bill_id", id),
+      // 이 법안이 위원장 대안이면 그 안에 반영된 원안들. 많아야 수십 건이다.
+      db.from("bill").select(REF_COLS).eq("alt_bill_id", id).order("bill_no"),
     ]);
 
   // DB 오류를 '없는 법안' 404 로 내지 않는다(의원 페이지와 같은 이유).
   if (billError) throw billError;
   if (!bill) notFound();
   const b = bill as Bill & { summary: string | null };
+  const absorbed = b.proc_result === "대안반영폐기";
+  const alt = absorbed && b.alt_bill_id
+    ? ((await db.from("bill").select(REF_COLS).eq("bill_id", b.alt_bill_id).maybeSingle()).data as BillRef | null)
+    : null;
+  const mergedList = (merged ?? []) as BillRef[];
 
   const list = (sponsors ?? []) as Sponsor[];
   const rep = list.filter((s) => s.role === "rep");
   const co = list.filter((s) => s.role === "co");
+  // 위원장 대안·정부안은 발의 의원이 없다. 빈 '대표발의 0' 대신 제안자를 적는다.
+  const bySponsors = list.length > 0 || !b.proposer;
 
   const vrows = (votes ?? []) as { member_code: string; result: string; name: string | null; party: string | null }[];
   const byParty = new Map<string, Record<string, number>>();
@@ -113,8 +133,7 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
       return line && line !== m.result;
     })
     .sort((a, c) => partyLine(a.party).localeCompare(partyLine(c.party), "ko") || (a.name ?? "").localeCompare(c.name ?? "", "ko"));
-  // 국회 원문 첫 줄이 제목('제안이유 및 주요내용')을 되풀이한다. 그 줄만 뗀다. 나머지는 원문 그대로.
-  const summary = b.summary?.replace(/^\s*제안이유\s*및\s*주요내용\s*/, "").trim() ?? null;
+  const summary = b.summary ? stripHead(b.summary) : null;
 
   return (
     <div className="space-y-5">
@@ -127,24 +146,27 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
             "@type": "Legislation",
             name: b.name,
             legislationIdentifier: b.bill_no || undefined,
-            legislationDate: b.proposed_at || undefined,
+            // legislationDate 는 제정·의결일이다. 제안일은 dateCreated, 처리 상태는 따로 둔다.
+            dateCreated: b.proposed_at || undefined,
+            creativeWorkStatus: b.proc_result ?? "계류",
             legislationType: "법률안",
             legislationJurisdiction: "대한민국",
             inLanguage: "ko",
-            abstract: b.summary ? b.summary.replace(/\s+/g, " ").slice(0, 400) : undefined,
-            author: rep.map((r) => ({ "@type": "Person", name: r.name })),
+            abstract: summary ? summary.replace(/\s+/g, " ").slice(0, 400) : undefined,
+            author: rep.map((r) => ({ "@type": "Person", name: r.name, url: `${SITE}/m/${r.code}` })),
+            isBasedOn: b.detail_link || undefined,
             url: `${SITE}/bill/${id}`,
           }),
         }}
       />
-      <Suspense fallback={<Link href="/" className="text-xs text-muted hover:underline">← 전체 목록</Link>}>
-        <BackLink names={Object.fromEntries(list.map((s) => [s.code, s.name]))} />
-      </Suspense>
+      <Link href="/" className="text-xs text-muted hover:underline">
+        ← 전체 목록
+      </Link>
 
       <header className="rounded-lg border border-line bg-card p-4">
         <h1 className="text-lg font-bold">{b.name}</h1>
         <p className="mt-1 text-sm text-muted">
-          {[b.bill_no && `의안번호 ${b.bill_no}`, b.proposed_at && `제안 ${b.proposed_at}`, b.committee ?? "위원회 미배정"]
+          {[b.bill_no && `의안번호 ${b.bill_no}`, !bySponsors && `제안자 ${b.proposer}`, b.proposed_at && `제안 ${b.proposed_at}`, b.committee ?? "위원회 미배정"]
             .filter(Boolean).join(" · ")}
         </p>
         <p className="mt-2 text-sm">
@@ -163,6 +185,54 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
           </a>
         )}
       </header>
+
+      {absorbed && (
+        <section className="rounded-lg border border-line bg-card p-4">
+          <h2 className="text-base font-semibold">반영된 대안</h2>
+          <p className="mt-1 text-sm text-muted">
+            대안반영폐기는 위원회가 이 법안의 내용을 위원장 대안에 담고 원안은 따로 처리하지 않은
+            것입니다. 이름은 폐기지만 내용은 대안에 남습니다.
+          </p>
+          {alt ? (
+            <ul className="-mx-4 mt-2">
+              <BillRow b={alt} />
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-muted">
+              어느 대안에 들어갔는지 찾지 못했습니다. 이름이 다른 대안에 합쳐진 경우입니다.
+              {b.detail_link && (
+                <>
+                  {" "}
+                  <a href={b.detail_link} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                    의안정보시스템
+                  </a>
+                  의 &lsquo;대안정보&rsquo;에서 볼 수 있습니다.
+                </>
+              )}
+            </p>
+          )}
+          <p className="mt-3 text-xs text-muted">
+            국회 공개 자료에는 원안과 대안의 연결이 없어, 같은 날 처리된 같은 법률명의 위원장 대안으로
+            잇습니다.{" "}
+            <Link href="/rules#merged" className="underline underline-offset-2 hover:text-foreground">어떻게 잇나</Link>
+          </p>
+        </section>
+      )}
+
+      {mergedList.length > 0 && (
+        <section className="overflow-hidden rounded-lg border border-line bg-card">
+          <h2 className="border-b border-line px-4 py-3 text-base font-semibold">
+            이 대안에 반영된 법안 <span className="font-normal text-muted">{mergedList.length}</span>
+          </h2>
+          <ul className="divide-y divide-line">
+            {mergedList.map((m) => <BillRow key={m.bill_id} b={m} />)}
+          </ul>
+          <p className="border-t border-line px-4 py-2 text-xs text-muted">
+            같은 날 대안반영폐기된 같은 법률명의 법안입니다. 이름이 다른 법안은 빠져 있을 수 있습니다.{" "}
+            <Link href="/rules#merged" className="underline underline-offset-2 hover:text-foreground">어떻게 잇나</Link>
+          </p>
+        </section>
+      )}
 
       {summary && (
         <section className="rounded-lg border border-line bg-card">
@@ -281,8 +351,12 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
         </section>
       )}
 
-      <Group title="대표발의" members={rep} />
-      <Group title="공동발의" members={co} />
+      {bySponsors && (
+        <>
+          <Group title="대표발의" members={rep} />
+          <Group title="공동발의" members={co} />
+        </>
+      )}
     </div>
   );
 }
@@ -294,6 +368,18 @@ const VOTE_COLOR: Record<string, string> = {
 };
 const votePartsOf = (count: (k: string) => number): Part[] =>
   VOTE_KEYS.map((k) => ({ key: k, label: k, value: count(k), color: VOTE_COLOR[k] }));
+
+function BillRow({ b }: { b: BillRef }) {
+  return (
+    <li className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm">
+      <Link href={`/bill/${b.bill_id}`} className="min-w-0 hover:underline">
+        {b.name}
+        {b.proposer && <span className="ml-1.5 text-xs text-muted">{b.proposer}</span>}
+      </Link>
+      <span className="shrink-0 text-xs text-muted">{b.proc_result ?? "계류 중"}</span>
+    </li>
+  );
+}
 
 function Group({ title, members }: { title: string; members: Sponsor[] }) {
   return (

@@ -1044,7 +1044,6 @@ export default async function MemberPage({
             <BillList
               bills={(repBills ?? []) as Bill[]}
               total={repTotal ?? 0}
-              from={code}
               param="rep"
               pageParam="repPage"
               filter={repFilter}
@@ -1059,7 +1058,6 @@ export default async function MemberPage({
             <BillList
               bills={(coBills ?? []) as Bill[]}
               total={coTotal ?? 0}
-              from={code}
               param="co"
               pageParam="coPage"
               filter={coFilter}
@@ -1951,9 +1949,9 @@ function StatusBadge({ status, auto }: { status?: string; auto?: boolean }) {
 }
 
 function BillList({
-  bills, total, from, param, pageParam, filter, year, years, page, keep,
+  bills, total, param, pageParam, filter, year, years, page, keep,
 }: {
-  bills: Bill[]; total: number; from: string;
+  bills: Bill[]; total: number;
   param: string; pageParam: string; filter: string; page: number;
   year: string; years: string[];
   keep: Record<string, string>;
@@ -2037,9 +2035,10 @@ function BillList({
               key={b.bill_id}
               className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm"
             >
-              {/* from 을 달아 법안 상세에서 이 의원 페이지로 돌아올 수 있게 한다 */}
+              {/* ?from= 을 달지 않는다. 의원 수만큼 CDN 캐시 키가 갈리고 robots.txt 가 그 주소를 막아
+                  크롤러가 법안에 닿지 못했다. 돌아가기는 브라우저 뒤로가기로 충분하다. */}
               <Link
-                href={`/bill/${b.bill_id}?from=${from}`}
+                href={`/bill/${b.bill_id}`}
                 className="min-w-0 truncate hover:underline"
               >
                 {b.name}

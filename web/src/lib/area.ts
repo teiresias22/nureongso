@@ -1,4 +1,4 @@
-/** 선관위가 주는 시도·시군구. member.district 는 직위마다 모양이 달라 못 쓴다. */
+/** 선관위가 주는 시도·시군구(member_area 뷰). member.district 는 직위마다 모양이 달라 못 쓴다. */
 export type Area = {
   member_code: string;
   office: string;
@@ -14,7 +14,8 @@ const SD_MERGED: Record<string, string> = {
 };
 export const sido = (v: string | null) => (v ? SD_MERGED[v] ?? v : "");
 
-/** 시도 → 시군구 목록(가나다순). /my 고르기와 구독 신청 검사(api/subscription)가 같은 목록을 쓴다.
+/** 시도 → 시군구 목록(가나다순). /my 화면·메타데이터·사이트맵·구독 신청 검사(api/subscription)가 같은 목록을 써야
+ *  사이트맵·구독에 화면에 없는 지역이 나가지 않는다.
  *  sido 는 collector/digest.py 의 sido 와 같은 표다 — 한쪽을 고치면 다른 쪽도.
  *  import 가 없어야 subscription.check.mjs 가 node 로 바로 읽는다. */
 export function regionsOf(areas: Area[]): Record<string, string[]> {

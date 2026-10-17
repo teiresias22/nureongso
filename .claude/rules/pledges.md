@@ -21,5 +21,5 @@ paths:
 - 판정이 바뀌면 트리거(`log_pledge_status`)가 `pledge_status_log` 에 사유와 함께 남긴다 — 사람이 SQL 로 고쳐도 남는다(`rule='manual'`).
   신뢰도만 바뀐 것은 남기지 않는다. 판 이름(`RULE_VERSION`·`PROMPT_VERSION`)은 글자에서 만들어 손으로 올리지 않는다.
 - 근거 원문 구절은 서버가 `judge.locate` 로 원문에서 다시 찾은 것(`quote_ok`)만 화면에 싣는다. 판정 조건에는 아직 넣지 않았다.
-- `bill_alt` 뷰와 `DECIDE_SQL` 의 대안 조인은 같은 규칙이다. 한쪽을 고치면 다른 쪽도.
+- 원안 → 대안은 `bill.alt_bill_id` 하나(`ingest.LINK_ALT_SQL` 이 잇는다). `bill_alt` 뷰와 `DECIDE_SQL` 이 둘 다 이 칸을 읽는다.
 - `sg_typecode`: 1 대통령, 2 국회의원, 3 시도지사, 4 구시군의장, 5 시도의원, 6 구시군의원, 7~9 비례, 10 교육의원, 11 교육감. `sg_id` 는 선거일 YYYYMMDD.

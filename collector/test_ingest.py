@@ -36,6 +36,9 @@ def test_field_names():
     b = ingest.fetch("bills", max_rows=5, AGE=22)[0]
     assert {"BILL_ID", "RST_MONA_CD", "PUBL_MONA_CD", "PROPOSE_DT"} <= b.keys()
 
+    a = ingest.fetch("allbills", max_rows=5, AGE=22)[0]
+    assert {"BILL_ID", "BILL_NAME", "PROPOSER", "PROPOSER_KIND", "PROC_RESULT_CD", "PROC_DT", "LINK_URL"} <= a.keys()
+
     p = ingest.fetch("plenary", max_rows=5, AGE=22)[0]
     assert {"BILL_ID", "PROC_RESULT_CD", "YES_TCNT"} <= p.keys()
 

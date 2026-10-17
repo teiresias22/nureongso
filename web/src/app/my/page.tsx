@@ -1,12 +1,12 @@
+import type { Metadata } from "next";
 import Link from "@/lib/link";
 import { Photo } from "../page";
 import { AreaPicker } from "./picker";
-import { regionsOf, sido, type Area } from "@/lib/area";
 import { pageOg } from "@/lib/site";
 import { subscriptionOn } from "@/lib/subscription";
 import {
-  attendRate, districtArea, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, partyColor, pct, shortDistrict,
-  type CardRecord, type CardStats, type Member,
+  attendRate, districtArea, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, myPath, partyColor, pct, regionsOf, shortDistrict, sido,
+  type Area, type CardRecord, type CardStats, type Member,
 } from "@/lib/db";
 
 export const revalidate = 3600;
@@ -14,12 +14,35 @@ export const revalidate = 3600;
 const TITLE = "내 지역 대표";
 const DESC = "우리 동네 국회의원·시도지사·구청장·교육감을 한 화면에서. 선거공보에 없는 지난 임기 기록과 출석·재산 같은 공개 기록을 봅니다.";
 
-export const metadata = {
-  title: TITLE,
-  alternates: { canonical: "/my" },
-  description: DESC,
-  ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/my"),
-};
+type SP = { sd?: string; wiw?: string; area?: string };
+
+/** 주소에서 시도·시군구를 읽는다. area='sd|wiw' 는 예전 주소다. 시군구 이름은 시도를 건너뛰면
+ *  겹치니(중구가 여섯 곳, 광주시는 경기도에 있다) 둘 다 있어야 한다. 그 시도에 없는 시군구면
+ *  (손으로 고친 주소) 시도 전체로 둔다. 없는 시도면 둘 다 비운다. */
+function pick(q: SP, regions: Record<string, string[]>) {
+  const [aSd = "", aWiw = ""] = (q.area ?? "").split("|");
+  const sd = sido(q.sd || aSd);
+  if (!regions[sd]) return { sd: "", wiw: "" };
+  const wiw = q.wiw || aWiw;
+  return { sd, wiw: regions[sd].includes(wiw) ? wiw : "" };
+}
+
+// 지역을 고른 주소는 그 지역의 허브다. '송파구 국회의원' 으로 찾는 사람이 닿을 곳이
+// 여기밖에 없는데, canonical 을 /my 하나로 묶어 두면 검색엔진이 지역 화면을 버린다.
+export async function generateMetadata(
+  { searchParams }: { searchParams: Promise<SP> },
+): Promise<Metadata> {
+  // 본문과 같은 조회라 데이터 캐시를 같이 쓴다.
+  const { data } = await db.from("member_area").select("member_code, office, sd_name, wiw_name");
+  const { sd, wiw } = pick(await searchParams, regionsOf((data ?? []) as Area[]));
+  if (!sd) {
+    return { title: TITLE, alternates: { canonical: "/my" }, description: DESC, ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/my") };
+  }
+  const place = wiw ? `${sd} ${wiw}` : sd;
+  const title = `${place} 국회의원·단체장·교육감`;
+  const description = `${place}의 국회의원·시도지사·구청장·교육감. 지난 임기 공약과 출석·표결·재산 같은 공개 기록을 원문 출처와 함께 봅니다.`;
+  return { title, description, alternates: { canonical: myPath(sd, wiw) }, ...pageOg(title, description, myPath(sd, wiw)) };
+}
 
 const OFFICE_ORDER = ["국회의원", "구시군의장", "시도지사", "교육감"];
 
@@ -35,14 +58,9 @@ function inDistrict(district: string, wiw: string): boolean {
 export default async function MyPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sd?: string; wiw?: string; area?: string }>;
+  searchParams: Promise<SP>;
 }) {
   const q = await searchParams;
-  // area='sd|wiw' 는 예전 주소다. 시군구 이름은 시도를 건너뛰면 겹치니
-  // (중구가 여섯 곳, 광주시는 경기도에 있다) 둘 다 있어야 한다.
-  const [aSd = "", aWiw = ""] = (q.area ?? "").split("|");
-  const sd = sido(q.sd || aSd);
-  let wiw = q.wiw || aWiw;
 
   // 셋 다 현직만이라 550행 안쪽이다. PostgREST 1000행 상한에 닿지 않는다.
   const [{ data: areas }, { data: members }, { data: stats }, { data: records }] = await Promise.all([
@@ -59,9 +77,7 @@ export default async function MyPage({
 
   // 시도 → 시군구 목록. 통째로 클라이언트에 넘겨 시도를 고르는 즉시 채운다.
   const regions = regionsOf((areas ?? []) as Area[]);
-
-  // 주소를 손으로 고쳐 들어올 수 있다. 그 시도에 없는 시군구면 시도 전체로 둔다.
-  if (!regions[sd]?.includes(wiw)) wiw = "";
+  const { sd, wiw } = pick(q, regions);
 
   const picked = sd
     ? (members ?? []).filter((m: Member) => {
@@ -89,7 +105,7 @@ export default async function MyPage({
   return (
     <div className="space-y-5">
       <header>
-        <h1 className="text-xl font-bold">내 지역 대표</h1>
+        <h1 className="text-xl font-bold">{sd ? `${wiw ? `${sd} ${wiw}` : sd} 대표` : TITLE}</h1>
         <p className="mt-1 text-sm text-muted">
           선거공보에는 다음 임기에 뭘 하겠다는 말만 있습니다. 지난 임기에 무엇을 했는지, 출석·재산·겸직
           같은 공개 기록과 함께 봅니다.
@@ -113,7 +129,7 @@ export default async function MyPage({
           <p className="text-sm text-muted">
             {[sd, wiw].filter(Boolean).join(" ")} · <b className="text-foreground">{picked.length}</b>명
           </p>
-          <ul className="grid gap-2 sm:grid-cols-2">
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {picked.map((m: Member) => (
               <li key={m.code}>
                 <Card m={m} s={statBy.get(m.code)} r={recBy.get(m.code)} />
