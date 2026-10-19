@@ -97,6 +97,8 @@ export const NOTE_LABEL: Record<string, string> = {
   ordin_enacted: "관련 조례가 제·개정됐습니다",
   bid_ordered: "관련 공사가 발주됐습니다 (준공 여부는 확인할 수 없습니다)",
   none_2y: "임기 2년이 지났지만 관련 기록이 없습니다",
+  none_partial:
+    "잴 수 있는 쪽(법률·조례)은 임기 2년 동안 관련 기록이 없습니다. 나머지(예산·사업 등)는 확인할 수단이 없어 미착수로 적지 않습니다",
   none_early: "관련 기록이 아직 없습니다 (임기 2년 미만)",
   not_checked: "아직 공식 기록과 대조하지 않았습니다",
   past_term: "지난 임기 공약이라 판정하지 않습니다",
