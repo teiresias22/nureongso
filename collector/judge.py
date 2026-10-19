@@ -1229,9 +1229,11 @@ JUDGED_CTE = """
 with pt as (
   select p.id as pledge_id,
          coalesce(m.office, '국회의원') as office,
-         -- 임기 시작일. 국회의원과 단체장은 선거도 취임도 다른 날이다.
-         case when coalesce(m.office, '국회의원') = '국회의원'
-              then %(mp_start)s::date else %(head_start)s::date end as term_start
+         -- 임기 시작일. 국회의원과 단체장은 선거도 취임도 다른 날이다. 재보궐은 그 선거일부터 센다 —
+         -- 2026-06-03 재보궐 국회의원이 22대 개원일 기준으로 넉 달 만에 '미착수' 가 됐다(판정 계획 P3).
+         greatest(case when coalesce(m.office, '국회의원') = '국회의원'
+                       then %(mp_start)s::date else %(head_start)s::date end,
+                  to_date(p.election_id, 'YYYYMMDD')) as term_start
   from pledge p left join member m on m.code = p.member_code
 ),
 ev as (
