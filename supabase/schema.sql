@@ -1122,6 +1122,11 @@ alter table pledge_evidence add column if not exists review text;
 alter table pledge_evidence drop constraint if exists pledge_evidence_review_form;
 alter table pledge_evidence add constraint pledge_evidence_review_form
   check (review is null or review ~ '^(ok|reject|partial):[0-9]{4}-[0-9]{2}-[0-9]{2}');
+-- 임기 첫해 발주 근거의 '취임 전 같은 사업 공고'(결정 J, 표시만 — 판정에 쓰지 않는다). judge.py prior 가 채운다.
+-- 'design:<bid_design.id>' | 'bid:<bid_notice.id>'. 웹이 공고명을 읽도록 bid_design 에 읽기 정책을 단다(공개 공고).
+alter table pledge_evidence add column if not exists prior_ref text;
+drop policy if exists public_read on bid_design;
+create policy public_read on bid_design for select using (true);
 -- 끝에 ':llm' 이 붙으면 LLM 이 정답 표본에서 표시한 것이다(판정 계획 T1.8). 형식 check 는 끝을 막지 않아 그대로 통과하고,
 -- 판정은 첫 칸(ok·reject·partial)만 읽는다. 화면이 '사람 확인'·'LLM 확인' 을 가른다.
 

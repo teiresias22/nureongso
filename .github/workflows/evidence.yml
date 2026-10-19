@@ -138,6 +138,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python judge.py match_bid
 
+      # 임기 첫해 발주 근거에 취임 전 같은 사업 공고를 단다(결정 J, 표시만). LLM 없음.
+      - name: 발주 이전 단계
+        continue-on-error: true
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python judge.py prior
+
       # 근거 기록(법안·조례·발주)의 버전. 판정 바로 앞에 둬야 판정 이력이 '어느 버전 때문인지' 를
       # 가리킨다. LLM 없음. 판정 이력 표가 없는 DB 면 실패하지만 판정은 그대로 돈다.
       - name: 근거 버전
