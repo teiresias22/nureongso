@@ -351,8 +351,9 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
               select p.member_code, count(*) as n
               from pledge p
               where '입법' = any(p.kinds)
-                and exists (select 1 from bill_sponsor s
-                             where s.member_code = p.member_code and s.role = 'rep')
+                -- 대표발의가 0건인 의원도 넣는다(국회의장은 관례상 발의하지 않는다). 빼면 대조 기록이
+                -- 안 남아 공약이 영영 '아직 대조하지 않음' 으로 남는다. 그런 사람은 아래에서 호출 없이 0건으로 적는다.
+                and exists (select 1 from member m where m.code = p.member_code and m.office = '국회의원' and m.is_incumbent)
               group by p.member_code
             ), r as (
               select substr(source, 7) as code, max(finished_at) as since
@@ -388,7 +389,14 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
                 " order by b.proposed_at desc",
                 (mcode, since, since))
             bills = cur.fetchall()
-        if not pledges or not bills:
+        if not pledges:
+            continue
+        if not bills:
+            if since is None:   # 대표발의가 아예 없다 — 대조할 것이 없다는 것도 대조 결과다
+                with conn.cursor() as cur:
+                    log_run(cur, f"match:{mcode}", 0)
+                conn.commit()
+                done += 1
             continue
 
         try:
