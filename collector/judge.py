@@ -306,6 +306,8 @@ def match_once(pledges, bills) -> set[tuple[int, str, float, str]]:
         for m in out.get("matches", [])
         # 없는 id 는 버린다. 모델이 지어낸 근거가 화면에 뜨면 신뢰가 무너진다.
         if m.get("pledge_id") in pids and m.get("bill_id") in bids
+        # 이유에 '불일치' 처럼 제 말과 어긋나는 연결도 버린다 — 발주 대조만 거르고 있었다(판정 계획 P9).
+        and not self_contradicted(m.get("why"))
     }
 
 
@@ -581,6 +583,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
              float(m.get("confidence") or 0), (m.get("why") or "")[:300])
             for m in out.get("matches", [])
             if m.get("pledge_id") in pids and m.get("ordin_id") in oids
+            and not self_contradicted(m.get("why"))   # match_once·발주와 같은 거르기
         ]
         with conn.cursor() as cur:
             save_evidence(cur, rows, PROMPT_VERSION["ordin"])
