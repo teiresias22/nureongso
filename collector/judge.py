@@ -1275,6 +1275,8 @@ ev as (
   -- 국회의원이던 사람이 2026 지방선거에 나와 낸 공약에 2024~25년 법안이 붙었다.
   left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
                   and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
+  -- 법안 쪽 조건(약속 뒤 발의·철회·review·대안 가결)은 supabase/schema.sql member_stats 의 공약 법안 집계와 같다.
+  -- 한쪽을 고치면 다른 쪽도(인물 카드 '발의·통과' 숫자가 판정과 어긋난다).
   -- 조례·발주도 같다: 취임 전에 공포된 조례, 선거 전에 낸 공고는 그 사람의 이행이 아니다.
   -- 날짜 조건이 법안에만 있어서 선거 전 공고만 붙은 공약 197건이 '진행' 이었다(판정 계획 P1·P2).
   left join ordinance o on o.id = e.ref_id and e.kind = 'ordin'

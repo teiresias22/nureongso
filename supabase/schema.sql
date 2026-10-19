@@ -558,21 +558,34 @@ left join (
     count(*)                                        as pledge_count,
     count(*) filter (where st.status = '완료')       as pledge_done,
     count(*) filter (where st.pledge_id is not null) as pledge_judged,
-    count(*) filter (where '입법' = any(pl.kinds))   as pledge_law,
-    count(*) filter (where '입법' = any(pl.kinds) and ev.n > 0)      as pledge_law_filed,
-    count(*) filter (where '입법' = any(pl.kinds) and ev.passed)     as pledge_law_passed
-  from pledge pl
+    -- 입법 공약 셋은 판정과 같은 공약만 센다: 지금 임기(가장 최근 당선 선거) 국회의원 선거 공약, 22대부터.
+    -- 지난 임기 공약 166건(72명)이 '발의' 로 세이고 있었다(판정 계획 P18).
+    count(*) filter (where '입법' = any(pl.kinds) and pl.law_term)               as pledge_law,
+    count(*) filter (where '입법' = any(pl.kinds) and pl.law_term and ev.n > 0)  as pledge_law_filed,
+    count(*) filter (where '입법' = any(pl.kinds) and pl.law_term and ev.passed) as pledge_law_passed
+  from (
+    select x.*, coalesce(
+             x.election_id = (select max(c.election_id) from candidacy c where c.member_code = x.member_code and c.elected)
+             and x.election_id >= '20240410'
+             and exists (select 1 from candidacy c where c.member_code = x.member_code
+                         and c.election_id = x.election_id and c.office = '국회의원'), false) as law_term
+    from pledge x
+  ) pl
   left join pledge_status st on st.pledge_id = pl.id
   left join (
-    -- judge.py 의 decide 와 같은 조건이어야 한다. 약속보다 먼저 낸 법안은 세지 않는다.
-    -- 여기만 빠뜨리면 화면 숫자와 판정이 어긋난다.
+    -- judge.py JUDGED_CTE 의 ev 와 같은 조건이어야 한다 — 약속 뒤 발의, 철회 제외, 사람이 관련 없다고 한 근거
+    -- 제외, 대안 가결도 통과, 사람이 '일부만' 이라 한 근거는 통과로 세지 않음. 여기만 빠뜨리면 화면 숫자와 판정이 어긋난다.
     select e.pledge_id, count(*) as n,
-           bool_or(b.proc_result like '%가결%') as passed
+           bool_or(split_part(coalesce(e.review, ''), ':', 1) <> 'partial'
+                   and (b.proc_result like '%가결%' or alt.proc_result like '%가결%')) as passed
     from pledge_evidence e
     join pledge p0 on p0.id = e.pledge_id
     join bill b on b.bill_id = e.ref_id
                 and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
-    where e.kind = 'bill' group by e.pledge_id
+    left join bill alt on alt.bill_id = b.alt_bill_id
+    where e.kind = 'bill' and b.proc_result is distinct from '철회'
+      and split_part(coalesce(e.review, ''), ':', 1) <> 'reject'
+    group by e.pledge_id
   ) ev on ev.pledge_id = pl.id
   group by pl.member_code
 ) p on p.member_code = m.code;
