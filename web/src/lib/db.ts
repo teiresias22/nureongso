@@ -100,6 +100,8 @@ export const NOTE_LABEL: Record<string, string> = {
   none_early: "관련 기록이 아직 없습니다 (임기 2년 미만)",
   not_checked: "아직 공식 기록과 대조하지 않았습니다",
   past_term: "지난 임기 공약이라 판정하지 않습니다",
+  review_partial:
+    "사람 검수: 연결된 기록이 공약의 일부만 이행했거나 가결 뒤 공포되지 않은 것으로 확인돼 진행으로 둡니다",
 };
 
 /** 판정 배지 색. 인물 페이지 공약 목록과 공약 상세(/pledge/[id])가 같이 쓴다. */

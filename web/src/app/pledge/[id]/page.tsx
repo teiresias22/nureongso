@@ -3,7 +3,7 @@ import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { db, eok, electionYear, KIND_LABEL, noteText, STATUS_BG } from "@/lib/db";
 import { pageOg, REPORT_URL } from "@/lib/site";
-import { kstDate, REASON_LABEL, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
+import { HEAD_TERM_START, kstDate, REASON_LABEL, reviewText, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
 
 export const revalidate = 3600;
 
@@ -27,7 +27,7 @@ type Pledge = {
 };
 type EvExtra = {
   id: number; quote: string | null; quote_ok: boolean | null;
-  model: string | null; prompt: string | null; linked_at: string | null;
+  model: string | null; prompt: string | null; linked_at: string | null; review: string | null;
 };
 type Version = { kind: string; ref_id: string; seen_at: string; facts: Facts };
 
@@ -71,7 +71,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
 
   const [base, extra, logRes] = await Promise.all([
     db.from("pledge").select(PLEDGE_COLS).eq("id", pid).maybeSingle(),
-    db.from("pledge_evidence").select("id, quote, quote_ok, model, prompt, linked_at").eq("pledge_id", pid),
+    db.from("pledge_evidence").select("id, quote, quote_ok, model, prompt, linked_at, review").eq("pledge_id", pid),
     db.from("pledge_status_log").select("at, status, note, prev_status, prev_note, reason, rule").eq("pledge_id", pid).order("id"),
   ]);
   // DB 오류를 '없는 공약' 404 로 내지 않는다(법안 페이지와 같은 처리).
@@ -229,6 +229,11 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
               const href = b ? `/bill/${e.ref_id}` : (o?.url ?? bd?.url ?? undefined);
               const mine = vers.filter((v) => v.kind === e.kind && v.ref_id === e.ref_id);
               const diff = mine.length > 1 ? versionDiff(mine.at(-2)!.facts, mine.at(-1)!.facts) : [];
+              // 사실만 단다: 그 기록의 날짜와, 약속·취임보다 먼저였는지. 판정에 셌는지는 규칙표(/rules 2번)가 정한다.
+              const day = kstDate(b?.proposed_at ?? o?.announced_at ?? bd?.notice_at ?? null);
+              const before = b
+                ? day && p.election_id && day < kstDate(p.election_id) ? "공약(선거일) 전 발의" : ""
+                : day && day < HEAD_TERM_START ? "취임일 전 기록" : "";
               return (
                 <li key={e.id} className="space-y-1 px-4 py-3 text-sm">
                   <p>
@@ -263,6 +268,12 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
                     {x?.linked_at ? ` ${kstDate(x.linked_at)}` : ""}
                     {e.summary ? ` · 이유: ${e.summary}` : ""}
                   </p>
+                  {(day || x?.review) && (
+                    <p className="text-xs text-muted">
+                      {[day && `${b ? "발의" : o ? "공포" : "공고"} ${day}`, before, reviewText(x?.review)]
+                        .filter(Boolean).join(" · ")}
+                    </p>
+                  )}
                   {diff.length > 0 && (
                     <p className="text-xs text-muted">
                       기록 변화 {diff.map(([k, a, c]) => `${fact(k, a)} → ${fact(k, c)}`).join(", ")} (
