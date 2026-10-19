@@ -149,3 +149,10 @@ def test_notes_have_rule_rows():
     rules = open(os.path.join(WEB, "app", "rules", "page.tsx")).read()
     rows = set(re.findall(r'^  \["([a-z0-9_]+)", ', rules.split("const JUDGE_ROWS")[1].split("];")[0], re.M))
     assert notes == rows, (notes - rows, rows - notes)
+
+
+def test_ordin_org():
+    assert judge.ordin_org("구시군의장", "인천광역시", "서구") == "인천광역시 서해구"   # 2026-07-01 개칭
+    assert judge.ordin_org("구시군의장", "대구광역시", "서구") == "대구광역시 서구"
+    assert judge.ordin_org("구시군의장", "전라남도", "목포시") == "전남광주통합특별시 목포시"
+    assert judge.ordin_org("교육감", "광주광역시", "") == "전남광주통합특별시교육청"

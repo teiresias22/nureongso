@@ -189,17 +189,31 @@ MATCH_PROMPT = """어떤 국회의원의 '입법형 공약' 목록과, 그 의�
 # --------------------------------------------------------------------------- classify
 
 
-def run_classify(conn, limit: int | None, redo: bool) -> None:
-    """의원 1명당 1회 호출. 그 사람 공약 전부를 한 번에 분류한다."""
+# 분류에 넘기는 본문 길이. 공약서(단체장·교육감 대표공약)는 본문이 길고 조례·제도 얘기가 뒤쪽에
+# 나온다 — 200자에서 잘라 조례제도 유형을 놓쳤다(판정 계획 T4.4). 선거공보는 짧아 그대로 둔다.
+CLASSIFY_BODY = {"공약서": 800}
+
+
+def run_classify(conn, limit: int | None, redo: bool, source: str | None = None, current: bool = False) -> None:
+    """의원 1명당 1회 호출. 그 사람 공약 전부를 한 번에 분류한다.
+    source·current 는 다시 분류할 범위를 좁힌다(공약 출처, 지금 직위 사람의 지금 임기 공약만)."""
+    scope = ""
+    params: list = []
+    if source:
+        scope += " and coalesce(p.source, '선거공보') = %s"
+        params.append(source)
+    if current:
+        scope += " and p.member_code in (select code from member where is_incumbent)" + cur_term("p")
     with conn.cursor() as cur:
         # 현직부터 돈다. 한도에 걸려 중간에 멈춰도 화면에 실제로 보이는 사람이 먼저 채워진다.
         # 지난 임기 공약도 그 사람이 현직이면 member_code 가 현직이라 같이 처리된다.
         cur.execute(
             "select p.member_code, count(*) from pledge p"
             " left join member m on m.code = p.member_code"
-            + ("" if redo else " where p.kinds is null")
+            " where true" + ("" if redo else " and p.kinds is null") + scope
             + " group by p.member_code, m.is_incumbent"
-            " order by m.is_incumbent desc nulls last, p.member_code"
+            " order by m.is_incumbent desc nulls last, p.member_code",
+            params,
         )
         targets = cur.fetchall()
     if limit is not None:
@@ -210,14 +224,14 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
     for i, (mcode, n) in enumerate(targets, 1):
         with conn.cursor() as cur:
             cur.execute(
-                "select id, title, coalesce(body,'') from pledge where member_code = %s"
-                + ("" if redo else " and kinds is null"),
-                (mcode,),
+                "select id, title, coalesce(body,''), coalesce(source, '선거공보'), kinds from pledge p"
+                " where member_code = %s" + ("" if redo else " and kinds is null") + scope,
+                [mcode, *params],
             )
             rows = cur.fetchall()
         if not rows:
             continue
-        listing = "\n".join(f'{pid}. {t} / {b[:200]}' for pid, t, b in rows)
+        listing = "\n".join(f'{pid}. {t} / {b[:CLASSIFY_BODY.get(src, 200)]}' for pid, t, b, src, _ in rows)
 
         try:
             out = llm.complete_json(
@@ -232,10 +246,10 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             print(f"  [{i}/{len(targets)}] {mcode} 실패: {str(e)[:120]}", file=sys.stderr)
             continue
 
-        valid = {pid for pid, _, _ in rows}
+        old = {pid: set(k or []) for pid, _, _, _, k in rows}
         pairs = []
         for it in out.get("items", []):
-            if it.get("id") not in valid:
+            if it.get("id") not in old:
                 continue
             ks = set(k for k in (it.get("kinds") or []) if k in KINDS)
             # '선언' 은 '확인할 수단이 없다' 는 뜻이라 다른 유형과 같이 설 수 없다.
@@ -254,11 +268,13 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             # 5,262건이 이 상태였다 (입법 1,090 · 조례 846 · 예산사업 3,326).
             #
             # 유형이 바뀌었으면 다시 봐야 한다. 여기서 지우면 다음 match 실행이
-            # 이 사람만 정확히 집는다.
-            cur.execute(
-                "delete from ingest_run where source in"
-                " ('match:' || %s, 'ordin:' || %s, 'bid:' || %s)",
-                (mcode, mcode, mcode))
+            # 이 사람만 정확히 집는다. 바뀐 게 없으면 지우지 않는다 — 다시 분류만 해도
+            # 그 사람 대조를 처음부터 다시 돌려 LLM 한도를 썼다(판정 계획 T4.4).
+            if any(set(k) != old[i] for k, i in pairs):
+                cur.execute(
+                    "delete from ingest_run where source in"
+                    " ('match:' || %s, 'ordin:' || %s, 'bid:' || %s)",
+                    (mcode, mcode, mcode))
         conn.commit()
         done += 1
         tagged += len(pairs)
@@ -463,6 +479,11 @@ SIDO_ALIAS = {
     "광주광역시": "전남광주통합특별시",
     "전라남도": "전남광주통합특별시",
 }
+# 시군구도 같다. 선거는 옛 이름으로 치렀는데 취임일에 이름이 바뀐 곳(인천 행정체제 개편 2026-07-01:
+# 서구 → 서해구. 검단구·제물포구·영종구는 선거부터 새 이름이었다). 법제처는 새 이름으로 준다.
+DISTRICT_ALIAS = {
+    ("인천광역시", "서구"): "서해구",
+}
 
 
 def ordin_org(office: str, sd_name: str, district: str) -> str:
@@ -477,7 +498,7 @@ def ordin_org(office: str, sd_name: str, district: str) -> str:
     """
     sido = SIDO_ALIAS.get(sd_name, sd_name)
     if office == "구시군의장":
-        return f"{sido} {district}"
+        return f"{sido} {DISTRICT_ALIAS.get((sd_name, district), district)}"
     if office == "교육감":
         return f"{sido}교육청"
     return sido
@@ -1650,6 +1671,8 @@ def main():
     p.add_argument("--n", type=int, default=5, help="repro: 표본 사람 수")
     p.add_argument("--redo", action="store_true")
     p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다")
+    p.add_argument("--source", help="classify: 이 출처(공약서·선거공보) 공약만")
+    p.add_argument("--current", action="store_true", help="classify: 현직의 지금 임기 공약만")
     a = p.parse_args()
 
     dsn = os.environ.get("DATABASE_URL")
@@ -1657,7 +1680,7 @@ def main():
         sys.exit("DATABASE_URL 이 없습니다.")
     with psycopg.connect(dsn) as conn:
         if a.step in ("classify", "all"):
-            run_classify(conn, a.limit, a.redo)
+            run_classify(conn, a.limit, a.redo, a.source, a.current)
         if a.step in ("match", "all"):
             run_match(conn, a.limit, a.redo)
         if a.step in ("match_ordin", "all"):
