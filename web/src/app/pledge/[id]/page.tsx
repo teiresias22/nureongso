@@ -264,6 +264,8 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
                     연결{" "}
                     {x?.model?.startsWith("reviewer")
                       ? "사람 검수"
+                      : x?.model?.startsWith("llm-reviewer")
+                      ? "LLM 검수"
                       : `AI${x?.model ? `(${x.model.replace(/^[a-z]+:/, "")}${x.prompt ? ` · ${x.prompt}` : ""})` : ""}`}
                     {x?.linked_at ? ` ${kstDate(x.linked_at)}` : ""}
                     {e.summary ? ` · 이유: ${e.summary}` : ""}

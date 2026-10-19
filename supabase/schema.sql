@@ -1098,6 +1098,8 @@ alter table pledge_evidence add column if not exists review text;
 alter table pledge_evidence drop constraint if exists pledge_evidence_review_form;
 alter table pledge_evidence add constraint pledge_evidence_review_form
   check (review is null or review ~ '^(ok|reject|partial):[0-9]{4}-[0-9]{2}-[0-9]{2}');
+-- 끝에 ':llm' 이 붙으면 LLM 이 정답 표본에서 표시한 것이다(판정 계획 T1.8). 형식 check 는 끝을 막지 않아 그대로 통과하고,
+-- 판정은 첫 칸(ok·reject·partial)만 읽는다. 화면이 '사람 확인'·'LLM 확인' 을 가른다.
 
 -- E. 판정 변경 이력. 현재 상태는 pledge_status 그대로.
 --    공약 원문이 바뀌어 공약이 새로 만들어지면(nec.py·parse_pledges.py 의 delete → insert) 이력도 새로 시작한다.
@@ -1112,8 +1114,12 @@ create table if not exists pledge_status_log (
   prev_note   text,
   versions    bigint[] not null default '{}',    -- 그때 연결돼 있던 근거들의 최신 source_version.id
   rule        text,                              -- judge.RULE_VERSION, 사람이 SQL 로 고치면 'manual', 기준선 null
-  reason      text not null check (reason in ('baseline','reviewer','evidence','source','rule','elapsed','input'))
+  reason      text not null check (reason in ('baseline','reviewer','llm','evidence','source','rule','elapsed','input'))
 );
+-- 사유 'llm'(T1.8) 을 더할 때 운영에서는 아래 두 문을 돌린다(표가 이미 있어 위 create 의 check 는 바뀌지 않는다).
+alter table pledge_status_log drop constraint if exists pledge_status_log_reason_check;
+alter table pledge_status_log add constraint pledge_status_log_reason_check
+  check (reason in ('baseline','reviewer','llm','evidence','source','rule','elapsed','input'));
 create index if not exists pledge_status_log_pledge_idx on pledge_status_log (pledge_id, id);
 create index if not exists pledge_status_log_at_idx on pledge_status_log (at);   -- 주간 메일·지표
 
@@ -1153,6 +1159,7 @@ begin
     case
       when prev.id is null                      then 'baseline'
       when new.decided_by = 'reviewer' or current_setting('judge.reason', true) = 'reviewer' then 'reviewer'
+      when current_setting('judge.reason', true) = 'llm'  then 'llm'   -- 정답 표본 LLM 검수 반영(sample_review apply)
       when current_setting('judge.reason', true) = 'rule' then 'rule'
       when now_refs is distinct from prev_refs  then 'evidence'   -- 근거가 붙거나 떨어짐
       when v is distinct from prev.versions     then 'source'     -- 같은 근거, 원천 기록이 바뀜
