@@ -448,6 +448,11 @@ SIDO_ALIAS = {
     "광주광역시": "전남광주통합특별시",
     "전라남도": "전남광주통합특별시",
 }
+# 시군구도 같다. 선거는 옛 이름으로 치렀는데 취임일에 이름이 바뀐 곳(인천 행정체제 개편 2026-07-01:
+# 서구 → 서해구. 검단구·제물포구·영종구는 선거부터 새 이름이었다). 법제처는 새 이름으로 준다.
+DISTRICT_ALIAS = {
+    ("인천광역시", "서구"): "서해구",
+}
 
 
 def ordin_org(office: str, sd_name: str, district: str) -> str:
@@ -462,7 +467,7 @@ def ordin_org(office: str, sd_name: str, district: str) -> str:
     """
     sido = SIDO_ALIAS.get(sd_name, sd_name)
     if office == "구시군의장":
-        return f"{sido} {district}"
+        return f"{sido} {DISTRICT_ALIAS.get((sd_name, district), district)}"
     if office == "교육감":
         return f"{sido}교육청"
     return sido
