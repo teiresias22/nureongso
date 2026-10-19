@@ -94,6 +94,8 @@ export const NOTE_LABEL: Record<string, string> = {
   law_alt_unverified:
     "발의한 법안이 위원회 대안에 반영됐습니다 (대안의 통과 여부는 확인하지 못했습니다)",
   law_filed: "관련 법안을 발의했습니다",
+  law_unpromulgated:
+    "관련 법안이 국회를 통과했지만 공포되지 않았습니다 (공포 기한 안이거나 대통령이 재의를 요구했습니다)",
   ordin_enacted: "관련 조례가 제·개정됐습니다",
   bid_ordered: "관련 공사가 발주됐습니다 (준공 여부는 확인할 수 없습니다)",
   none_2y: "임기 2년이 지났지만 관련 기록이 없습니다",

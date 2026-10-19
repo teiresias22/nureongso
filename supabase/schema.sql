@@ -44,6 +44,10 @@ create table if not exists bill (
   updated_at    timestamptz not null default now()
 );
 alter table bill add column if not exists alt_bill_id text;
+-- 정부 이송일·공포일 (열린국회정보 BILLINFODETAIL, ingest.ingest_promulgation). 가결인데 공포일이 없으면
+-- 공포 기한 안이거나 재의 요구된 것이다. 판정은 공포일이 있어야 완료로 센다(judge.py law_passed, 결정 B).
+alter table bill add column if not exists gvrn_trsf_dt date;
+alter table bill add column if not exists prom_dt date;
 create index if not exists bill_age_idx on bill (age);
 -- 대안 페이지의 '이 대안에 반영된 법안' 목록
 create index if not exists bill_alt_idx on bill (alt_bill_id) where alt_bill_id is not null;
@@ -574,10 +578,11 @@ left join (
   left join pledge_status st on st.pledge_id = pl.id
   left join (
     -- judge.py JUDGED_CTE 의 ev 와 같은 조건이어야 한다 — 약속 뒤 발의, 철회 제외, 사람이 관련 없다고 한 근거
-    -- 제외, 대안 가결도 통과, 사람이 '일부만' 이라 한 근거는 통과로 세지 않음. 여기만 빠뜨리면 화면 숫자와 판정이 어긋난다.
+    -- 제외, 대안 가결도 통과, 공포되지 않은 가결은 통과 아님, 사람이 '일부만' 이라 한 근거는 통과로 세지 않음. 여기만 빠뜨리면 화면 숫자와 판정이 어긋난다.
     select e.pledge_id, count(*) as n,
            bool_or(split_part(coalesce(e.review, ''), ':', 1) <> 'partial'
-                   and (b.proc_result like '%가결%' or alt.proc_result like '%가결%')) as passed
+                   and ((b.proc_result like '%가결%' and b.prom_dt is not null)
+                        or (alt.proc_result like '%가결%' and alt.prom_dt is not null))) as passed
     from pledge_evidence e
     join pledge p0 on p0.id = e.pledge_id
     join bill b on b.bill_id = e.ref_id

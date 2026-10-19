@@ -1284,11 +1284,16 @@ ev as (
          max(e.score) as conf,
          -- 사람이 '일부만 이행·미공포' 로 표시한 근거는 진행까지다(review_partial).
          -- psycopg 는 주석까지 훑어 퍼센트 기호를 파라미터로 본다. 리터럴은 두 번 써야 한다.
-         bool_or(e.kind = 'bill' and not e.held and b.proc_result like '%%가결%%') as law_passed,
+         -- 가결은 국회 의결이고, 법이 되는 것은 공포다. 재의 요구로 공포되지 못한 가결 법안을 완료로 세지 않는다
+         -- (판정 계획 T5.3·결정 B. 2026-10 확인으로 완료 근거 1건이 재의된 상법 대안이었다).
+         bool_or(e.kind = 'bill' and not e.held and b.proc_result like '%%가결%%' and b.prom_dt is not null) as law_passed,
          -- 대안반영폐기: 위원회가 내용을 위원장 대안에 담고 원안은 폐기한 것이다.
          -- 국회에서 법안이 법이 되는 가장 흔한 길이라, 이걸 빼면 크게 모자라게 센다
          -- (실측: 대안반영폐기 4,101건 대 가결 699건).
-         bool_or(not e.held and alt.proc_result like '%%가결%%') as law_merged,
+         bool_or(not e.held and alt.proc_result like '%%가결%%' and alt.prom_dt is not null) as law_merged,
+         -- 가결됐는데 공포일이 없다: 공포 기한(이송 뒤 15일) 안이거나 재의 요구됐다. 진행까지다.
+         bool_or(not e.held and ((b.proc_result like '%%가결%%' and b.prom_dt is null)
+                                 or (alt.proc_result like '%%가결%%' and alt.prom_dt is null))) as law_unprom,
          bool_or(e.kind = 'bill' and b.proc_result = '대안반영폐기') as law_alt,
          -- 철회한 법안은 착수 기록이 아니다(본인이 거둬들였다). 따로 세어 사유로만 적는다(판정 계획 P8, 결정 W).
          -- 부결은 표결까지 간 착수 기록이라 폐기와 같이 센다.
@@ -1335,6 +1340,7 @@ base as (
          coalesce(ev.law_passed, false) as law_passed,
          coalesce(ev.law_merged, false) as law_merged,
          coalesce(ev.law_alt, false)    as law_alt,
+         coalesce(ev.law_unprom, false) as law_unprom,
          coalesce(ev.law_n, 0)   as law_n,
          coalesce(ev.ordin_n, 0) as ordin_n,
          coalesce(ev.bid_n, 0)   as bid_n,
@@ -1416,6 +1422,7 @@ judged as (
       when law_merged                     then 'law_merged'
       -- 대안에 반영은 됐는데 그 대안을 찾지 못했다(이름이 다른 대안). 통과했을 가능성이
       -- 높지만(실측 99.9%%) 확인한 게 아니라 그렇게 적는다.
+      when law_unprom                     then 'law_unpromulgated'
       when law_alt                        then 'law_alt_unverified'
       when held_n > 0                     then 'review_partial'
       when law_n > 0                      then 'law_filed'
