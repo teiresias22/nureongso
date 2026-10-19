@@ -271,6 +271,13 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
 # --------------------------------------------------------------------------- match
 
 
+# 대조는 지금 임기 공약만 한다 — 그 사람의 가장 최근 당선 선거. 지난 임기 공약은 판정하지 않으니(past_term)
+# 근거를 붙여도 쓰이지 않고 토큰만 든다(판정 계획 P17, 결정 S: 이미 붙은 근거는 지우지 않는다).
+def cur_term(alias: str) -> str:
+    return (f" and {alias}.election_id = (select max(c.election_id) from candidacy c"
+            f" where c.member_code = {alias}.member_code and c.elected)")
+
+
 def save_evidence(cur, rows, prompt: str) -> None:
     """근거 (pledge_id, kind, ref_id, score, why) 를 넣는다. 쓴 모델·프롬프트 판을 함께 남기고,
     값이 그대로면 다시 쓰지 않는다(Disk IO — pledges.md 의 'judge 의 직접 SQL 도 is distinct from').
@@ -355,7 +362,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
-                " where member_code = %s and '입법' = any(kinds) order by id", (mcode,))
+                " where member_code = %s and '입법' = any(kinds)" + cur_term("pledge") + " order by id", (mcode,))
             pledges = cur.fetchall()
             cur.execute(
                 "select b.bill_id, b.name, coalesce(b.proc_result,'계류') from bill_sponsor s"
@@ -532,7 +539,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
-                " where member_code = %s and '조례제도' = any(kinds) order by id", (mcode,))
+                " where member_code = %s and '조례제도' = any(kinds)" + cur_term("pledge") + " order by id", (mcode,))
             pledges = cur.fetchall()
             # 그 지자체 것만, 공약 제목과 글자가 겹치는 순으로. 조례 전체를 넘기면
             # 한 지자체에 수백 건이라 프롬프트가 감당이 안 된다.
@@ -542,7 +549,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
                 "           p.title || ' ' || coalesce(p.body,''))) as sim"
                 " from ordinance o, pledge p"
                 " where o.org = %s and p.member_code = %s"
-                "   and '조례제도' = any(p.kinds)"
+                "   and '조례제도' = any(p.kinds)" + cur_term("p") +
                 "   and (%s::timestamptz is null or o.created_at > %s::timestamptz)"
                 # 취임 전에 공포된 조례는 판정에 쓰지 않으니 후보로도 넘기지 않는다(판정 계획 T1.1).
                 "   and o.announced_at >= %s"
@@ -733,7 +740,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
-                " where member_code = %s and '예산사업' = any(kinds) order by id", (mcode,))
+                " where member_code = %s and '예산사업' = any(kinds)" + cur_term("pledge") + " order by id", (mcode,))
             pledges = cur.fetchall()
             cur.execute(
                 "select b.id, b.name, b.budget, b.notice_at,"
@@ -741,7 +748,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
                 "           p.title || ' ' || coalesce(p.body,''))) as sim"
                 " from bid_notice b, pledge p"
                 " where b.org = %s and p.member_code = %s"
-                "   and '예산사업' = any(p.kinds)"
+                "   and '예산사업' = any(p.kinds)" + cur_term("p") +
                 "   and (%s::timestamptz is null or b.created_at > %s::timestamptz)"
                 # 취임 전 공고는 판정에 쓰지 않으니 후보로도 넘기지 않는다 — 후보 풀의 약 70%(판정 계획 T1.1).
                 "   and b.notice_at >= %s::date"
