@@ -1225,16 +1225,20 @@ def run_match_race(conn, limit: int | None, redo: bool, since: str | None = None
 # 규칙표. 판정 부분(JUDGED_CTE)만 판 이름에 들어간다 — 쓰는 방식(DECIDE_SQL)을 고쳐도 판이 바뀌지 않는다.
 # decide --diff 가 이 부분을 지난 커밋 것과 같은 스냅숏에서 맞대어 순수 규칙 전이를 낸다.
 JUDGED_CTE = """
--- 공약마다 그 사람의 직위·임기 시작일·당선 여부. 날짜 조건과 '지금 임기' 가 모두 여기서 온다.
+-- 공약마다 그 선거의 직위·임기 시작일·당선 여부. 날짜 조건과 '지금 임기' 가 모두 여기서 온다.
+-- 직위는 그 선거의 것이다 — 지금 단체장인 사람의 2020 국회의원 선거 공약은 국회의원 공약이다.
 with pt as (
   select p.id as pledge_id,
-         coalesce(m.office, '국회의원') as office,
+         coalesce(c.office, m.office, '국회의원') as office,
+         coalesce(c.won, false) as won,
          -- 임기 시작일. 국회의원과 단체장은 선거도 취임도 다른 날이다. 재보궐은 그 선거일부터 센다 —
          -- 2026-06-03 재보궐 국회의원이 22대 개원일 기준으로 넉 달 만에 '미착수' 가 됐다(판정 계획 P3).
-         greatest(case when coalesce(m.office, '국회의원') = '국회의원'
+         greatest(case when coalesce(c.office, m.office, '국회의원') = '국회의원'
                        then %(mp_start)s::date else %(head_start)s::date end,
                   to_date(p.election_id, 'YYYYMMDD')) as term_start
   from pledge p left join member m on m.code = p.member_code
+  left join lateral (select bool_or(c.elected) as won, (array_agg(c.office order by c.elected desc nulls last))[1] as office
+                     from candidacy c where c.member_code = p.member_code and c.election_id = p.election_id) c on true
 ),
 ev as (
   select e.pledge_id,
@@ -1303,7 +1307,10 @@ base as (
                   where r.source = 'match:' || p.member_code) as law_checked,
          exists (select 1 from ingest_run r
                   where r.source = 'ordin:' || p.member_code) as ordin_checked,
-         (p.election_id = ce.election_id) as current_term
+         pt.won,
+         -- 지금 임기: 그 사람의 가장 최근 당선 선거. 22대 전 국회의원 공약은 근거 법안(22대뿐)이 없어 빼다.
+         (p.election_id = ce.election_id
+          and not (pt.office = '국회의원' and p.election_id < '20240410')) as current_term
   from pledge p
   join pt on pt.pledge_id = p.id
   left join ev on ev.pledge_id = p.id
@@ -1324,6 +1331,8 @@ flag as (
 judged as (
   select pledge_id,
     case
+      -- 당선되지 않은 선거의 공약은 이행할 자리가 없다(판정 계획 P7, 결정 H).
+      when not won                        then '판단불가'
       when cardinality(measurable) = 0 and bid_n = 0 then '판단불가'
       -- 지난 임기 공약은 판정하지 않는다. 지금 DB 에 든 법안이 제22대 것뿐이라
       -- (2024-05-30~) 그 이전 임기의 약속은 지킨 근거도, 안 지킨 근거도 없다.
@@ -1343,6 +1352,7 @@ judged as (
       else '판단불가'
     end as status,
     case
+      when not won                        then 'not_elected'
       when cardinality(measurable) = 0 and bid_n = 0
            then 'no_measure:' || array_to_string(kinds, '+')
       when not coalesce(current_term, true) then 'past_term'
