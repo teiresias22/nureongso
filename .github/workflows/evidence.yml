@@ -83,6 +83,8 @@ jobs:
           DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
         run: |
           python bid.py fetch --since "${{ steps.range.outputs.since }}"
+          # 설계용역(공사의 앞 단계). 판정에는 쓰지 않는다 — 결정 J 를 세는 데만.
+          python bid.py design --since "${{ steps.range.outputs.since }}"
           # 지역구-공사현장 대응표는 새 지역이 생겼을 수 있으니 매번 다시 만든다.
           python bid.py link
 

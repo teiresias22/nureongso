@@ -265,6 +265,25 @@ create table if not exists bid_notice (
 create index if not exists bid_notice_org_idx on bid_notice (org);
 create index if not exists bid_notice_name_trgm on bid_notice using gin (name gin_trgm_ops);
 
+-- 우리 지자체의 설계용역 공고(나라장터 용역 중 이름에 '설계', bid.py design). 공사의 앞 단계 —
+-- 임기 첫해 공사가 전임자 때 설계된 사업인지 세는 데만 쓴다(판정 계획 결정 J). 판정·화면은 읽지 않아
+-- 공개 읽기 정책을 두지 않는다(RLS 만 켜 anon 은 못 읽는다).
+create table if not exists bid_design (
+  id          text primary key,      -- 공고번호-차수
+  name        text not null,
+  org         text,                  -- 주인으로 본 지자체 (bid_notice 와 같은 규칙)
+  demand_org  text,
+  notice_org  text,
+  notice_at   date,
+  budget      bigint,                -- 배정예산(원), 없으면 추정가격
+  url         text,
+  created_at  timestamptz not null default now()
+);
+create index if not exists bid_design_org_idx on bid_design (org, notice_at);
+create index if not exists bid_design_name_trgm on bid_design using gin (name gin_trgm_ops);
+alter table bid_design enable row level security;
+revoke insert, update, delete on bid_design from anon, authenticated;
+
 -- 같은 공사의 첫 공고만 남긴 표. 아래 bid_notice_uniq·member_district_bid 가 여기서 읽는다.
 -- 예전에는 두 뷰가 요청마다 공고 2.8만 건 전체를 distinct on 으로 정렬했다(인물 페이지를 열 때마다,
 -- 정렬이 메모리를 넘쳐 임시 파일까지 썼다). 2026-09-27 Disk IO Budget 이 바닥났을 때 원인 중 하나.

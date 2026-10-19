@@ -35,6 +35,11 @@ from judge import SIDO_ALIAS, ordin_org
 
 URL = ("https://apis.data.go.kr/1230000/ad/BidPublicInfoService"
        "/getBidPblancListInfoCnstwk")
+# 같은 서비스의 용역 공고. 설계용역만 남긴다(bid_design) — 공사의 앞 단계라, 임기 첫해 공사가
+# 전임자 때 이미 설계된 사업인지(판정 계획 결정 J) 공고를 하나하나 찾지 않고 셀 수 있다.
+URL_SERVICE = URL.replace("Cnstwk", "Servc")
+# 이름에 '설계' 가 들어도 공사 설계가 아닌 것. 실측: '깊이있는 수업 평가 설계 연수 위탁용역'.
+NOT_DESIGN = ("연수", "수업", "교육과정", "프로그램")
 # 포털은 인코딩 키와 디코딩 키를 둘 다 보여준다. httpx 가 params 를 다시 인코딩하므로
 # 인코딩 키를 그대로 주면 이중 인코딩돼 키가 틀렸다는 오류가 난다 (nec.py 와 같다).
 KEY = os.getenv("DATA_GO_KR_KEY") or None
@@ -190,10 +195,10 @@ def months(since: str, until: str):
         cur = nxt
 
 
-def fetch_page(client: httpx.Client, bgn: str, end: str, page: int):
+def fetch_page(client: httpx.Client, bgn: str, end: str, page: int, url: str = URL):
     q = {"serviceKey": KEY, "type": "json", "inqryDiv": 1,
          "pageNo": page, "numOfRows": PAGE, "inqryBgnDt": bgn, "inqryEndDt": end}
-    data = get_json(client, URL, q, what=f"{bgn}~{end} p{page}")
+    data = get_json(client, url, q, what=f"{bgn}~{end} p{page}")
 
     body = data.get("response", {}).get("body")
     if body is None:
@@ -264,6 +269,49 @@ def run_fetch(conn, since: str, until: str, floor: int) -> int:
     return kept
 
 
+def run_design(conn, since: str, until: str) -> int:
+    """우리 지자체의 설계용역 공고(bid_design). 예산 하한 없이 받는다 — 설계는 공사보다 작다
+    (2026-09 실측 670건 중 1억 미만 442). 판정에는 쓰지 않는다. 대조(match_bid)·인물 화면도 읽지 않는다."""
+    with conn.cursor() as cur:
+        orgs = tracked_orgs(cur)
+    kept = scanned = 0
+    with httpx.Client(timeout=90, headers={"User-Agent": "nureongso/0.1"}) as client, \
+            conn.cursor() as cur:
+        for bgn, end in months(since, until):
+            page, seen = 1, 0
+            while True:
+                rows, total = fetch_page(client, bgn, end, page, URL_SERVICE)
+                if not rows:
+                    break
+                batch = []
+                for r in rows:
+                    name = d(r.get("bidNtceNm")) or ""
+                    if "설계" not in name or any(w in name for w in NOT_DESIGN):
+                        continue
+                    dem, ntc = d(r.get("dminsttNm")), d(r.get("ntceInsttNm"))
+                    org = owner_of(dem, orgs) or owner_of(ntc, orgs)
+                    no, ordn = d(r.get("bidNtceNo")), d(r.get("bidNtceOrd")) or "000"
+                    if not org or not no:
+                        continue
+                    amt = num(r.get("asignBdgtAmt")) or num(r.get("presmptPrce"))
+                    batch.append((f"{no}-{ordn}", name, org, dem, ntc,
+                                  (d(r.get("bidNtceDt")) or "")[:10] or None, amt, d(r.get("bidNtceDtlUrl"))))
+                upsert(cur, "bid_design", ["id", "name", "org", "demand_org", "notice_org",
+                                           "notice_at", "budget", "url"], batch, "id")
+                conn.commit()
+                seen += len(rows)
+                scanned += len(rows)
+                kept += len(batch)
+                if seen >= total or len(rows) < PAGE:
+                    print(f"  {bgn[:6]} 용역 {total:,}건 → 설계 보관 {kept:,}", file=sys.stderr)
+                    break
+                page += 1
+        log_run(cur, "bid_design", kept)
+        conn.commit()
+    print(f"[bid] 용역 {scanned:,}건 훑어 설계 {kept:,}건 보관", file=sys.stderr)
+    return kept
+
+
 def refresh_first(conn) -> None:
     """bid_notice_first(같은 공사의 첫 공고만 남긴 표)를 다시 만든다.
 
@@ -281,7 +329,7 @@ def refresh_first(conn) -> None:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("step", choices=["fetch", "link", "all"])
+    p.add_argument("step", choices=["fetch", "design", "link", "all"])
     p.add_argument("--since", default=TERM_START)
     p.add_argument("--until", default=dt.date.today().strftime("%Y%m%d"))
     p.add_argument("--min", type=int, default=MIN_BUDGET)
@@ -295,6 +343,8 @@ def main():
     with psycopg.connect(dsn) as conn:
         if a.step in ("fetch", "all"):
             run_fetch(conn, a.since, a.until, a.min)
+        if a.step in ("design", "all"):
+            run_design(conn, a.since, a.until)
         if a.step in ("link", "all"):
             run_link(conn)
 
