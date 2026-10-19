@@ -1614,10 +1614,8 @@ def head_sha() -> str:
         cwd=os.path.dirname(os.path.abspath(__file__))).stdout.strip()
 
 
-def run_rule_prev(conn) -> None:
-    """evidence.yml '규칙 판 적용' 단계가 읽는다. 진행 중인 수집이 끝나기를 기다린 뒤 한 줄을 낸다:
-    none(적용 기록 없음) · 빈 줄(지금 판이 적용됨) · 지난 판의 커밋(그 판으로 털어 낸 뒤 새 판을 적용한다).
-    수집과 판정은 동시 실행 그룹이 달라 겹쳐 돈다. 수집 중에 털어 내면 그 뒤 변화가 'rule' 로 섞인다."""
+def wait_ingest(conn, what: str) -> None:
+    """진행 중인 수집이 끝나기를 기다린다(60분 넘으면 멈춘다). 규칙 판 적용·검수 반영 앞에 둔다."""
     import time
     for minute in range(61):
         with conn.cursor() as cur:
@@ -1626,11 +1624,18 @@ def run_rule_prev(conn) -> None:
             running = cur.fetchone()[0]
         conn.rollback()
         if not running:
-            break
+            return
         if minute == 60:
-            sys.exit("수집이 60분째 진행 중이라 규칙 판을 적용하지 않습니다.")
+            sys.exit(f"수집이 60분째 진행 중이라 {what} 않습니다.")
         print(f"  진행 중인 수집 {running}건 — 1분 뒤 다시 봅니다", file=sys.stderr)
         time.sleep(60)
+
+
+def run_rule_prev(conn) -> None:
+    """evidence.yml '규칙 판 적용' 단계가 읽는다. 진행 중인 수집이 끝나기를 기다린 뒤 한 줄을 낸다:
+    none(적용 기록 없음) · 빈 줄(지금 판이 적용됨) · 지난 판의 커밋(그 판으로 털어 낸 뒤 새 판을 적용한다).
+    수집과 판정은 동시 실행 그룹이 달라 겹쳐 돈다. 수집 중에 털어 내면 그 뒤 변화가 'rule' 로 섞인다."""
+    wait_ingest(conn, "규칙 판을 적용하지")
     with conn.cursor() as cur:
         last = applied_rule(cur)
     print("none" if last is None else "" if last[0] == RULE_VERSION else last[1])

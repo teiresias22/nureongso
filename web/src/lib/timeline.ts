@@ -23,18 +23,20 @@ export type TimelineInput = {
  *  근거 줄에 '취임일 전 기록' 을 사실로 달 때만 쓴다 — 판정은 웹에서 다시 계산하지 않는다. */
 export const HEAD_TERM_START = "2026-07-01";
 
-/** 사람 검수 표시(pledge_evidence.review 'ok|reject|partial:YYYY-MM-DD')를 근거 줄의 말로. */
+/** 검수 표시(pledge_evidence.review 'ok|reject|partial:YYYY-MM-DD[:llm]')를 근거 줄의 말로.
+ *  끝에 ':llm' 이 붙으면 사람이 아니라 LLM 이 확인한 것이다(판정 계획 결정 T1.8). */
 export function reviewText(review: string | null | undefined): string {
   if (!review) return "";
-  const [kind, day = ""] = review.split(":");
+  const [kind, day = "", by = ""] = review.split(":");
   const label = { ok: "맞음", reject: "관련 없음(판정에 쓰지 않음)", partial: "일부만(진행까지)" }[kind] ?? kind;
-  return `사람 확인: ${label}${day ? ` ${day.slice(5).replace("-", ".")}` : ""}`;
+  return `${by === "llm" ? "LLM 확인" : "사람 확인"}: ${label}${day ? ` ${day.slice(5).replace("-", ".")}` : ""}`;
 }
 
 /** 판정 이력의 사유. supabase/schema.sql log_pledge_status() 의 reason 과 1:1. */
 export const REASON_LABEL: Record<string, string> = {
   baseline: "기록 시작 시점 판정",
   reviewer: "사람 검수",
+  llm: "LLM 검수",
   evidence: "근거 연결",
   source: "출처 기록 변화",
   rule: "판정 기준 변경",
