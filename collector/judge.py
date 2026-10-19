@@ -1295,12 +1295,14 @@ base as (
          coalesce(ev.held_n, 0)  as held_n,
          pt.office, pt.term_start,
          -- 잴 수 있는 유형 / 잴 수 없는 유형
+         -- 국회 입법은 국회의원만, 조례는 단체장·교육감만 잴 수 있다. 단체장의 '입법' 공약은 그 사람이
+         -- 할 수 있는 일이 아니라 대조도 하지 않는데 not_checked 로 남았다(판정 계획 P6).
          array(select k from unnest(p.kinds) k
-                where k = '입법'
+                where (k = '입법' and pt.office = '국회의원')
                    or (k = '조례제도' and pt.office <> '국회의원')
               ) as measurable,
          array(select k from unnest(p.kinds) k
-                where k <> '입법'
+                where not (k = '입법' and pt.office = '국회의원')
                   and not (k = '조례제도' and pt.office <> '국회의원')
               ) as unmeasurable,
          exists (select 1 from ingest_run r
