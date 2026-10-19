@@ -682,6 +682,65 @@ def vague(why: str | None) -> bool:
     return not why or any(w in why for w in VAGUE_WORDS)
 
 
+# ---------------------------------------------------------------- 임기 첫해 발주의 이전 단계(결정 J, 표시만)
+# 임기 첫해(취임 뒤 1년) 발주 근거마다 같은 기관이 취임 전에 낸 같은 사업의 설계용역·공사 공고를 찾아
+# pledge_evidence.prior_ref 에 'design:<id>'|'bid:<id>' 로 둔다. 판정에 쓰지 않는다 — 근거 줄에
+# '취임 이전에 준비됨' 과 그 공고를, 없으면 '임기 첫해 공고(전임 임기에 준비됐을 수 있음)' 를 적는다.
+# 같은 사업: 같은 기관 · 공고일 < 취임일 · 공종·일반어를 뺀 이름에서 짧은 쪽 낱말이 모두 긴 쪽에 들어 있다.
+# 유사도만으로는 같은 기관의 다른 시설(교동·남내 공영주차장)이 붙어서 낱말 포함을 따로 본다(gold 발주 30, 오탐 0).
+# ponytail: 취임일은 단체장 공통 HEAD_TERM_START 다. 재보궐 단체장은 드물어 따로 보지 않는다.
+# 찾는 범위는 bid_design·bid_notice 가 가진 2024-05-30 이후다(/rules 4번).
+PRIOR_GENERIC = re.compile(
+    r"\([^)]*\)|\[[^]]*\]|기본\s*및\s*실시설계|실시설계|기본설계|설계공모|설계|용역|공사|입찰|공고|수의|견적|제출|안내"
+    r"|총괄분?|[0-9]차분|전체분|사업|조성|건립|정비|신축|전기|통신|소방|기계|건축|토목|조경|계속비|장기계속|[0-9]{4}년|및|외\s*[0-9]+건")
+
+
+def prior_tokens(name: str) -> list[str]:
+    return [t for t in re.findall(r"[가-힣A-Za-z0-9]+", PRIOR_GENERIC.sub(" ", name)) if len(t) >= 2]
+
+
+def same_project(a: str, b: str) -> bool:
+    """두 공고명이 같은 사업인가. 짧은 쪽 낱말이 모두 긴 쪽(띄어쓰기 없이 붙인 것)에 들어 있어야 한다."""
+    ta, tb = prior_tokens(a), prior_tokens(b)
+    short, long_ = (ta, tb) if len("".join(ta)) <= len("".join(tb)) else (tb, ta)
+    joined = "".join(long_)
+    return len("".join(short)) >= 5 and all(t in joined for t in short)
+
+
+PRIOR_SQL = """
+with ev as (
+  select e.id, n.name, n.org, trim(regexp_replace(n.name, %(gen)s, ' ', 'g')) k
+  from pledge_evidence e join bid_notice n on n.id = e.ref_id
+  where e.kind = 'bid' and e.prior_ref is null
+    and n.notice_at >= %(head_start)s::date and n.notice_at < %(head_start)s::date + interval '1 year'
+), cand as (
+  select 'design:' || id ref, org, name, notice_at from bid_design where notice_at < %(head_start)s::date
+  union all
+  select 'bid:' || id, org, name, notice_at from bid_notice where notice_at < %(head_start)s::date
+)
+select ev.id, ev.name, c.ref, c.name
+from ev join cand c on c.org = ev.org
+where length(ev.k) >= 4 and word_similarity(ev.k, trim(regexp_replace(c.name, %(gen)s, ' ', 'g'))) >= 0.4
+order by ev.id, word_similarity(ev.k, trim(regexp_replace(c.name, %(gen)s, ' ', 'g'))) desc, c.notice_at
+"""
+
+
+def run_prior(conn) -> int:
+    """임기 첫해 발주 근거의 이전 단계 공고를 채운다. 아직 못 찾은 줄만 다시 본다. LLM 없음."""
+    with conn.cursor() as cur:
+        cur.execute(PRIOR_SQL, PARAMS | {"gen": PRIOR_GENERIC.pattern})
+        found: dict[int, str] = {}
+        for eid, name, ref, prior in cur.fetchall():
+            if eid not in found and same_project(name, prior):
+                found[eid] = ref
+        for eid, ref in found.items():
+            cur.execute("update pledge_evidence set prior_ref = %s where id = %s and prior_ref is distinct from %s",
+                        (ref, eid, ref))
+    conn.commit()
+    print(f"[prior] 임기 첫해 발주 근거 {len(found)}건에 취임 전 같은 사업 공고를 달았다", file=sys.stderr)
+    return len(found)
+
+
 def run_match_bid(conn, limit: int | None, redo: bool) -> None:
     """예산사업형 공약 ↔ 그 지자체가 임기 중 낸 공사 입찰공고.
 
@@ -1646,7 +1705,7 @@ def main():
     p.add_argument(
         "step",
         choices=["classify", "match", "match_ordin", "match_bid",
-                 "match_race", "decide", "rule-prev", "snapshot", "quote", "repro", "all"])
+                 "match_race", "decide", "rule-prev", "snapshot", "quote", "repro", "prior", "all"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--check", action="store_true", help="decide·snapshot: 쓰지 않고 바뀔 수만 센다")
     p.add_argument("--diff", action="store_true", help="decide: 쓰지 않고 판정 전이표를 낸다")
@@ -1669,6 +1728,8 @@ def main():
             run_match_ordin(conn, a.limit, a.redo)
         if a.step in ("match_bid", "all"):
             run_match_bid(conn, a.limit, a.redo)
+        if a.step in ("prior", "all"):
+            run_prior(conn)
         # match_race 는 all 에 넣지 않는다. LLM 한도를 쓰는데 선거 때만 새로 생긴다.
         if a.step == "match_race":
             run_match_race(conn, a.limit, a.redo, a.since)
