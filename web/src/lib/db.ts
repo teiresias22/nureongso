@@ -101,6 +101,7 @@ export const NOTE_LABEL: Record<string, string> = {
   not_checked: "아직 공식 기록과 대조하지 않았습니다",
   past_term: "지난 임기 공약이라 판정하지 않습니다",
   not_elected: "당선되지 않은 선거의 공약이라 이행을 판정하지 않습니다",
+  law_withdrawn: "관련 법안을 대표발의했다가 철회했습니다. 철회한 법안은 이행 근거로 세지 않습니다",
   review_partial:
     "사람 검수: 연결된 기록이 공약의 일부만 이행했거나 가결 뒤 공포되지 않은 것으로 확인돼 진행으로 둡니다",
 };

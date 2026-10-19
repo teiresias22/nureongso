@@ -1251,7 +1251,10 @@ ev as (
          -- (실측: 대안반영폐기 4,101건 대 가결 699건).
          bool_or(not e.held and alt.proc_result like '%%가결%%') as law_merged,
          bool_or(e.kind = 'bill' and b.proc_result = '대안반영폐기') as law_alt,
-         count(*) filter (where e.kind = 'bill')  as law_n,
+         -- 철회한 법안은 착수 기록이 아니다(본인이 거둬들였다). 따로 세어 사유로만 적는다(판정 계획 P8, 결정 W).
+         -- 부결은 표결까지 간 착수 기록이라 폐기와 같이 센다.
+         count(*) filter (where e.kind = 'bill' and b.proc_result is distinct from '철회') as law_n,
+         count(*) filter (where e.kind = 'bill' and b.proc_result = '철회') as law_wd_n,
          count(*) filter (where e.kind = 'ordin' and not e.held) as ordin_n,
          count(*) filter (where e.kind = 'bid')   as bid_n,
          count(*) filter (where e.held and e.kind in ('bill', 'ordin')) as held_n
@@ -1293,6 +1296,7 @@ base as (
          coalesce(ev.ordin_n, 0) as ordin_n,
          coalesce(ev.bid_n, 0)   as bid_n,
          coalesce(ev.held_n, 0)  as held_n,
+         coalesce(ev.law_wd_n, 0) as law_wd_n,
          pt.office, pt.term_start,
          -- 잴 수 있는 유형 / 잴 수 없는 유형
          -- 국회 입법은 국회의원만, 조례는 단체장·교육감만 잴 수 있다. 단체장의 '입법' 공약은 그 사람이
@@ -1370,6 +1374,7 @@ judged as (
       when law_n > 0                      then 'law_filed'
       when bid_n > 0                      then 'bid_ordered'
       when not checked                    then 'not_checked'
+      when law_wd_n > 0                   then 'law_withdrawn'
       when past_grace                     then 'none_2y'
       else 'none_early'
     end as note,
