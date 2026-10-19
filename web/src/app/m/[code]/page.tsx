@@ -412,6 +412,12 @@ export default async function MemberPage({
     .filter(Boolean)
     .sort()
     .reverse();
+  // 인물 카드의 이번 임기 판정 건수. 비율(완료 X/Y %)은 판단불가가 많아 '0% 이행' 으로 읽혔다(판정 계획 결정 O).
+  const nowStatus = new Map<string, number>();
+  for (const p of pledges ?? []) {
+    const st = (p.pledge_status as unknown as { status: string } | null)?.status;
+    if (st && p.election_id === pledgeElections[0]) nowStatus.set(st, (nowStatus.get(st) ?? 0) + 1);
+  }
 
   // 목차. 사람마다 있는 구획이 달라(N선 의원은 지난 임기 공약이 여럿, 단체장은
   // 법안 목록이 없다) 화면을 그리는 조건과 같은 기준으로 여기서 한 번 만든다.
@@ -709,12 +715,12 @@ export default async function MemberPage({
             value={s.pledge_count}
             unit="건"
             // 이행률은 해석이고 발의·가결은 사실이다. 사실을 먼저 보여준다.
+            // 대표발의가 없는 사람(단체장 등)에게 '발의 0 · 통과 0' 은 안 한 것처럼 읽혀 숨긴다.
             sub={
-              s.pledge_law > 0
+              s.pledge_law > 0 && s.rep_count > 0
                 ? `법률로 재는 공약 ${s.pledge_law} · 발의 ${s.pledge_law_filed} · 통과 ${s.pledge_law_passed}`
-                // 분모는 판정한 공약만. 판정 전 공약까지 넣으면 '안 지켰다' 로 읽힌다.
-                : s.pledge_judged > 0
-                  ? `이행 완료 ${s.pledge_done}/${s.pledge_judged} (${pct(s.pledge_done, s.pledge_judged)}%) · 판정 ${s.pledge_judged}/${s.pledge_count}`
+                : nowStatus.size
+                  ? `이번 임기 ${["완료", "진행", "미착수", "판단불가"].map((k) => `${k} ${nowStatus.get(k) ?? 0}`).join(" · ")}`
                   : "이행 판정 전"
             }
             href={nav.find((n) => n.id.startsWith("p-"))?.id ? `#${nav.find((n) => n.id.startsWith("p-"))!.id}` : undefined}
@@ -965,7 +971,7 @@ export default async function MemberPage({
                           </span>
                           <span className="block font-medium">{p.title}</span>
                           {st?.note && (
-                            <span className="mt-0.5 block text-xs text-muted">{noteText(st.note)}</span>
+                            <span className="mt-0.5 block text-xs text-muted">{noteText(st.note, run?.office)}</span>
                           )}
                         </span>
                       </span>
