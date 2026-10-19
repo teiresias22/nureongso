@@ -140,3 +140,12 @@ def test_self_contradicted():
     # 실측 근거 이유(4163·12186). 법안·조례 대조도 이런 연결을 버린다(판정 계획 T1.6).
     assert judge.self_contradicted("공약은 지역 사업이나 법안 성격 불일치")
     assert not judge.self_contradicted("공영주차장 확보 계획 수립을 의무화해 공약과 같은 일을 한다")
+
+
+def test_notes_have_rule_rows():
+    # note 마다 /rules 2번 표에 r-<note> 행이 있어야 한다(계약 시험 (c)). 사유에서 규칙으로 바로 갈 수 있게.
+    case = judge.JUDGED_CTE.split("end as status,")[1].split("end as note")[0]
+    notes = set(re.findall(r"(?:then|else) '([a-z0-9_]+)'", case)) | set(re.findall(r"'([a-z_]+):' \|\|", case))
+    rules = open(os.path.join(WEB, "app", "rules", "page.tsx")).read()
+    rows = set(re.findall(r'^  \["([a-z0-9_]+)", ', rules.split("const JUDGE_ROWS")[1].split("];")[0], re.M))
+    assert notes == rows, (notes - rows, rows - notes)

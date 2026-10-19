@@ -44,6 +44,29 @@ const RULE_CHANGES: { ver: string; at: string; what: string; moved: string; why:
   },
 ];
 
+/** 2번 표. 첫 칸은 규칙표(collector/judge.py JUDGED_CTE)가 내는 사유(note) — 행 id 가 r-<note> 가 된다.
+ *  사유마다 한 줄이어야 한다(test_judge 가 본다). null 은 사유가 아니라 근거를 거르는 조건. */
+const JUDGE_ROWS: [string | null, string, string][] = [
+  ["law_passed", "본인이 대표발의한 관련 법안이 통과됨", "완료"],
+  ["law_merged", "본인 법안이 위원회 대안에 반영됐고 그 대안이 통과됨", "완료"],
+  ["ordin_enacted", "취임일 다음 날부터 공포된 관련 조례가 있음", "완료"],
+  ["partial", "위가 확인됐으나 못 재는 유형이 남아 있음", "진행"],
+  ["law_filed", "관련 법안을 대표발의했으나 계류·폐기·부결", "진행"],
+  ["law_alt_unverified", "본인 법안이 대안에 반영됐으나 그 대안을 확인하지 못함", "진행"],
+  ["bid_ordered", "취임일 이후 관련 공사가 발주됨", "진행 (완료로는 가지 않음)"],
+  ["review_partial", "사람 검수로 일부만 이행된 것으로 확인된 기록", "진행까지"],
+  [null, "공약(선거일)이나 취임보다 먼저 나온 기록", "근거로 세지 않음"],
+  [null, "사람 검수로 관련 없다고 확인된 기록", "근거로 세지 않음"],
+  ["law_withdrawn", "대표발의한 관련 법안을 철회했고 다른 기록이 없음", "철회는 근거로 세지 않음 — 아래 세 줄대로 미착수·판단불가"],
+  ["none_2y", "(잴 수 있는 유형만 있는 공약) 관련 기록이 없고 그 사람의 임기 시작(재보궐은 선거일)부터 2년이 지남", "미착수"],
+  ["none_partial", "못 재는 유형이 남은 공약에서 잴 수 있는 쪽 기록 없이 2년 지남", "판단불가"],
+  ["none_early", "관련 기록이 없고 그 사람의 임기 시작부터 2년 미만", "판단불가"],
+  ["not_checked", "아직 공식 기록과 대조하지 않음", "판단불가"],
+  ["no_measure", "잴 수 있는 유형이 하나도 없음", "판단불가 (측정 수단 없음)"],
+  ["not_elected", "당선되지 않은 선거의 공약", "판단불가"],
+  ["past_term", "지난 임기 공약 (그 임기의 근거 자료가 없음)", "판단불가"],
+];
+
 /** 맨 위 목차. 의원 페이지의 '어떻게 세나' 같은 링크가 이 구획들을 id 로 가리킨다. */
 const TOC: [string, string][] = [
   ["kinds", "1. 공약마다 '무엇으로 확인할 수 있는가'를 먼저 정합니다"],
@@ -113,10 +136,12 @@ export default function RulesPage() {
             ["예산·사업", "시설을 짓거나 사업을 벌인다", "공사 발주 (단체장·교육감만)"],
             ["조례·제도", "지자체 조례나 행정 제도를 바꾼다", "자치법규 제·개정 (단체장·교육감만)"],
             ["방향 제시", "구체적 대상과 수단이 없다", "확인 불가"],
+            ["기타", "위 어디에도 맞지 않는다", "확인 불가"],
           ]}
         />
         <p className="text-sm leading-6 text-muted">
-          실제 집계에서 국회의원 공약의 약 10%만 법률로 잴 수 있고, 60%는 지역 사업입니다.
+          제22대 총선(2024-04-10) 국회의원 공약 4,188건 기준으로 법률이 들어간 공약은 24.6%, 법률만으로
+          이뤄지는 공약은 5.7%이고, 예산·사업만 있는 공약이 64.0%입니다(2026-10 분류).
           지금 잴 수 있는 것은 <b>법률·조례·공사 발주</b> 셋입니다. 조례와 발주는
           단체장·교육감만 해당합니다 — 국회의원은 조례를 만들 수 없고, 예산 편성권도
           발주 권한도 없기 때문입니다. 나머지는 <b>측정 수단 없음</b>으로 둡니다.
@@ -126,24 +151,12 @@ export default function RulesPage() {
       <Box id="judge" title="2. 판정 규칙">
         <Table
           head={["근거", "판정"]}
-          rows={[
-            ["본인이 대표발의한 관련 법안이 통과됨", "완료"],
-            ["취임일 다음 날부터 공포된 관련 조례가 있음", "완료"],
-            ["위가 확인됐으나 못 재는 유형이 남아 있음", "진행"],
-            ["관련 법안을 대표발의했으나 계류·폐기·부결 (철회는 근거로 세지 않음)", "진행"],
-            ["취임일 이후 관련 공사가 발주됨", "진행 (완료로는 가지 않음)"],
-            ["공약(선거일)이나 취임보다 먼저 나온 기록", "근거로 세지 않음"],
-            ["사람 검수로 관련 없다고 확인된 기록", "근거로 세지 않음"],
-            ["사람 검수로 일부만 이행된 것으로 확인된 기록", "진행까지"],
-            ["(잴 수 있는 유형만 있는 공약) 관련 기록이 없고 그 사람의 임기 시작(재보궐은 선거일)부터 2년이 지남", "미착수"],
-            ["못 재는 유형이 남은 공약에서 잴 수 있는 쪽 기록 없이 2년 지남", "판단불가"],
-            ["관련 기록이 없고 그 사람의 임기 시작부터 2년 미만", "판단불가"],
-            ["아직 공식 기록과 대조하지 않음", "판단불가"],
-            ["잴 수 있는 유형이 하나도 없음", "판단불가 (측정 수단 없음)"],
-            ["당선되지 않은 선거의 공약", "판단불가"],
-            ["지난 임기 공약 (그 임기의 근거 자료가 없음)", "판단불가"],
-          ]}
+          rows={JUDGE_ROWS.map(([, ...r]) => r)}
+          ids={JUDGE_ROWS.map(([note]) => note && `r-${note}`)}
         />
+        <p className="text-muted">
+          <b>판단불가는 미이행이 아닙니다.</b> 확인할 수단이 없거나 아직 대조하지 않았다는 뜻입니다.
+        </p>
         <p className="text-muted">
           공식 기록을 찾아보지도 않은 공약을 <b>미착수</b>로 적지 않습니다. 대조를 마친
           사람만 판정하고, 나머지는 아직 확인하지 않았다고 표시합니다.
@@ -690,7 +703,7 @@ export default function RulesPage() {
             수 없어 싣지 않습니다. 궁금하시면 관할 선거관리위원회에 열람을 신청하실 수 있습니다.
           </li>
           <li>
-            <b>의원별 경비 집행내역.</b> 위 17번 지원경비를 의원실마다 실제로 얼마 썼는지는
+            <b>의원별 경비 집행내역.</b> 위 <a href="#office-budget" className="underline underline-offset-2">17번</a> 지원경비를 의원실마다 실제로 얼마 썼는지는
             공개 데이터에 없고 정보공개청구로만 받을 수 있습니다.
           </li>
           <li>
@@ -751,7 +764,7 @@ function Box({ id, title, children }: { id?: string; title: string; children: Re
   );
 }
 
-function Table({ head, rows }: { head: string[]; rows: string[][] }) {
+function Table({ head, rows, ids }: { head: string[]; rows: string[][]; ids?: (string | null)[] }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[28rem] border-collapse text-sm">
@@ -765,8 +778,8 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r[0]} className="border-b border-line/60 last:border-0">
+          {rows.map((r, n) => (
+            <tr key={n} id={ids?.[n] ?? undefined} className="scroll-mt-14 border-b border-line/60 last:border-0">
               {r.map((c, i) => (
                 <td key={i} className={`py-1.5 pr-3 ${i === 0 ? "font-medium" : "text-muted"}`}>
                   {c}
