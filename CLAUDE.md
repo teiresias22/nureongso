@@ -23,6 +23,9 @@ web/         Next.js 16 (App Router) + supabase-js, Vercel(icn1)
 ## 배포 요점
 
 - web: Vercel, `web/` 가 루트. 배포 주소 https://nureongso.joon.is-a.dev (`NEXT_PUBLIC_SITE_URL`)
+- **master push = 프로덕션 배포이고, 배포마다 ISR 캐시가 새로 시작된다.** 하루 18번 배포하던 때 Vercel 무료 한도를 넘겼다(2026-10).
+  커밋은 모아 두고 하루 한두 번 push. `.claude/hooks/protect.sh` 가 최근 24시간 배포 3번 이상이면 master push 를 막는다 —
+  사용자가 허락한 배포만 `DEPLOY_BRAKE_OK=1 git push …` 로 통과.
 - DB: Supabase 무료(500MB). 스키마 변경은 `schema.sql` 을 고치고 SQL Editor 에서 해당 문만 실행.
 - 수집: GitHub Actions — 매일 04:00 `ingest.yml`, 화 04:30 `nec.yml`, 월 05:00 `evidence.yml`,
   매일 18:00 `race.yml`(후보 공약 비교 재생성, 다 돌면 지운다), 매일 09:10 `digest.yml`(구독자 주간 기록 메일)(KST).
