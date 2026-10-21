@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   }
   if (act !== "subscribe") return back("invalid");
 
-  // 1시간 데이터 캐시를 탄다(db.ts). /my 와 같은 목록이어야 거기서 고른 값이 통과한다.
+  // 하루 데이터 캐시를 탄다(db.ts). /my 와 같은 목록이어야 거기서 고른 값이 통과한다.
   const { data: areas } = await db.from("member_area").select("member_code, office, sd_name, wiw_name");
   const f = parseSubscribe(await req.formData(), regionsOf((areas ?? []) as Area[]));
   if (!f.ok) return back(f.why === "bot" ? "sent" : "invalid");

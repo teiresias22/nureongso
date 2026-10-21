@@ -5,7 +5,7 @@ import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
 import { ldJson, pageOg, SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
 
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 /** 빈 목록 = 빌드 때는 안 그리고 처음 열릴 때 그려 ISR 로 둔다. 이게 없으면 검색어를 안 읽어도
  *  요청마다 그린다. 법안 1.9만 쪽을 크롤러가 돌 때 리전마다 따로인 CDN 캐시가 아니라 전역 ISR

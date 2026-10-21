@@ -14,7 +14,7 @@ import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
 
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 const PAGE = 50;
 const DISTRICT_BID_PAGE = 30;
@@ -151,7 +151,7 @@ export async function generateMetadata(
 ): Promise<Metadata> {
   const { code } = await params;
   const [{ data: member }, { data: stats }, { data: rec }] = await Promise.all([
-    // 본문과 같은 select 라 1시간 데이터 캐시를 한 칸으로 같이 쓴다.
+    // 본문과 같은 select 라 하루 데이터 캐시를 한 칸으로 같이 쓴다.
     db.from("member").select(MEMBER_COLS).eq("code", code).maybeSingle(),
     db.from("member_stats").select("*").eq("code", code).maybeSingle(),
     // 현직만 있다(member_record). 역대 인물은 비어 있어 수치를 빼고 쓴다.

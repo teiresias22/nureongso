@@ -7,9 +7,12 @@ const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // 주소 검색어(searchParams)를 읽는 페이지는 요청마다 새로 그려지고, 그 뒤의 fetch 는
 // 페이지의 `revalidate` 를 따르지 않아 매 방문이 DB 까지 갔다(의원 한 명에 20여 쿼리).
-// 읽기(GET)는 여기서 한 번에 1시간 데이터 캐시에 태운다. 쓰기·rpc(POST)는 건드리지 않는다.
+// 읽기(GET)는 여기서 한 번에 하루 데이터 캐시에 태운다. 쓰기·rpc(POST)는 건드리지 않는다.
+// 페이지 `revalidate`(하루)와 맞춘다 — ISR 은 페이지와 fetch 중 짧은 쪽을 따라서, 여기가 1시간이면
+// 페이지도 1시간마다 다시 그려진다. 크롤러가 법안 2만 쪽을 돌 때마다 그게 ISR 쓰기로 쌓여
+// Vercel 무료 20만 건을 넘겼다(2026-10, 30.9만). 수집이 하루 한 번(04:00)이라 하루로 잃는 게 없다.
 const cachedFetch: typeof fetch = (input, init) =>
-  fetch(input, !init?.method || init.method === "GET" ? { ...init, next: { revalidate: 3600 } } : init);
+  fetch(input, !init?.method || init.method === "GET" ? { ...init, next: { revalidate: 86400 } } : init);
 
 export const db = createClient(url, key, {
   auth: { persistSession: false },

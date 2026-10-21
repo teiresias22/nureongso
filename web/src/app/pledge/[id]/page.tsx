@@ -5,7 +5,7 @@ import { db, eok, electionYear, KIND_LABEL, noteText, STATUS_BG } from "@/lib/db
 import { pageOg, REPORT_URL } from "@/lib/site";
 import { kstDate, REASON_LABEL, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
 
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 /** 처음 열릴 때 그려 ISR 로 둔다(법안 페이지와 같은 이유). */
 export async function generateStaticParams() {

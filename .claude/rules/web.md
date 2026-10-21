@@ -7,7 +7,8 @@ paths:
 
 - 이 Next.js 는 학습 데이터와 API·규칙이 다르다. 쓰기 전에 `web/node_modules/next/dist/docs/` 해당 가이드를 읽는다.
   `web/AGENTS.md` 는 `next dev` 가 다시 써 넣는 파일이라 고치지 않는다.
-- DB 접근은 `src/lib/db.ts` 의 `db` 하나. GET 은 1시간 데이터 캐시(`cachedFetch`)를 탄다 — 페이지마다 fetch 옵션을 따로 달지 않는다.
+- DB 접근은 `src/lib/db.ts` 의 `db` 하나. GET 은 하루 데이터 캐시(`cachedFetch`)를 탄다 — 페이지마다 fetch 옵션을 따로 달지 않는다.
+  페이지 `revalidate` 도 하루(86400). ISR 은 둘 중 짧은 쪽을 따르니 한쪽만 줄이지 않는다(1시간이던 때 ISR 쓰기 무료 한도를 넘겼다).
 - 그 위에 Vercel CDN 하루 캐시(`next.config.ts` 의 `headers()`)가 있다. 검색어를 읽는 페이지는 Next 가 `no-store` 를 붙여
   매 요청이 함수까지 가서 무료 한도를 먹었다. 새 동적 경로를 만들면 그 목록에 넣을지 정한다(쿠키·로그인이 없어 누구에게나 같은 화면).
 - 머리글·바닥글 링크는 `<a>`(클라이언트 이동 없음). JS 를 돌리는 크롤러(OAI-SearchBot)가 법안 쪽마다 이 링크를

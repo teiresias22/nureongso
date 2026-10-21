@@ -4,7 +4,7 @@ import { forceLayout, labelBox, separate } from "@/lib/force";
 import { pageOg } from "@/lib/site";
 import { Graph, type GraphEdge, type GraphNode } from "./graph";
 
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 const TITLE = "공동발의 관계도";
 const DESC =

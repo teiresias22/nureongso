@@ -5,7 +5,7 @@ import {
   type CardRecord, type CardStats, type Member, type OfficeTerm,
 } from "@/lib/db";
 
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 type SP = { q?: string; party?: string; sort?: string; elect?: string; office?: string };
 
