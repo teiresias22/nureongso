@@ -85,10 +85,14 @@ export const metadata: Metadata = {
   alternates: { canonical: "/" },
   // 검색엔진 소유 확인. 이 토큰은 페이지 소스에 그대로 실려 누구나 읽는 값이고,
   // 구글에 소유를 증명할 뿐 아무 권한도 주지 않는다. 그래서 그냥 코드에 둔다.
-  // 확인 방식마다 토큰이 다르다 — 이건 'URL 접두어 + HTML 태그' 용이다.
+  // 확인 방식마다 토큰이 다르다 — 둘 다 'URL 접두어 + HTML 태그' 용이다.
   // vercel.app 은 DNS 를 우리가 못 만지므로 도메인 속성(TXT) 방식은 쓸 수 없다.
+  // 두 번째는 apps.joon.is-a.dev 와 같은 계정의 속성용. 기존 확인이 풀리지 않게 둘 다 둔다.
   verification: {
-    google: "75dmW4emeXr54OYb8I1VfO3C_7KHchctlkWiilITKDU",
+    google: [
+      "75dmW4emeXr54OYb8I1VfO3C_7KHchctlkWiilITKDU",
+      "Zc5yq-VNqzUCyuv3NYHmQ_ue4gbFbA2VUUX1qCd4-As",
+    ],
     // 네이버 서치어드바이저 코드를 받으면 여기에 같은 방식으로 넣는다.
     other: process.env.NAVER_SITE_VERIFICATION
       ? { "naver-site-verification": process.env.NAVER_SITE_VERIFICATION }
