@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "@/lib/link";
+import { photo } from "@/lib/photo";
 import {
   attendRate, officeBadge, CARD_COLS, CARD_REC_COLS, CARD_STAT_COLS, db, eok, hasBills, hasPledges, lastPart, OFFICES, partyColor, pct, shortDistrict, termText,
   type CardRecord, type CardStats, type Member, type OfficeTerm,
@@ -280,7 +281,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<SP>
                   className="w-1 shrink-0 rounded-full"
                   style={{ background: partyColor(m.party) }}
                 />
-                <Photo src={m.photo_url} name={m.name} />
+                <Photo code={m.code} src={m.photo_url} name={m.name} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     {/* 이름은 줄이지 않는다. 누구인지가 이 카드의 핵심이다. */}
@@ -377,13 +378,15 @@ function ElectBadge({ type }: { type?: string | null }) {
 }
 
 /** 사진이 없거나 못 불러오면 이름이 뒤에서 드러난다. 클라이언트 스크립트 없이 처리한다. */
-export function Photo({ src, name }: { src?: string | null; name: string }) {
+export function Photo({ code, src, name }: { code: string; src?: string | null; name: string }) {
+  const p = photo(code, src);
   return (
     <span className="relative grid h-14 w-12 shrink-0 place-items-center overflow-hidden rounded bg-line text-xs text-muted">
       {name.slice(-2)}
-      {src && (
+      {p && (
         <Image
-          src={src}
+          src={p.src}
+          unoptimized={p.unoptimized}
           alt=""
           width={48}
           height={56}

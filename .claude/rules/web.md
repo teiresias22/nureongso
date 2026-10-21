@@ -20,7 +20,9 @@ paths:
   서버에서 검색어를 읽으면 다시 요청마다 그려진다 — 필요하면 클라이언트 컴포넌트(`useSearchParams`)에서. CDN 헤더는 리전마다 따로라 덜 먹힌다.
 - `nureongso-puce.vercel.app` 은 본 주소로 308(`next.config.ts` `redirects`). 크롤러가 두 벌을 돌았다.
 - 사용량은 Vercel → Observability → Functions(경로별 Active CPU, 12시간)와 Logs(요청별 User-Agent·실행 시간, 1시간).
-- 사진 변환 크기는 `imageSizes` 의 96·192 두 벌뿐이다. 다른 폭을 쓰면 변환 벌수가 늘어 무료 5천 건을 넘긴다.
+- 의원 사진은 `photo(code, url)`(`lib/photo.ts`)로 그린다 — 미리 줄인 `public/photo/<code>.webp`(160×192)를 변환 없이 쓴다.
+  만드는 건 `collector/photos.py`(새 의원이 생기면 돌려서 커밋). 목록에 없는 사람만 원본을 변환하는데,
+  그 변환 크기는 `imageSizes` 의 96·192 두 벌뿐이다. 변환은 무료 5천 건이고 2026-10 에 역대 의원 사진으로 찼다.
 - 목록은 `CARD_COLS`·`CARD_STAT_COLS` 만 받는다. `select *` 금지(558행에서 349ms→154ms 실측).
 - 공용 표기·계산은 `lib/db.ts` 에 이미 있다(`eok()` 억 단위 등). 페이지에 다시 만들지 않는다.
 - 화면은 직위가 아니라 **데이터 유무**로 가른다. 발의·표결이 있으면 의정활동, 공약이 있으면 공약.

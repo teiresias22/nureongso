@@ -198,7 +198,7 @@ function Card({ m, s, r }: { m: Member; s?: CardStats; r?: CardRecord }) {
       className="flex h-full gap-3 rounded-lg border border-line bg-card p-3 transition hover:border-muted"
     >
       <span className="w-1 shrink-0 rounded-full" style={{ background: partyColor(m.party) }} />
-      <Photo src={m.photo_url} name={m.name} />
+      <Photo code={m.code} src={m.photo_url} name={m.name} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="whitespace-nowrap text-base font-semibold">{m.name}</span>

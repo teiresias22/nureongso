@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "@/lib/link";
+import { photo } from "@/lib/photo";
 import { notFound } from "next/navigation";
 import {
   db, eok, districtArea, electionYear, hasBills, hasPledges, KIND_LABEL, lastPart, noteText,
@@ -558,6 +559,8 @@ export default async function MemberPage({
     return qs ? `?${qs}#bid` : "#bid";
   };
 
+  const pic = photo(m.code, m.photo_url);
+
   // 구글이 이 페이지를 '인물' 로 인식해야 이름 검색에 걸린다. 라이브러리 없이 객체 하나.
   const jsonLd = {
     "@context": "https://schema.org",
@@ -588,9 +591,10 @@ export default async function MemberPage({
 
       <header className="flex gap-4 rounded-lg border border-line bg-card p-4">
         <span className="w-1.5 rounded-full" style={{ background: partyColor(m.party) }} />
-        {m.photo_url && (
+        {pic && (
           <Image
-            src={m.photo_url}
+            src={pic.src}
+            unoptimized={pic.unoptimized}
             alt=""
             width={80}
             height={96}

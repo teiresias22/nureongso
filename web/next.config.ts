@@ -34,7 +34,12 @@ const nextConfig: NextConfig = {
   async headers() {
     const cdn = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=86400, stale-while-revalidate=86400" }];
     // `/bill`·`/pledge` 는 검색어를 안 읽어 ISR(전역 캐시)로 돈다. 여기 넣지 않는다.
-    return ["/", "/m/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn }));
+    // 미리 줄인 의원 사진(collector/photos.py). 임기 중엔 안 바뀌고, 바뀌면 다음 실행이 같은 이름에 덮어쓴다.
+    const photo = [{ key: "Cache-Control", value: "public, max-age=604800, stale-while-revalidate=86400" }];
+    return [
+      ...["/", "/m/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn })),
+      { source: "/photo/:file", headers: photo },
+    ];
   },
 };
 
