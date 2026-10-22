@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import Script from "next/script";
 import { kstYear, ldJson, REPO, REPORT_URL, SITE } from "@/lib/site";
 import "./globals.css";
 
@@ -37,6 +38,7 @@ const FOOTER_COLS: { title: string; links: { href: string; label: string; ext?: 
       { href: "/rules", label: "판정 기준" },
       { href: "/rules#not-shown", label: "싣지 않는 정보" },
       { href: "/rules#sources", label: "데이터 출처" },
+      { href: "/privacy", label: "개인정보처리방침" },
     ],
   },
   {
@@ -55,6 +57,10 @@ const OPERATOR = [
   { href: "https://www.linkedin.com/in/joonhwan-jeon-9009ba320/", label: "LinkedIn" },
   { href: "https://joon-dev-995ba.web.app/", label: "다른 프로젝트" },
 ];
+
+// 방문 통계(GA4). Vercel 환경변수 NEXT_PUBLIC_GA_ID 가 있을 때만 싣는다 — 수집 항목은 /privacy.
+// 지표는 운영자 대시보드(apps.joon.is-a.dev/admin/)가 GA4 Data API 로 읽는다.
+const GA_ID = process.env.NEXT_PUBLIC_GA_ID;
 
 const TITLE = "누렁소검은소 — 선출직 공약·의정활동 기록";
 const DESC =
@@ -245,6 +251,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
         </footer>
+        {GA_ID && (
+          <>
+            <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} strategy="afterInteractive" />
+            <Script id="ga4" strategy="afterInteractive">
+              {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','${GA_ID}',{allow_google_signals:false,allow_ad_personalization_signals:false});`}
+            </Script>
+          </>
+        )}
       </body>
     </html>
   );
