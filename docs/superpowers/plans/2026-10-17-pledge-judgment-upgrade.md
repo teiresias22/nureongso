@@ -161,6 +161,14 @@ P14 세부 (상태는 그대로이고 문구·숫자만 틀렸다):
 
 ### Phase 0 — 재는 장치 (판정 결과 변화 0건)
 
+> **진행 (2026-10-18, 브랜치 `feat/judge-phase0`, master 미병합)**
+> - 코드: T0.2 `ecc3b50` · T0.3 `d91bde2` · T0.1 `cc065f6` · T0.5 `7191b4c` · T0.4 `893398b` · T0.6(이 커밋). T0.0 은 master `d5bc9e8`.
+> - 확인: `decide --diff` 0 · `decide_check` 22건(review 칸 있으면 24건+덮기 막기) · 새 트리거로 `pledge_history.check.sql` 통과(트랜잭션 안 교체 후 롤백) · 불변식 실측 I1 202 · I2 38 · I3 581 · I4 167 · I5 2 · I7 35 · I8 0 · I11 602 · I6 0.
+> - 남은 것(소유자): 결정 F 두 문을 화~금 낮에 운영 적용(`log_pledge_status()` 교체, `pledge_evidence.review` 칸·형식 check) → 그 뒤 일요일(10-25)에 이 브랜치 병합.
+>   **F 전에 병합하지 않는다** — review 칸이 없으면 대조(save_evidence)가 실패하고, 옛 트리거는 판 이름 변경(9df1c6e9 → ddbb8e48)을 'rule' 로 찍는다.
+> - gold v1 CSV 세 층 95건(`docs/review/gold-v1-{done,bid,none}.csv`)을 뽑았다. 라벨은 사람이(약 7시간), 끝나면 `sample_review.py score`.
+> - `/rules#changes` 의 ddbb8e48 '적용' 칸은 병합 뒤 실제 적용일로 고친다.
+
 #### T0.0 조례·발주에는 원문 구절을 달지 않는다 (P13). 병합 전에 브랜치에 커밋한다
 - **무엇·어디**
   - `judge.py:917-936` `run_quote` 의 조례·발주 덩어리(이름을 구절로 넣고 quote_ok 를 다는 부분)를 지우고, docstring 을 고친다.

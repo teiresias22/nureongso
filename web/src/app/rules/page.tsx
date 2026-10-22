@@ -11,6 +11,25 @@ export const metadata = {
   ...pageOg(`누렁소검은소 — ${TITLE}`, DESC, "/rules"),
 };
 
+/** 판정 기준 변경 기록(2번 아래 #changes). 규칙표(collector/judge.py JUDGED_CTE)의 판 이름이 바뀔 때마다 한 줄.
+ *  손으로 쓴다 — 판 이름은 RULE_VERSION 과 같아야 한다(test_judge 가 지금 판이 여기 있는지 본다). 되돌리면 지우지 않고 한 줄 더. */
+const RULE_CHANGES: { ver: string; at: string; what: string; moved: string; why: string }[] = [
+  {
+    ver: "9df1c6e9",
+    at: "2026-10-17",
+    what: "판정 이력을 기록하기 시작할 때의 규칙",
+    moved: "—",
+    why: "이 판의 판정을 각 공약 이력의 첫 줄(기록 시작 시점 판정)로 남겼습니다.",
+  },
+  {
+    ver: "ddbb8e48",
+    at: "병합 뒤 첫 월요일 정기 실행",
+    what: "판정은 그대로 두고, 바뀐 판정만 다시 쓰도록 고침 · 판 이름을 판정 부분과 기준일만으로 계산",
+    moved: "0건",
+    why: "같은 값을 매주 다시 쓰지 않게 하고(디스크 부담), 쓰는 방식을 고쳐도 판 이름이 바뀌지 않게 했습니다.",
+  },
+];
+
 /** 맨 위 목차. 의원 페이지의 '어떻게 세나' 같은 링크가 이 구획들을 id 로 가리킨다. */
 const TOC: [string, string][] = [
   ["kinds", "1. 공약마다 '무엇으로 확인할 수 있는가'를 먼저 정합니다"],
@@ -128,6 +147,17 @@ export default function RulesPage() {
           <b>공동발의는 근거로 쓰지 않습니다.</b> 다른 의원이 낸 법안에 이름을 올린 것이라
           본인이 공약을 이행했다는 증거로는 약합니다. 공동발의 건수는 따로 표시합니다.
         </p>
+        <div id="changes" className="scroll-mt-14">
+          <h3 className="mt-2 font-semibold">판정 기준 변경 기록</h3>
+          <p className="text-muted">
+            위 규칙이 바뀌면 판 이름이 바뀌고 여기에 한 줄을 남깁니다. 규칙 때문에 바뀐 판정은 공약마다
+            판정 이력에 &lsquo;판정 기준 변경&rsquo;으로 따로 표시되고, 기록이 새로 들어와 바뀐 판정과 섞이지 않습니다.
+          </p>
+          <Table
+            head={["판", "적용", "무엇을", "바뀐 판정", "이유"]}
+            rows={RULE_CHANGES.map((c) => [c.ver, c.at, c.what, c.moved, c.why])}
+          />
+        </div>
       </Box>
 
       <Box id="ai" title="3. 공약과 근거는 AI가 연결하고, 원문을 함께 보여줍니다">

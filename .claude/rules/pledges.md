@@ -18,6 +18,9 @@ paths:
 - 판정은 LLM 결과가 아니라 **공개된 규칙표**로 한다. 규칙을 바꾸면 `/rules` 페이지의 번호·문구도 같이 고친다.
 - 자동 판정인지 사람 검수를 거쳤는지를 항상 함께 표시한다. 외부 기관 이행 등급은 싣지 않는다.
 - judge 의 직접 SQL 도 `is distinct from` 조건을 단다(Disk IO).
+- 규칙을 바꾸는 커밋은 판정 계획 3.0 절차 R 을 따른다: `decide_check.py` 기대값·`decide --diff --base <직전>` 전이표를 같이 넣고,
+  master 병합은 일요일. 월요일 `evidence.yml` '규칙 판 적용'(snapshot 뒤·decide 앞)이 지난 판으로 털어 낸 뒤 `decide --rule` 로 적용한다.
+  이력 사유 'rule' 은 이 실행(`judge.reason`)에서만 생긴다. 판 이름만 다르다고 rule 로 보지 않는다.
 - 판정이 바뀌면 트리거(`log_pledge_status`)가 `pledge_status_log` 에 사유와 함께 남긴다 — 사람이 SQL 로 고쳐도 남는다(`rule='manual'`).
   신뢰도만 바뀐 것은 남기지 않는다. 판 이름(`RULE_VERSION`·`PROMPT_VERSION`)은 글자에서 만들어 손으로 올리지 않는다.
 - 근거 원문 구절은 서버가 `judge.locate` 로 원문에서 다시 찾은 것(`quote_ok`)만 화면에 싣는다. 판정 조건에는 아직 넣지 않았다.

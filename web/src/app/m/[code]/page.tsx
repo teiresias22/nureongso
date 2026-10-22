@@ -10,7 +10,7 @@ import {
   type BidNotice, type Cosponsor, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
 } from "@/lib/db";
 import { kstYear, ldJson, pageOg, SITE } from "@/lib/site";
-import { daysAgo, kstDate } from "@/lib/timeline";
+import { changeMarks, daysAgo } from "@/lib/timeline";
 import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
@@ -448,16 +448,13 @@ export default async function MemberPage({
     expenseQ,
     // 최근 30일 안에 판정이 바뀐 공약(판정 이력). 표가 아직 없는 DB 면 오류 → 비어 있을 뿐이다.
     pledges?.length
-      ? db.from("pledge_status_log").select("pledge_id, at, status, prev_status, pledge!inner(member_code)")
+      ? db.from("pledge_status_log").select("pledge_id, at, status, prev_status, reason, pledge!inner(member_code)")
           .eq("pledge.member_code", code).not("prev_status", "is", null)
-          .gte("at", daysAgo(30))
+          .gte("at", daysAgo(30)).order("id")
       : Promise.resolve({ data: [] }),
   ]);
-  // 공약마다 가장 최근에 상태가 바뀐 날(한국 날짜 MM.DD). 사유만 바뀐 줄은 세지 않는다.
-  const changedOn = new Map<number, string>();
-  for (const c of (changedRows ?? []) as { pledge_id: number; at: string; status: string; prev_status: string }[]) {
-    if (c.status !== c.prev_status) changedOn.set(c.pledge_id, kstDate(c.at).slice(5).replace("-", "."));
-  }
+  // 공약마다 가장 최근에 상태가 바뀐 날(한국 날짜 MM.DD). 규칙 변경만 있으면 '기준 변경' 으로 따로 적는다.
+  const changedOn = changeMarks((changedRows ?? []) as Parameters<typeof changeMarks>[0]);
   const ordinBy = new Map(
     (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
   );
@@ -958,7 +955,7 @@ export default async function MemberPage({
                           <span className="shrink-0">
                             <StatusBadge status={st.status} auto={st.decided_by !== "reviewer"} />
                             {changedOn.has(p.id) && (
-                              <span className="block text-[11px] text-muted">{changedOn.get(p.id)} 바뀜</span>
+                              <span className="block text-[11px] text-muted">{changedOn.get(p.id)}</span>
                             )}
                           </span>
                         ) : (

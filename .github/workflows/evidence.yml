@@ -44,7 +44,10 @@ jobs:
     env:
       GEMINI_MODEL: gemini-3.1-flash-lite
     steps:
+      # 규칙 판 적용 단계가 지난 판 커밋을 worktree 로 꺼낸다.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -140,6 +143,24 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python judge.py snapshot
 
+      # 규칙 판 적용(판정 계획 3.0 절차 R·T0.1). 근거 버전 뒤, 판정 앞. 판이 바뀌었으면 지난 판으로 먼저 한 주의
+      # 입력 변화를 털어 내고(이력 사유 evidence·source·elapsed·input), 새 판을 적용한다(사유 rule). 그래서 이력의
+      # 'rule' 은 규칙 변경만 가리킨다. 처음(none)은 털어 내고 지금 판을 기준으로 기록한다.
+      # continue-on-error 를 두지 않는다 — 실패하면 아래 판정이 판 불일치로 멈추고 요약에 사유가 찍힌다.
+      - name: 규칙 판 적용
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          state=$(python judge.py rule-prev) || exit 1
+          case "$state" in
+            none) python judge.py decide && python judge.py decide --rule ;;
+            "")   echo "규칙 판 변경 없음" ;;
+            *)    git worktree add "$RUNNER_TEMP/prev" "$state" \
+                    && (cd "$RUNNER_TEMP/prev/collector" && python judge.py decide) \
+                    && python judge.py decide --rule ;;
+          esac
+
       - name: 판정 다시 적용
         working-directory: collector
         env:
@@ -229,8 +250,11 @@ jobs:
                       refs = cur.fetchone()[0]
                   miss, _ = judge.run_snapshot(c, check=True)
                   print(f"\n근거 버전 감지 누락: {miss:,} / {refs:,}건 (판정 직후 0 이어야 한다)")
-                  changed = judge.run_decide(c, check=True)
-                  print(f"판정 결정성: 다시 판정하면 바뀔 것 {changed:,}건 (0 이어야 한다, 규칙 판 {judge.RULE_VERSION})")
+                  # 불변식(판정 계획 §4). I6 이 판정 결정성 — 판정 직후 0 이어야 한다.
+                  print(f"\n| 불변식 (규칙 판 {judge.RULE_VERSION}) | 건수 |")
+                  print("|---|---|")
+                  for key, label, n in judge.run_invariants(c):
+                      print(f"| {key} {label} | {'—' if n is None else f'{n:,}'} |")
                   with c.cursor() as cur:
                       cur.execute("""select count(*) filter (where quote_ok), count(*), count(*) filter (where quote = '')
                                      from pledge_evidence
@@ -255,6 +279,15 @@ jobs:
                                      where prev_status is not null and prev_status <> status and status in ('완료','진행')""")
                       linked, ups, week = cur.fetchone()
                       print(f"완료·진행으로 바뀐 판정 중 근거 버전이 있는 것: {linked:,} / {ups:,}건 (이번 주 {week:,}건)")
+                      cur.execute("""select coalesce(prev_status, '') || '·' || coalesce(prev_note, '') || ' → '
+                                            || status || '·' || coalesce(note, ''), count(*)
+                                     from pledge_status_log where reason = 'rule' and at > now() - interval '12 hours'
+                                     group by 1 order by 2 desc""")
+                      rule = cur.fetchall()
+                      cur.execute("select source from ingest_run where source like 'rule:%' order by id desc limit 1")
+                      last = cur.fetchone()
+                      print(f"규칙 판 적용 기록: {last[0] if last else '없음'} · 이번 실행 'rule' 전이 "
+                            + (" · ".join(f"{k} {n:,}" for k, n in rule) or "0"))
                       cur.execute("""select reason, count(*) from pledge_status_log
                                      where at > now() - interval '7 days' group by 1 order by 2 desc""")
                       print("이번 주 판정 이력: " + (" · ".join(f"{r} {n:,}" for r, n in cur.fetchall()) or "없음"))

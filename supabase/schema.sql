@@ -1097,6 +1097,13 @@ alter table pledge_evidence drop constraint if exists pledge_evidence_quote_span
 alter table pledge_evidence add constraint pledge_evidence_quote_span
   check (quote_start is null or (quote_start >= 0 and quote_end > quote_start));
 create index if not exists pledge_evidence_ref_idx on pledge_evidence (kind, ref_id);  -- 바뀐 기록 → 영향 공약
+-- 사람 검수 표시(판정 계획 T0.5, 결정 M). 사람은 판정을 고치지 않고 근거에 표시만 단다 — 판정은 규칙표가 이것을 읽어 낸다(T1.1).
+-- null 미검수 · 'ok:YYYY-MM-DD' 맞음 · 'reject:YYYY-MM-DD' 관련 없음(판정에 안 씀) · 'partial:YYYY-MM-DD' 일부·미공포(진행까지).
+-- model 칸은 '누가 연결했나' 로 그대로 둔다. 표시한 근거는 재대조(judge.save_evidence)·공보 재파싱(parse_pledges)이 덮지 않는다.
+alter table pledge_evidence add column if not exists review text;
+alter table pledge_evidence drop constraint if exists pledge_evidence_review_form;
+alter table pledge_evidence add constraint pledge_evidence_review_form
+  check (review is null or review ~ '^(ok|reject|partial):[0-9]{4}-[0-9]{2}-[0-9]{2}');
 
 -- E. 판정 변경 이력. 현재 상태는 pledge_status 그대로.
 --    공약 원문이 바뀌어 공약이 새로 만들어지면(nec.py·parse_pledges.py 의 delete → insert) 이력도 새로 시작한다.
@@ -1127,7 +1134,11 @@ $$;
 
 -- 판정을 쓰는 모든 길(judge.py decide, 검수자의 SQL Editor)이 여기를 지난다. DECIDE_SQL 의 is distinct from
 -- 덕에 바뀐 행에서만 돈다. 신뢰도(confidence)만 바뀐 것은 사건이 아니라 건너뛴다.
--- 사유 순서: 근거 쪽(evidence·source)이 규칙 판 변경보다 먼저 — 출처 추적이 우선이다.
+-- 사유는 실행 맥락(judge.reason)이 먼저다. 규칙 판 적용(decide --rule)과 검수 실행은 앞서 지난 판으로 한 주의
+-- 입력 변화를 털어 낸 뒤라 그 실행의 변화는 전부 그 사유다. 근거 비교는 '직전 이력 줄' 과 견주는데, 판정은 그대로이고
+-- 근거만 바뀐 공약은 그 사이 줄이 없어 비교 대상이 낡는다. 출처 추적은 털어 내기(snapshot 뒤)가 맡는다(판정 계획 T0.1).
+-- rule 칸에는 그때의 판 이름을 남긴다. 판 이름만 다르다고 'rule' 로 보지 않는다 — 기준선의 rule 이 null 이라
+-- 첫 규칙 변경이 'input' 으로 찍히고, 직전 줄이 오래되면 사유가 틀렸다(판정 계획 P10).
 create or replace function log_pledge_status() returns trigger
 language plpgsql set search_path = public, pg_temp as $$
 declare
@@ -1147,11 +1158,11 @@ begin
   values (new.pledge_id, new.status, new.note, new.decided_by, prev.status, prev.note, v, r,
     case
       when prev.id is null                      then 'baseline'
-      when new.decided_by = 'reviewer'          then 'reviewer'
+      when new.decided_by = 'reviewer' or current_setting('judge.reason', true) = 'reviewer' then 'reviewer'
+      when current_setting('judge.reason', true) = 'rule' then 'rule'
       when now_refs is distinct from prev_refs  then 'evidence'   -- 근거가 붙거나 떨어짐
       when v is distinct from prev.versions     then 'source'     -- 같은 근거, 원천 기록이 바뀜
-      when r <> 'manual' and coalesce(prev.rule, r) not in (r, 'manual') then 'rule'
-      when prev.note = 'none_early' and new.note = 'none_2y' then 'elapsed'
+      when prev.note = 'none_early' and new.note in ('none_2y', 'none_partial') then 'elapsed'
       else 'input'                                                 -- 유형 분류·대조 실행 여부가 바뀜
     end);
   return null;

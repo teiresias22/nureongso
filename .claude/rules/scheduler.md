@@ -10,7 +10,7 @@ paths:
 |---|---|---|---|
 | `ingest.yml` | 매일 04:00 | `ingest` | `ingest.py all` — members→staff→bills→plenary→votes→summaries→sidejobs→attendance→trips→research→studies |
 | `nec.yml` | 화 04:30 | `ingest` | `nec.py elections/winners/pledges` → `ingest.py refresh` → `asset.py fetch` → `gwanbo.py fetch` |
-| `evidence.yml` | 월 05:00 | `evidence` | `ordin.py`·`bid.py fetch`+`link`·`expense.py` → `judge.py classify→match→match_ordin→match_bid→snapshot→decide→quote→repro` |
+| `evidence.yml` | 월 05:00 | `evidence` | `ordin.py`·`bid.py fetch`+`link`·`expense.py` → `judge.py classify→match→match_ordin→match_bid→snapshot→규칙 판 적용→decide→quote→repro` |
 | `race.yml` | 매일 18:00 | `race` | `judge.py match_race --since …` — 후보 공약 비교를 gemini-3.5-flash 로 이어서 다시 만든다 |
 | `digest.yml` | 매일 09:10 | `digest` | `digest.py` — 구독자에게 지난주(월~일) 새로 수집된 기록 메일. 한 사람에게 한 주 한 통 |
 

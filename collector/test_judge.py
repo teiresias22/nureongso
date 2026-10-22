@@ -50,3 +50,81 @@ if __name__ == "__main__":
         if n.startswith("test_"):
             f()
     print("ok")
+
+
+# ---------------------------------------------------------------- 계약 시험 (판정 계획 T0.3, DB 없음)
+import os
+import re
+
+from psycopg import _queries
+from psycopg.adapt import Transformer
+
+WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "src")
+
+
+def test_notes_have_labels():
+    # 규칙표가 내는 note 는 모두 화면 문구가 있어야 한다. 없으면 db.ts noteText 가 코드 글자를 그대로 띄운다.
+    case = judge.JUDGED_CTE.split("end as status,")[1].split("end as note")[0]   # note 를 내는 CASE
+    notes = set(re.findall(r"(?:then|else) '([a-z0-9_]+)'", case))
+    prefixed = set(re.findall(r"'([a-z_]+):' \|\|", case))
+    db = open(os.path.join(WEB, "lib", "db.ts")).read()
+    labels = set(re.findall(r"^\s+([a-z0-9_]+):", db.split("export const NOTE_LABEL")[1].split("};")[0], re.M))
+    assert notes and notes - prefixed <= labels, notes - labels
+    for p in prefixed:  # no_measure: · partial: 는 noteText 가 따로 푼다
+        assert f'note.startsWith("{p}:")' in db, p
+
+
+class _Cur:
+    """execute 를 받아 psycopg 가 실제로 하는 매개변수 변환만 해 본다."""
+    def __init__(self):
+        self.q = _queries.PostgresQuery(Transformer())
+        self.n = 0
+
+    def execute(self, sql, params=None):
+        self.q.convert(sql, params)  # '%' 를 '%%' 로 안 쓰면 여기서 ProgrammingError
+        self.n += 1
+
+    def fetchall(self): return []
+    def fetchone(self): return (False,)
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+
+
+class _Conn:
+    def __init__(self): self.cur = _Cur()
+    def cursor(self): return self.cur
+    def rollback(self): pass
+
+
+def test_sql_converts():
+    cur = _Cur()
+    cur.execute(judge.DECIDE_SQL, judge.PARAMS)
+    judge.diff_rows(cur)
+    conn = _Conn()
+    judge.run_invariants(conn)
+    assert conn.cur.n == 2 + len(judge.INVARIANTS)
+    try:
+        cur.execute("select 'reviewer:%' where 1 = %(a)s", {"a": 1})
+    except Exception:
+        pass
+    else:
+        raise AssertionError("psycopg 가 '%' 하나를 받아들였다 — 이 시험이 아무것도 막지 못한다")
+
+
+def test_rule_version_listed():
+    # 지금 판이 /rules '판정 기준 변경 기록'(#changes)에 있어야 한다. 빠뜨리면 배포하지 않는다(절차 R).
+    rules = open(os.path.join(WEB, "app", "rules", "page.tsx")).read()
+    assert f'ver: "{judge.RULE_VERSION}"' in rules, judge.RULE_VERSION
+
+
+def test_gold_score():
+    import sample_review as sr
+    lo, hi = sr.wilson(10, 19)                      # 설계서 X18 표본: 10/19 → 32~73%
+    assert round(lo, 2) == 0.32 and round(hi, 2) == 0.73, (lo, hi)
+    assert sr.wilson(0, 0) == (0.0, 1.0)
+    row = dict.fromkeys(sr.COLS, "")
+    rows = [dict(row, layer="done", pledge_id="1", ev="bill:A", label="ok", scope="전부", enacted="예"),
+            dict(row, layer="done", pledge_id="2", ev="ordin:B", label="wrong", scope="전부", enacted="예"),
+            dict(row, layer="done", pledge_id="3", ev="bill:C")]                 # 아직 안 채움 — 세지 않는다
+    out = "\n".join(sr.score_gold(rows))
+    assert "근거 정밀도 bill: 1/1" in out and "근거 정밀도 ordin: 0/1" in out and "완료 정밀도(맞는 근거·전부·공포): 1/2" in out, out

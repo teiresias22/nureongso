@@ -188,7 +188,13 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
             )}
             <p className="mt-1 text-xs text-muted">
               {kstDate(lastLog?.at ?? st.updated_at)} 판정
-              {lastLog?.rule && lastLog.rule !== "manual" ? ` · 규칙 판 ${lastLog.rule}` : ""} ·{" "}
+              {lastLog?.rule && lastLog.rule !== "manual" && (
+                <>
+                  {" · "}
+                  <Link href="/rules#changes" className="underline underline-offset-2">규칙 판 {lastLog.rule}</Link>
+                </>
+              )}{" "}
+              ·{" "}
               <Link href="/rules" className="underline underline-offset-2">판정 기준</Link>
             </p>
           </>

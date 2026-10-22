@@ -38,6 +38,7 @@ cd web && npm run lint && npm run build
 node web/src/lib/force.check.mjs   # 관계도 배치(Node 24 가 .ts 를 그대로 읽는다)
 node web/src/lib/subscription.check.mjs   # 구독 신청 입력·지역 목록
 node web/src/lib/timeline.check.mjs       # 공약 상세 타임라인
+cd collector && dotenvx run -q -- .venv/bin/python decide_check.py   # 판정 분기 기대값(운영 DB, begin…rollback). 규칙 바꿀 때
 # DB 함수·RLS·판정 이력 트리거: supabase/*.check.sql (begin…rollback). 운영 DB 에 해당 덩어리를 적용한 뒤에만, 파일 머리의 명령으로
 ```
 
