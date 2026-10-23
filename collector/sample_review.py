@@ -211,14 +211,21 @@ def claude_verdict(r: dict) -> str:
     return "partial" if r["scope"] == "일부" or r["enacted"] == "아니오" else "ok"
 
 
-def agreed(r: dict) -> bool:
-    return (r.get("codex_label") or "") == claude_verdict(r)
+def final_verdict(r: dict) -> str | None:
+    """두 모델 답을 하나로. 같으면 그 답, 한쪽이라도 '일부만' 이면 일부만, 맞음↔관련 없음으로 갈리거나
+    Codex 가 아직 안 봤으면 None(사람 확인). 2026-10-23 소유자 결정."""
+    a, b = claude_verdict(r), (r.get("codex_label") or "")
+    if not b:
+        return None
+    if a == b:
+        return a
+    return "partial" if "partial" in (a, b) else None
 
 
 def held_rows(rows: list[dict], held: set[int] = frozenset()) -> list[dict]:
-    """반영하지 않고 사람에게 넘길 LLM 줄: Codex 와 다르거나 아직 안 봤거나, 반영하면 미착수가 되는 공약."""
+    """반영하지 않고 사람에게 넘길 LLM 줄: 맞음↔관련 없음으로 갈렸거나 아직 안 봤거나, 반영하면 미착수가 되는 공약."""
     return [r for r in rows if r["reviewed_at"] and is_llm(r) and (r["label"] or r["missed"])
-            and (not agreed(r) or int(r["pledge_id"]) in held)]
+            and (final_verdict(r) is None or int(r["pledge_id"]) in held)]
 
 
 def plan_marks(rows: list[dict], held: set[int] = frozenset()) -> dict[bool, tuple[dict, list]]:
@@ -228,19 +235,19 @@ def plan_marks(rows: list[dict], held: set[int] = frozenset()) -> dict[bool, tup
         if not r["reviewed_at"]:
             continue
         llm = is_llm(r)
-        if llm and (not agreed(r) or int(r["pledge_id"]) in held):
+        if llm and (final_verdict(r) is None or int(r["pledge_id"]) in held):
             continue
         tail = f"{r['reviewed_at']}{':llm' if llm else ''}"
         marks, adds = out[llm]
         pid = int(r["pledge_id"])
-        held_scope = r["scope"] == "일부" or r["enacted"] == "아니오"
+        verdict = final_verdict(r) if llm else claude_verdict(r)  # 사람 줄은 라벨 그대로
+        verb = {"ok": "ok", "wrong": "reject", "partial": "partial"}[verdict]
         if r["ev"] and r["label"] in ("ok", "wrong"):
             kind, ref = r["ev"].split(":", 1)
-            verb = "reject" if r["label"] == "wrong" else "partial" if held_scope else "ok"
             marks[(pid, kind, ref)] = f"{verb}:{tail}"
         for m in r["missed"].split():
             kind, ref = m.split(":", 1)
-            add = (pid, kind, ref, f"{'llm-reviewer' if llm else 'reviewer'}:{r['reviewed_at']}", f"ok:{tail}")
+            add = (pid, kind, ref, f"{'llm-reviewer' if llm else 'reviewer'}:{r['reviewed_at']}", f"{verb}:{tail}")
             if add not in adds:
                 adds.append(add)
     return out
@@ -279,8 +286,11 @@ def run_codex(prompt: str) -> str:
     """이 Mac 의 Codex CLI(ChatGPT 로그인)로 한 번. --ephemeral 로 대화를 디스크에 남기지 않는다."""
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "last.txt")
-        subprocess.run(["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
-                        "-o", out, prompt], cwd=d, capture_output=True, timeout=300, check=False)
+        try:
+            subprocess.run(["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
+                            "-o", out, prompt], cwd=d, capture_output=True, timeout=300, check=False)
+        except subprocess.TimeoutExpired:
+            return ""  # 그 줄은 비워 두고 다음에 다시 본다
         return open(out).read() if os.path.exists(out) else ""
 
 
@@ -294,15 +304,18 @@ def run_crosscheck(cur, folder: str) -> None:
         for i, r in enumerate(todo, 1):
             cur.execute("select title, coalesce(body, '') from pledge where id = %s", (int(r["pledge_id"]),))
             title, body = cur.fetchone() or (r["title"], "")
-            if r["ev"]:
-                kind = r["ev"].split(":")[0]
-                record = f"{r['ev_name']} / 처리 {r['ev_result'] or '계류'} / {r['ev_date']}"
-            else:  # 검수 때 찾아 추가한 기록
-                kind = r["missed"].split()[0].split(":")[0]
-                refs = [m.split(":", 1)[1] for m in r["missed"].split()]
-                cur.execute("select string_agg(name || ' / 처리 ' || coalesce(proc_result, '계류'), ' ; ')"
-                            " from bill where bill_id = any(%s)", (refs,))
+            refs = [r["ev"]] if r["ev"] else r["missed"].split()  # 근거 하나, 또는 검수 때 찾아 추가한 기록들
+            kind = refs[0].split(":")[0]
+            if kind == "bill":
+                # 제목만 주면 '확인할 수 없다' 로 갈린다(2026-10-23 첫 실행). 제안이유·주요내용과 대안을 같이 준다.
+                cur.execute("select string_agg(b.name || ' / 처리 ' || coalesce(b.proc_result, '계류')"
+                            "   || coalesce(' / 대안: ' || a.name || ' (' || coalesce(a.proc_result, '계류') || ')', '')"
+                            "   || E'\\n  내용: ' || left(coalesce(b.summary, '(없음)'), 1200), E'\\n')"
+                            " from bill b left join bill a on a.bill_id = b.alt_bill_id where b.bill_id = any(%s)",
+                            ([x.split(":", 1)[1] for x in refs],))
                 record = cur.fetchone()[0] or " ".join(refs)
+            else:
+                record = f"{r['ev_name']} / 처리 {r['ev_result'] or '계류'} / {r['ev_date']}"
             got = parse_codex(run_codex(CODEX_PROMPT.format(
                 election=r["election_id"], title=title, body=body[:600], kind=KIND_WORD.get(kind, kind), record=record)))
             if got:

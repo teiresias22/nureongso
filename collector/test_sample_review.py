@@ -25,19 +25,24 @@ def test_plan_marks():
 def test_llm_rows_need_codex_agreement():
     rows = [
         row(pledge_id="1", ev="bill:A", label="wrong", reviewer="Claude", codex_label="wrong"),   # 합의
-        row(pledge_id="2", ev="bill:B", label="wrong", reviewer="Claude", codex_label="ok"),      # 불일치
+        row(pledge_id="2", ev="bill:B", label="wrong", reviewer="Claude", codex_label="ok"),      # 맞음↔관련 없음
         row(pledge_id="3", ev="bill:C", label="ok", reviewer="Claude"),                          # Codex 안 봄
-        row(pledge_id="4", ev="bill:D", label="ok", scope="일부", reviewer="Claude", codex_label="ok"),  # partial vs ok
+        row(pledge_id="4", ev="bill:D", label="ok", scope="일부", reviewer="Claude", codex_label="ok"),  # 일부만 vs 맞음
+        row(pledge_id="6", ev="bill:G", label="wrong", reviewer="Claude", codex_label="partial"),  # 관련 없음 vs 일부만
+        row(pledge_id="7", missed="bill:H", reviewer="Claude", codex_label="partial"),            # 찾은 기록, 일부만
         row(pledge_id="5", ev="bill:E", label="wrong", reviewer="홍길동"),                         # 사람은 그대로
     ]
     out = sample_review.plan_marks(rows)
-    assert out[True][0] == {(1, "bill", "A"): "reject:2026-10-19:llm"}
+    # 한쪽이라도 일부만이면 일부만으로 반영한다(2026-10-23 결정).
+    assert out[True][0] == {(1, "bill", "A"): "reject:2026-10-19:llm", (4, "bill", "D"): "partial:2026-10-19:llm",
+                            (6, "bill", "G"): "partial:2026-10-19:llm"}
+    assert out[True][1] == [(7, "bill", "H", "llm-reviewer:2026-10-19", "partial:2026-10-19:llm")]
     assert out[False][0] == {(5, "bill", "E"): "reject:2026-10-19"}
-    assert [r["pledge_id"] for r in sample_review.held_rows(rows)] == ["2", "3", "4"]
+    assert [r["pledge_id"] for r in sample_review.held_rows(rows)] == ["2", "3"]
     # 미착수로 가서 보류한 공약은 합의해도 빼고, 보류 목록에 넣는다.
     out = sample_review.plan_marks(rows, held={1})
-    assert out[True][0] == {}
-    assert [r["pledge_id"] for r in sample_review.held_rows(rows, held={1})] == ["1", "2", "3", "4"]
+    assert (1, "bill", "A") not in out[True][0]
+    assert [r["pledge_id"] for r in sample_review.held_rows(rows, held={1})] == ["1", "2", "3"]
 
 
 def test_parse_codex():
