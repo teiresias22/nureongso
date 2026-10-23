@@ -84,7 +84,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
 
   const refs = (k: string) => p.pledge_evidence.filter((e) => e.kind === k).map((e) => e.ref_id);
   const none = Promise.resolve({ data: [] as never[], error: null });
-  const [bills, alts, ordins, bids, versions, doc] = await Promise.all([
+  const [bills, alts, ordins, bids, versions, doc, run] = await Promise.all([
     refs("bill").length
       ? db.from("bill").select("bill_id, name, proposed_at, proc_dt, proc_result").in("bill_id", refs("bill"))
       : none,
@@ -102,6 +102,11 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
           .in("ref_id", p.pledge_evidence.map((e) => e.ref_id)).order("id")
       : none,
     p.doc_id ? db.from("pledge_doc_link").select("pdf_url").eq("id", p.doc_id).maybeSingle() : Promise.resolve({ data: null }),
+    // 사유 문구가 그 선거의 직위로 갈린다(noteText). 지금 직위가 아니다 — 의원이었다가 단체장이 된 사람.
+    p.member && p.election_id
+      ? db.from("candidacy").select("office").eq("member_code", p.member.code).eq("election_id", p.election_id)
+          .limit(1).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
   type BillRow = { bill_id: string; name: string; proposed_at: string | null; proc_dt: string | null; proc_result: string | null };
   type AltRow = { bill_id: string; alt_id: string; alt_name: string; alt_result: string | null; alt_dt: string | null };
@@ -114,6 +119,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   const vers = ((versions.error ? [] : versions.data ?? []) as Version[]).filter((v) =>
     p.pledge_evidence.some((e) => e.kind === v.kind && e.ref_id === v.ref_id));
   const pdf = (doc.data as { pdf_url: string } | null)?.pdf_url;
+  const office = (run.data as { office: string | null } | null)?.office;
 
   const nameOf = (kind: string, ref: string) =>
     kind === "bill" ? billBy.get(ref)?.name : kind === "ordin" ? ordinBy.get(ref)?.name : bidBy.get(ref)?.name;
@@ -179,7 +185,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
                 {st.status}
               </span>{" "}
               <span className="text-xs text-muted">{st.decided_by === "reviewer" ? "사람 검수" : "자동 판정"}</span>{" "}
-              {st.note && <span>{noteText(st.note)}</span>}
+              {st.note && <span>{noteText(st.note, office)}</span>}
             </p>
             {quoted > 0 && (
               <p className="mt-1 text-xs text-muted">
@@ -205,8 +211,8 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
           <p className="mt-3 border-t border-line pt-3 text-sm">
             <span className="text-muted">직전 판정과 다른 점 · </span>
             {change.prev_status}
-            {change.prev_note ? `(${noteText(change.prev_note)})` : ""} → {change.status}
-            {change.note ? `(${noteText(change.note)})` : ""}
+            {change.prev_note ? `(${noteText(change.prev_note, office)})` : ""} → {change.status}
+            {change.note ? `(${noteText(change.note, office)})` : ""}
             <span className="text-muted"> · 사유: {REASON_LABEL[change.reason] ?? change.reason}</span>
           </p>
         )}
@@ -216,7 +222,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
         <h2 className="border-b border-line px-4 py-3 text-base font-semibold">근거</h2>
         {p.pledge_evidence.length === 0 ? (
           <p className="px-4 py-3 text-sm text-muted">
-            연결된 공개 기록이 없습니다.{st?.note ? ` ${noteText(st.note)}` : ""}
+            연결된 공개 기록이 없습니다.{st?.note ? ` ${noteText(st.note, office)}` : ""}
           </p>
         ) : (
           <ul className="divide-y divide-line">

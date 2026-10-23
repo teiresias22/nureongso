@@ -100,6 +100,8 @@ export const NOTE_LABEL: Record<string, string> = {
   ordin_enacted: "관련 조례가 제·개정됐습니다",
   bid_ordered: "관련 공사가 발주됐습니다 (준공 여부는 확인할 수 없습니다)",
   none_2y: "임기 2년이 지났지만 관련 기록이 없습니다",
+  none_partial:
+    "잴 수 있는 쪽(법률·조례)은 임기 2년 동안 관련 기록이 없습니다. 나머지(예산·사업 등)는 확인할 수단이 없어 미착수로 적지 않습니다",
   none_early: "관련 기록이 아직 없습니다 (임기 2년 미만)",
   not_checked: "아직 공식 기록과 대조하지 않았습니다",
   past_term: "지난 임기 공약이라 판정하지 않습니다",
@@ -117,13 +119,23 @@ export const STATUS_BG: Record<string, string> = {
   판단불가: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200",
 };
 
-/** judge.py 의 note 를 사람이 읽는 말로. 접두사가 붙는 두 가지는 따로 푼다. */
-export const noteText = (note?: string | null) => {
+/** judge.py 의 note 를 사람이 읽는 말로. 접두사가 붙는 두 가지는 따로 푼다.
+ *  office 는 그 공약을 낸 선거의 직위(candidacy.office). 측정 수단이 없는 이유가 직위마다 달라서
+ *  no_measure 만 쓴다 — DB note 를 직위별로 나누면 약 4.9천 행을 다시 쓴다(판정 계획 T3.2). */
+export const noteText = (note?: string | null, office?: string | null) => {
   if (!note) return "";
   // judge.py 는 유형을 '+' 로 이어 붙인다. 예: no_measure:예산사업+조례제도
   const kinds = (s: string) => s.split("+").map((k) => KIND_LABEL[k] ?? k).join(", ");
-  if (note.startsWith("no_measure:"))
+  if (note.startsWith("no_measure:")) {
+    const ks = note.slice(11).split("+");
+    // 판정하지 않는 이유는 권한이 아니라 측정 수단이다. 지난 임기 공약에도 참인 문장이어야 한다
+    // (no_measure 는 판정에 쓰는 발주 근거가 0일 때만 나온다).
+    if (office === "국회의원" && ks.some((k) => k === "예산사업" || k === "조례제도"))
+      return `국회의원의 예산 확보·지역 사업은 확인할 공개 기록이 없어 판정하지 않습니다 (${kinds(note.slice(11))})`;
+    if (office && office !== "국회의원" && ks.includes("예산사업"))
+      return `예산사업은 연결된 발주 공고로만 확인하는데, 판정에 쓸 공고가 없습니다 — 발주가 없다고 미착수로 적지 않습니다 (${kinds(note.slice(11))})`;
     return `아직 확인할 수단이 없는 유형입니다 (${kinds(note.slice(11))})`;
+  }
   // 잴 수 있는 쪽은 이뤄졌지만 못 재는 유형이 남아 있는 공약. 이걸 '완료' 로 적으면
   // 법 개정만 통과된 공약이 복지관까지 지어진 것처럼 읽힌다.
   if (note.startsWith("partial:"))
