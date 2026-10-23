@@ -224,7 +224,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               ))}
             </div>
 
-            {/* 판정 기준 6번('사실과 다른 내용을 발견하셨다면 알려주세요')이 가리킬 곳.
+            {/* 판정 기준 /rules#no-comments('사실과 다른 내용을 발견하셨다면 알려주세요')가 가리킬 곳.
                 GitHub 이슈는 공개 게시판이라 그렇게 적는다. */}
             <div className="mt-8 rounded-lg border border-line bg-background px-4 py-3 leading-6">
               <b className="text-foreground">틀린 내용을 보셨나요?</b> 근거(원문 링크)와 함께{" "}

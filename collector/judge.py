@@ -1284,8 +1284,10 @@ ev as (
   -- 한쪽을 고치면 다른 쪽도(인물 카드 '발의·통과' 숫자가 판정과 어긋난다).
   -- 조례·발주도 같다: 취임 전에 공포된 조례, 선거 전에 낸 공고는 그 사람의 이행이 아니다.
   -- 날짜 조건이 법안에만 있어서 선거 전 공고만 붙은 공약 197건이 '진행' 이었다(판정 계획 P1·P2).
+  -- 취임일 당일은 뺀다: 2026-07-01 에 신설·통합 기관이 전임 의회·단체장이 마련한 조례를 수백 건씩 한꺼번에
+  -- 공포했다(검단구 500·제물포구 466·영종구 352, 판정 계획 T2.3·결정 L).
   left join ordinance o on o.id = e.ref_id and e.kind = 'ordin'
-                       and o.announced_at >= to_char(pt.term_start, 'YYYYMMDD')
+                       and o.announced_at > to_char(pt.term_start, 'YYYYMMDD')
   left join bid_notice n on n.id = e.ref_id and e.kind = 'bid' and n.notice_at >= pt.term_start
   -- 그 대안이 실제로 통과했는지는 대안 자신의 처리 결과에서 읽는다. 추정하지 않는다.
   -- 원안 → 대안 연결 규칙(같은 날, 법률명으로 시작하는 위원장 대안 하나)은 ingest.LINK_ALT_SQL.
@@ -1371,6 +1373,10 @@ judged as (
       -- 이어받는다). 그래서 bid 근거만으로는 '완료' 가 되지 않는다.
       when bid_n > 0                      then '진행'
       when not checked                    then '판단불가'
+      -- 못 재는 유형이 남은 공약은 잴 수 있는 쪽 기록이 없어도 미착수로 단정하지 않는다. 완료가 '진행' 까지인
+      -- 것(위)과 대칭이다 — 국회의원은 예산 쪽을 지역 예산 확보로 이행하기도 하는데 그 기록을 볼 수 없다
+      -- (판정 계획 P5, 결정 K).
+      when past_grace and cardinality(unmeasurable) > 0 then '판단불가'
       when past_grace                     then '미착수'
       else '판단불가'
     end as status,
@@ -1392,6 +1398,7 @@ judged as (
       when bid_n > 0                      then 'bid_ordered'
       when not checked                    then 'not_checked'
       when law_wd_n > 0                   then 'law_withdrawn'
+      when past_grace and cardinality(unmeasurable) > 0 then 'none_partial'
       when past_grace                     then 'none_2y'
       else 'none_early'
     end as note,
@@ -1576,10 +1583,8 @@ def head_sha() -> str:
         cwd=os.path.dirname(os.path.abspath(__file__))).stdout.strip()
 
 
-def run_rule_prev(conn) -> None:
-    """evidence.yml '규칙 판 적용' 단계가 읽는다. 진행 중인 수집이 끝나기를 기다린 뒤 한 줄을 낸다:
-    none(적용 기록 없음) · 빈 줄(지금 판이 적용됨) · 지난 판의 커밋(그 판으로 털어 낸 뒤 새 판을 적용한다).
-    수집과 판정은 동시 실행 그룹이 달라 겹쳐 돈다. 수집 중에 털어 내면 그 뒤 변화가 'rule' 로 섞인다."""
+def wait_ingest(conn, what: str) -> None:
+    """진행 중인 수집이 끝나기를 기다린다(60분 넘으면 멈춘다). 규칙 판 적용·검수 반영 앞에 둔다."""
     import time
     for minute in range(61):
         with conn.cursor() as cur:
@@ -1588,11 +1593,18 @@ def run_rule_prev(conn) -> None:
             running = cur.fetchone()[0]
         conn.rollback()
         if not running:
-            break
+            return
         if minute == 60:
-            sys.exit("수집이 60분째 진행 중이라 규칙 판을 적용하지 않습니다.")
+            sys.exit(f"수집이 60분째 진행 중이라 {what} 않습니다.")
         print(f"  진행 중인 수집 {running}건 — 1분 뒤 다시 봅니다", file=sys.stderr)
         time.sleep(60)
+
+
+def run_rule_prev(conn) -> None:
+    """evidence.yml '규칙 판 적용' 단계가 읽는다. 진행 중인 수집이 끝나기를 기다린 뒤 한 줄을 낸다:
+    none(적용 기록 없음) · 빈 줄(지금 판이 적용됨) · 지난 판의 커밋(그 판으로 털어 낸 뒤 새 판을 적용한다).
+    수집과 판정은 동시 실행 그룹이 달라 겹쳐 돈다. 수집 중에 털어 내면 그 뒤 변화가 'rule' 로 섞인다."""
+    wait_ingest(conn, "규칙 판을 적용하지")
     with conn.cursor() as cur:
         last = applied_rule(cur)
     print("none" if last is None else "" if last[0] == RULE_VERSION else last[1])

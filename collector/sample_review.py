@@ -9,14 +9,22 @@
     python sample_review.py gold --layer done|bid|none [--n 30] [--seed gold-v1]
                                               # 정답 표본 CSV(docs/review/). 사람이 사실 칸만 채운다
     python sample_review.py score             # 채운 정답 표본으로 정밀도·위음성률(Wilson 95%)
+    python sample_review.py crosscheck        # LLM(Claude) 라벨 줄을 이 Mac 의 Codex(ChatGPT)로 다시 본다
+    python sample_review.py apply [--yes]     # 채운 라벨을 운영 근거의 review 로 반영(T1.8). --yes 없으면 전이표만
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import os
+import re
+import subprocess
 import sys
+import tempfile
+
+from collections import Counter
 
 import psycopg
 
@@ -60,10 +68,11 @@ limit %(n)s
 REVIEW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "review")
 HEADER = ("# 정답 표본 — 사실 라벨만. 의견·평가를 적지 않는다. label: ok(그 공약의 이행 기록이 맞음)|wrong · "
           "missed: 놓친 기록 kind:ref(여럿이면 공백) · scope: 전부|일부 · enacted: 예|아니오 · prior: 예|아니오 "
-          "(같은 사업의 이전 단계 공고·설계용역이 2026-07-01 전에 있음) · reviewer · reviewed_at YYYY-MM-DD")
+          "(같은 사업의 이전 단계 공고·설계용역이 2026-07-01 전에 있음) · reviewer · reviewed_at YYYY-MM-DD · "
+          "claude_why: Claude 가 라벨할 때 근거 한 줄(필수) · codex_label·codex_why: crosscheck 가 채운다")
 COLS = ["layer", "pledge_id", "member_code", "election_id", "title", "status", "note", "rule",
         "ev", "ev_name", "ev_date", "ev_result", "ev_score", "ev_why", "candidates",
-        "label", "missed", "scope", "enacted", "prior", "reviewer", "reviewed_at"]
+        "label", "missed", "scope", "enacted", "prior", "reviewer", "reviewed_at", "claude_why", "codex_label", "codex_why"]
 
 # 층마다 모집단. 순서는 md5(id || seed) 라 다시 뽑아도 같다.
 LAYERS = {
@@ -180,12 +189,255 @@ def score_gold(rows: list[dict]) -> list[str]:
     return out
 
 
+# ---------------------------------------------------------------- 검수 반영(판정 계획 T1.8)
+# 라벨 → pledge_evidence.review. 판정은 늘 규칙표(DECIDE_SQL)가 낸다 — 여기서는 근거에 표시만 단다(결정 M).
+# reviewer 가 'Claude' 인 줄은 LLM 라벨이라 review 끝에 ':llm', 이력 사유도 'llm' 으로 사람 검수와 가른다.
+LLM_REVIEWER = "Claude"
+# LLM 라벨은 두 번째 모델(ChatGPT, 이 Mac 의 Codex CLI)이 같은 답일 때만 반영한다. 다르거나 아직 안 봤으면 보류하고
+# 사람 확인 목록으로 낸다(설계: docs/superpowers/specs/2026-10-23-review-crosscheck-design.md).
+VERDICTS = ("ok", "wrong", "partial")
+
+
+def is_llm(r: dict) -> bool:
+    return r["reviewer"].strip() == LLM_REVIEWER
+
+
+def claude_verdict(r: dict) -> str:
+    """그 줄의 라벨을 Codex 답과 같은 말로. 근거 없는 줄(놓친 기록 추가)은 '찾은 기록이 맞다' 라 ok."""
+    if not r["ev"]:
+        return "ok"
+    if r["label"] == "wrong":
+        return "wrong"
+    return "partial" if r["scope"] == "일부" or r["enacted"] == "아니오" else "ok"
+
+
+def final_verdict(r: dict) -> str | None:
+    """두 모델 답을 하나로. 같으면 그 답, 한쪽이라도 '일부만' 이면 일부만, 맞음↔관련 없음으로 갈리거나
+    Codex 가 아직 안 봤으면 None(사람 확인). 2026-10-23 소유자 결정."""
+    a, b = claude_verdict(r), (r.get("codex_label") or "")
+    if not b:
+        return None
+    if a == b:
+        return a
+    return "partial" if "partial" in (a, b) else None
+
+
+def held_rows(rows: list[dict], held: set[int] = frozenset()) -> list[dict]:
+    """반영하지 않고 사람에게 넘길 LLM 줄: 맞음↔관련 없음으로 갈렸거나 아직 안 봤거나, 반영하면 미착수가 되는 공약."""
+    return [r for r in rows if r["reviewed_at"] and is_llm(r) and (r["label"] or r["missed"])
+            and (final_verdict(r) is None or int(r["pledge_id"]) in held)]
+
+
+def plan_marks(rows: list[dict], held: set[int] = frozenset()) -> dict[bool, tuple[dict, list]]:
+    """{llm 여부: ({(pid, kind, ref): review}, [(pid, kind, ref, model, review) 추가할 근거])}. DB 없이 계산한다."""
+    out = {False: ({}, []), True: ({}, [])}
+    for r in rows:
+        if not r["reviewed_at"]:
+            continue
+        llm = is_llm(r)
+        if llm and (final_verdict(r) is None or int(r["pledge_id"]) in held):
+            continue
+        tail = f"{r['reviewed_at']}{':llm' if llm else ''}"
+        marks, adds = out[llm]
+        pid = int(r["pledge_id"])
+        verdict = final_verdict(r) if llm else claude_verdict(r)  # 사람 줄은 라벨 그대로
+        verb = {"ok": "ok", "wrong": "reject", "partial": "partial"}[verdict]
+        if r["ev"] and r["label"] in ("ok", "wrong"):
+            kind, ref = r["ev"].split(":", 1)
+            marks[(pid, kind, ref)] = f"{verb}:{tail}"
+        for m in r["missed"].split():
+            kind, ref = m.split(":", 1)
+            add = (pid, kind, ref, f"{'llm-reviewer' if llm else 'reviewer'}:{r['reviewed_at']}", f"{verb}:{tail}")
+            if add not in adds:
+                adds.append(add)
+    return out
+
+
+def parse_codex(text: str) -> tuple[str, str] | None:
+    """Codex 답 → (label, why). 울타리·앞뒤 글을 걷어 내고, 모르는 값이면 None(그 줄은 보류된다)."""
+    m = re.search(r"\{.*\}", text or "", re.S)
+    if not m:
+        return None
+    try:
+        d = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+    label = str(d.get("label", "")).strip()
+    return (label, str(d.get("why", "")).strip()) if label in VERDICTS else None
+
+
+KIND_WORD = {"bill": "국회 의안", "ordin": "자치법규(조례)", "bid": "발주 공고"}
+CODEX_PROMPT = """공약 이행 기록 확인. 의견·평가 없이 사실만 판단하세요. 파일을 읽거나 명령을 실행하지 마세요.
+
+공약({election}): {title}
+{body}
+
+기록({kind}): {record}
+
+이 기록이 그 공약을 이행하는 공식 기록입니까?
+- ok: 공약 내용을 담은 기록
+- partial: 공약의 일부만 담은 기록(또는 가결됐지만 공포되지 않음)
+- wrong: 관련 없는 기록
+
+JSON 한 줄로만 답하세요: {{"label": "ok|partial|wrong", "why": "<40자 이내 근거>"}}"""
+
+
+def run_codex(prompt: str) -> str:
+    """이 Mac 의 Codex CLI(ChatGPT 로그인)로 한 번. --ephemeral 로 대화를 디스크에 남기지 않는다."""
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "last.txt")
+        try:
+            subprocess.run(["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
+                            "-o", out, prompt], cwd=d, capture_output=True, timeout=300, check=False)
+        except subprocess.TimeoutExpired:
+            return ""  # 그 줄은 비워 두고 다음에 다시 본다
+        return open(out).read() if os.path.exists(out) else ""
+
+
+def run_crosscheck(cur, folder: str) -> None:
+    """LLM 라벨 줄마다 Codex 답을 codex_label·codex_why 에 적는다. 이미 적힌 줄은 건너뛴다(다시 돌리면 이어서)."""
+    for f in sorted(x for x in os.listdir(folder) if x.endswith(".csv")):
+        path = os.path.join(folder, f)
+        rows = read_gold(path)
+        todo = [r for r in rows if r["reviewed_at"] and is_llm(r) and (r["label"] or r["missed"])
+                and not r.get("codex_label")]
+        for i, r in enumerate(todo, 1):
+            cur.execute("select title, coalesce(body, '') from pledge where id = %s", (int(r["pledge_id"]),))
+            title, body = cur.fetchone() or (r["title"], "")
+            refs = [r["ev"]] if r["ev"] else r["missed"].split()  # 근거 하나, 또는 검수 때 찾아 추가한 기록들
+            kind = refs[0].split(":")[0]
+            if kind == "bill":
+                # 제목만 주면 '확인할 수 없다' 로 갈린다(2026-10-23 첫 실행). 제안이유·주요내용과 대안을 같이 준다.
+                cur.execute("select string_agg(b.name || ' / 처리 ' || coalesce(b.proc_result, '계류')"
+                            "   || coalesce(' / 대안: ' || a.name || ' (' || coalesce(a.proc_result, '계류') || ')', '')"
+                            "   || E'\\n  내용: ' || left(coalesce(b.summary, '(없음)'), 1200), E'\\n')"
+                            " from bill b left join bill a on a.bill_id = b.alt_bill_id where b.bill_id = any(%s)",
+                            ([x.split(":", 1)[1] for x in refs],))
+                record = cur.fetchone()[0] or " ".join(refs)
+            else:
+                record = f"{r['ev_name']} / 처리 {r['ev_result'] or '계류'} / {r['ev_date']}"
+            got = parse_codex(run_codex(CODEX_PROMPT.format(
+                election=r["election_id"], title=title, body=body[:600], kind=KIND_WORD.get(kind, kind), record=record)))
+            if got:
+                r["codex_label"], r["codex_why"] = got
+            print(f"[crosscheck] {f} {i}/{len(todo)} 공약 {r['pledge_id']}: Claude {claude_verdict(r)}"
+                  f" · Codex {got[0] if got else '응답 없음'}", file=sys.stderr)
+            write_gold(path, rows)  # 줄마다 저장 — 중간에 멈춰도 이어서 한다
+
+
+def write_gold(path: str, rows: list[dict]) -> None:
+    with open(path) as f:
+        head = [line for line in f if line.startswith("#")]
+    with open(path, "w", newline="") as f:
+        f.writelines(head)
+        w = csv.DictWriter(f, COLS, lineterminator="\n", extrasaction="ignore")
+        w.writeheader()
+        w.writerows({c: r.get(c) or "" for c in COLS} for r in rows)
+
+
+def write_human_check(rows: list[dict], held: set[int], folder: str) -> str | None:
+    """보류한 LLM 줄을 사람이 볼 목록으로. 근거마다 맞음 / 관련 없음 / 일부만 을 적어 CSV 로 옮긴다."""
+    rs = held_rows(rows, held)
+    if not rs:
+        return None
+    path = os.path.join(folder, f"human-check-{rs[0]['reviewed_at'] or 'x'}.md")
+    out = ["# 사람 확인 — LLM 두 모델이 다르게 봤거나, 반영하면 미착수가 되는 기록", "",
+           "근거마다 **맞음 / 관련 없음 / 일부만** 중 하나로 답한다.", ""]
+    for r in rs:
+        why = "반영하면 미착수" if int(r["pledge_id"]) in held else "두 모델이 다름" if r.get("codex_label") else "Codex 미확인"
+        out += [f"## {r['pledge_id']} · {r['title']}  ({why})",
+                f"- 공약: https://nureongso.joon.is-a.dev/pledge/{r['pledge_id']}  (지금 판정: {r['status']} · {r['note']})"]
+        if r["ev"]:
+            out.append(f"- 기록: **{r['ev_name']}** ({r['ev_date']}, {r['ev_result'] or '계류'}) · {r['ev']}")
+        else:
+            out.append(f"- 검수 때 찾은 기록: {r['missed']}")
+        out += [f"  - Claude: {claude_verdict(r)} — {r.get('claude_why') or '(근거 없음)'}",
+                f"  - Codex: {r.get('codex_label') or '—'} — {r.get('codex_why') or ''}",
+                "  - 답: ", ""]
+    with open(path, "w") as f:
+        f.write("\n".join(out) + "\n")
+    return path
+
+
+def run_apply(conn, rows: list[dict], yes: bool, folder: str) -> None:
+    judge.wait_ingest(conn, "검수를 반영하지")
+    judge.run_snapshot(conn)  # 원천 변화부터 따로 커밋한다(정기 단계와 같은 쓰기)
+    with conn.cursor() as cur:
+        last = judge.applied_rule(cur)
+        if last is not None and last[0] != judge.RULE_VERSION:
+            sys.exit(f"규칙 판 미적용 — 마지막 적용 {last[0]}, 지금 {judge.RULE_VERSION}. decide --rule 먼저")
+        cur.execute("select set_config('judge.rule', %s, true)", (judge.RULE_VERSION,))
+        # 쌓인 입력 변화를 보통 사유로 먼저 털어 낸다. 그래야 아래 변화가 전부 검수 사유가 된다.
+        cur.execute(judge.DECIDE_SQL, judge.PARAMS)
+        flushed = cur.rowcount
+        cur.execute("create temp table before_apply on commit drop as select pledge_id, status, note from pledge_status")
+        # LLM 표시로 새로 미착수가 되는 공약은 두 모델이 합의해도 빼고(사람 확인) 처음부터 다시 단다.
+        held: set[int] = set()
+        while True:
+            cur.execute("savepoint marks")
+            plan = plan_marks(rows, held)
+            for llm, (marks, adds) in plan.items():
+                if not marks and not adds:
+                    continue
+                cur.execute("select set_config('judge.reason', %s, true)", ("llm" if llm else "reviewer",))
+                # LLM 은 사람이 단 표시를 덮지 않는다. 같은 값은 다시 쓰지 않는다(Disk IO).
+                keep = " and (review is null or review like '%%:llm')" if llm else ""
+                hit = miss = 0
+                for (pid, kind, ref), rv in marks.items():
+                    cur.execute("update pledge_evidence set review = %s where pledge_id = %s and kind = %s and ref_id = %s"
+                                " and review is distinct from %s" + keep, (rv, pid, kind, ref, rv))
+                    hit += cur.rowcount
+                    if not cur.rowcount:
+                        cur.execute("select 1 from pledge_evidence where pledge_id = %s and kind = %s and ref_id = %s",
+                                    (pid, kind, ref))
+                        miss += cur.fetchone() is None
+                for pid, kind, ref, model, rv in adds:
+                    cur.execute("insert into pledge_evidence (pledge_id, kind, ref_id, score, summary, model, review)"
+                                " values (%s, %s, %s, 1, '검수 때 추가', %s, %s) on conflict (pledge_id, kind, ref_id) do update"
+                                " set review = excluded.review where pledge_evidence.review is null"
+                                + (" or pledge_evidence.review like '%%:llm'" if llm else ""),
+                                (pid, kind, ref, model, rv))
+                    hit += cur.rowcount
+                cur.execute(judge.DECIDE_SQL, judge.PARAMS)
+                print(f"[apply] {'LLM' if llm else '사람'} 검수: 표시 {hit}건(근거가 사라져 못 단 것 {miss}) · 판정 {cur.rowcount}건",
+                      file=sys.stderr)
+            cur.execute("select s.pledge_id from before_apply b join pledge_status s using (pledge_id)"
+                        " where s.status = '미착수' and b.status <> '미착수'")
+            llm_pids = {k[0] for k in plan[True][0]} | {a[0] for a in plan[True][1]}
+            bad = {p for (p,) in cur.fetchall()} & llm_pids - held
+            if not bad:
+                break
+            print(f"[apply] LLM 표시로 미착수가 되는 공약 {sorted(bad)} — 사람 확인으로 돌리고 다시 단다", file=sys.stderr)
+            held |= bad
+            cur.execute("rollback to savepoint marks")
+        hc = write_human_check(rows, held, folder)
+        if hc:
+            print(f"[apply] 반영하지 않은 LLM 줄 {len(held_rows(rows, held))}개 → 사람 확인 목록 {hc}", file=sys.stderr)
+        cur.execute("select b.status, b.note, s.status, s.note from before_apply b join pledge_status s using (pledge_id)"
+                    " where (b.status, b.note) is distinct from (s.status, s.note)")
+        moves = Counter((f"{a}({an})", f"{c}({cn})") for a, an, c, cn in cur.fetchall())
+        print(f"[apply] 먼저 털어 낸 입력 변화 {flushed}건. 검수로 바뀐 판정 {sum(moves.values())}건:", file=sys.stderr)
+        for (a, c), n in moves.most_common():
+            print(f"  {a:28} → {c:28} {n:4}건", file=sys.stderr)
+        if not yes:
+            conn.rollback()
+            print("[apply] 미리보기만 하고 되돌렸다. 반영하려면 --yes", file=sys.stderr)
+            return
+        if moves:
+            cur.execute("refresh materialized view concurrently member_stats")
+    conn.commit()
+    print("[apply] 반영했다", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["kind", "match", "gold", "score"])
+    ap.add_argument("what", choices=["kind", "match", "gold", "score", "apply", "crosscheck"])
     ap.add_argument("--n", type=int, default=30)
     ap.add_argument("--layer", choices=sorted(LAYERS))
     ap.add_argument("--seed", default="gold-v1")
+    ap.add_argument("--yes", action="store_true", help="apply: 미리보기 대신 반영한다")
+    # 라벨 CSV 는 위 브랜치에 있고 apply 는 적용된 판의 코드로 돌아야 해서 경로를 따로 받는다.
+    ap.add_argument("--dir", default=REVIEW_DIR, help="apply: 라벨 CSV 폴더")
     a = ap.parse_args()
 
     if a.what == "score":  # DB 없이 CSV 만 읽는다
@@ -197,6 +449,16 @@ def main():
     if not dsn:
         sys.exit("DATABASE_URL 이 없습니다.")
 
+    if a.what == "crosscheck":
+        with psycopg.connect(dsn) as c, c.cursor() as cur:
+            run_crosscheck(cur, a.dir)
+        return
+    if a.what == "apply":
+        rows = [r for f in sorted(os.listdir(a.dir)) if f.endswith(".csv")
+                for r in read_gold(os.path.join(a.dir, f))]
+        with psycopg.connect(dsn) as c:
+            run_apply(c, rows, a.yes, a.dir)
+        return
     with psycopg.connect(dsn) as c, c.cursor() as cur:
         if a.what == "gold":
             if not a.layer:
