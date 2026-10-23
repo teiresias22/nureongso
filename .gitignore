@@ -6,3 +6,8 @@ collector/.venv/
 !collector/.env
 **/.env.keys
 __pycache__/
+
+# 에이전트 설정·내부 문서는 공개하지 않는다(로컬에만 둔다, 2026-10-23)
+/.claude/
+/docs/
+/CLAUDE.md
