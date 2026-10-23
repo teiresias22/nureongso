@@ -271,6 +271,13 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
 # --------------------------------------------------------------------------- match
 
 
+# 대조는 지금 임기 공약만 한다 — 그 사람의 가장 최근 당선 선거. 지난 임기 공약은 판정하지 않으니(past_term)
+# 근거를 붙여도 쓰이지 않고 토큰만 든다(판정 계획 P17, 결정 S: 이미 붙은 근거는 지우지 않는다).
+def cur_term(alias: str) -> str:
+    return (f" and {alias}.election_id = (select max(c.election_id) from candidacy c"
+            f" where c.member_code = {alias}.member_code and c.elected)")
+
+
 def save_evidence(cur, rows, prompt: str) -> None:
     """근거 (pledge_id, kind, ref_id, score, why) 를 넣는다. 쓴 모델·프롬프트 판을 함께 남기고,
     값이 그대로면 다시 쓰지 않는다(Disk IO — pledges.md 의 'judge 의 직접 SQL 도 is distinct from').
@@ -306,6 +313,8 @@ def match_once(pledges, bills) -> set[tuple[int, str, float, str]]:
         for m in out.get("matches", [])
         # 없는 id 는 버린다. 모델이 지어낸 근거가 화면에 뜨면 신뢰가 무너진다.
         if m.get("pledge_id") in pids and m.get("bill_id") in bids
+        # 이유에 '불일치' 처럼 제 말과 어긋나는 연결도 버린다 — 발주 대조만 거르고 있었다(판정 계획 P9).
+        and not self_contradicted(m.get("why"))
     }
 
 
@@ -353,7 +362,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
-                " where member_code = %s and '입법' = any(kinds) order by id", (mcode,))
+                " where member_code = %s and '입법' = any(kinds)" + cur_term("pledge") + " order by id", (mcode,))
             pledges = cur.fetchall()
             cur.execute(
                 "select b.bill_id, b.name, coalesce(b.proc_result,'계류') from bill_sponsor s"
@@ -535,7 +544,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
-                " where member_code = %s and '조례제도' = any(kinds) order by id", (mcode,))
+                " where member_code = %s and '조례제도' = any(kinds)" + cur_term("pledge") + " order by id", (mcode,))
             pledges = cur.fetchall()
             # 그 지자체 것만, 공약 제목과 글자가 겹치는 순으로. 조례 전체를 넘기면
             # 한 지자체에 수백 건이라 프롬프트가 감당이 안 된다.
@@ -545,13 +554,15 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
                 "           p.title || ' ' || coalesce(p.body,''))) as sim"
                 " from ordinance o, pledge p"
                 " where o.org = %s and p.member_code = %s"
-                "   and '조례제도' = any(p.kinds)"
+                "   and '조례제도' = any(p.kinds)" + cur_term("p") +
                 "   and (%s::timestamptz is null or o.created_at > %s::timestamptz)"
+                # 취임 전에 공포된 조례는 판정에 쓰지 않으니 후보로도 넘기지 않는다(판정 계획 T1.1).
+                "   and o.announced_at >= %s"
                 "   and word_similarity(" + ORDIN_CORE + ","
                 "       p.title || ' ' || coalesce(p.body,'')) > %s"
                 " group by o.id, o.name, o.rr_kind, o.effective_at"
                 " order by sim desc limit %s",
-                (org, mcode, since, since, ORDIN_SIM, ORDIN_TOP))
+                (org, mcode, since, since, HEAD_TERM_START.replace("-", ""), ORDIN_SIM, ORDIN_TOP))
             ordins = cur.fetchall()
         if not pledges or not ordins:
             # 후보가 없으면 '안 돌린 것' 이 아니라 '돌렸는데 없는 것' 이다. 기록을
@@ -584,6 +595,7 @@ def run_match_ordin(conn, limit: int | None, redo: bool) -> None:
              float(m.get("confidence") or 0), (m.get("why") or "")[:300])
             for m in out.get("matches", [])
             if m.get("pledge_id") in pids and m.get("ordin_id") in oids
+            and not self_contradicted(m.get("why"))   # match_once·발주와 같은 거르기
         ]
         with conn.cursor() as cur:
             save_evidence(cur, rows, PROMPT_VERSION["ordin"])
@@ -733,7 +745,7 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "select id, title, coalesce(body,'') from pledge"
-                " where member_code = %s and '예산사업' = any(kinds) order by id", (mcode,))
+                " where member_code = %s and '예산사업' = any(kinds)" + cur_term("pledge") + " order by id", (mcode,))
             pledges = cur.fetchall()
             cur.execute(
                 "select b.id, b.name, b.budget, b.notice_at,"
@@ -741,13 +753,15 @@ def run_match_bid(conn, limit: int | None, redo: bool) -> None:
                 "           p.title || ' ' || coalesce(p.body,''))) as sim"
                 " from bid_notice b, pledge p"
                 " where b.org = %s and p.member_code = %s"
-                "   and '예산사업' = any(p.kinds)"
+                "   and '예산사업' = any(p.kinds)" + cur_term("p") +
                 "   and (%s::timestamptz is null or b.created_at > %s::timestamptz)"
+                # 취임 전 공고는 판정에 쓰지 않으니 후보로도 넘기지 않는다 — 후보 풀의 약 70%(판정 계획 T1.1).
+                "   and b.notice_at >= %s::date"
                 "   and word_similarity(b.name,"
                 "       p.title || ' ' || coalesce(p.body,'')) > %s"
                 " group by b.id, b.name, b.budget, b.notice_at"
                 " order by sim desc limit %s",
-                (org, mcode, since, since, BID_SIM, BID_TOP))
+                (org, mcode, since, since, HEAD_TERM_START, BID_SIM, BID_TOP))
             bids = cur.fetchall()
         if not pledges or not bids:
             with conn.cursor() as cur:
@@ -1226,31 +1240,63 @@ def run_match_race(conn, limit: int | None, redo: bool, since: str | None = None
 # 규칙표. 판정 부분(JUDGED_CTE)만 판 이름에 들어간다 — 쓰는 방식(DECIDE_SQL)을 고쳐도 판이 바뀌지 않는다.
 # decide --diff 가 이 부분을 지난 커밋 것과 같은 스냅숏에서 맞대어 순수 규칙 전이를 낸다.
 JUDGED_CTE = """
-with ev as (
+-- 공약마다 그 선거의 직위·임기 시작일·당선 여부. 날짜 조건과 '지금 임기' 가 모두 여기서 온다.
+-- 직위는 그 선거의 것이다 — 지금 단체장인 사람의 2020 국회의원 선거 공약은 국회의원 공약이다.
+with pt as (
+  select p.id as pledge_id,
+         coalesce(c.office, m.office, '국회의원') as office,
+         coalesce(c.won, false) as won,
+         -- 임기 시작일. 국회의원과 단체장은 선거도 취임도 다른 날이다. 재보궐은 그 선거일부터 센다 —
+         -- 2026-06-03 재보궐 국회의원이 22대 개원일 기준으로 넉 달 만에 '미착수' 가 됐다(판정 계획 P3).
+         greatest(case when coalesce(c.office, m.office, '국회의원') = '국회의원'
+                       then %(mp_start)s::date else %(head_start)s::date end,
+                  to_date(p.election_id, 'YYYYMMDD')) as term_start
+  from pledge p left join member m on m.code = p.member_code
+  left join lateral (select bool_or(c.elected) as won, (array_agg(c.office order by c.elected desc nulls last))[1] as office
+                     from candidacy c where c.member_code = p.member_code and c.election_id = p.election_id) c on true
+),
+ev as (
   select e.pledge_id,
          max(e.score) as conf,
+         -- 사람이 '일부만 이행·미공포' 로 표시한 근거는 진행까지다(review_partial).
          -- psycopg 는 주석까지 훑어 퍼센트 기호를 파라미터로 본다. 리터럴은 두 번 써야 한다.
-         bool_or(e.kind = 'bill' and b.proc_result like '%%가결%%') as law_passed,
+         bool_or(e.kind = 'bill' and not e.held and b.proc_result like '%%가결%%') as law_passed,
          -- 대안반영폐기: 위원회가 내용을 위원장 대안에 담고 원안은 폐기한 것이다.
          -- 국회에서 법안이 법이 되는 가장 흔한 길이라, 이걸 빼면 크게 모자라게 센다
          -- (실측: 대안반영폐기 4,101건 대 가결 699건).
-         bool_or(alt.proc_result like '%%가결%%') as law_merged,
+         bool_or(not e.held and alt.proc_result like '%%가결%%') as law_merged,
          bool_or(e.kind = 'bill' and b.proc_result = '대안반영폐기') as law_alt,
-         count(*) filter (where e.kind = 'bill')  as law_n,
-         count(*) filter (where e.kind = 'ordin') as ordin_n,
-         count(*) filter (where e.kind = 'bid')   as bid_n
-  from pledge_evidence e
+         -- 철회한 법안은 착수 기록이 아니다(본인이 거둬들였다). 따로 세어 사유로만 적는다(판정 계획 P8, 결정 W).
+         -- 부결은 표결까지 간 착수 기록이라 폐기와 같이 센다.
+         count(*) filter (where e.kind = 'bill' and b.proc_result is distinct from '철회') as law_n,
+         count(*) filter (where e.kind = 'bill' and b.proc_result = '철회') as law_wd_n,
+         count(*) filter (where e.kind = 'ordin' and not e.held) as ordin_n,
+         count(*) filter (where e.kind = 'bid')   as bid_n,
+         count(*) filter (where e.held and e.kind in ('bill', 'ordin')) as held_n
+  from (select *, split_part(coalesce(review, ''), ':', 1) = 'partial' as held from pledge_evidence) e
   join pledge p0 on p0.id = e.pledge_id
+  join pt on pt.pledge_id = e.pledge_id
   -- 약속보다 먼저 낸 법안은 그 약속의 이행이 아니다. 실측으로 4건이 이랬다 —
   -- 국회의원이던 사람이 2026 지방선거에 나와 낸 공약에 2024~25년 법안이 붙었다.
   left join bill b on b.bill_id = e.ref_id and e.kind = 'bill'
                   and b.proposed_at >= to_date(p0.election_id, 'YYYYMMDD')
+  -- 법안 쪽 조건(약속 뒤 발의·철회·review·대안 가결)은 supabase/schema.sql member_stats 의 공약 법안 집계와 같다.
+  -- 한쪽을 고치면 다른 쪽도(인물 카드 '발의·통과' 숫자가 판정과 어긋난다).
+  -- 조례·발주도 같다: 취임 전에 공포된 조례, 선거 전에 낸 공고는 그 사람의 이행이 아니다.
+  -- 날짜 조건이 법안에만 있어서 선거 전 공고만 붙은 공약 197건이 '진행' 이었다(판정 계획 P1·P2).
+  left join ordinance o on o.id = e.ref_id and e.kind = 'ordin'
+                       and o.announced_at >= to_char(pt.term_start, 'YYYYMMDD')
+  left join bid_notice n on n.id = e.ref_id and e.kind = 'bid' and n.notice_at >= pt.term_start
   -- 그 대안이 실제로 통과했는지는 대안 자신의 처리 결과에서 읽는다. 추정하지 않는다.
   -- 원안 → 대안 연결 규칙(같은 날, 법률명으로 시작하는 위원장 대안 하나)은 ingest.LINK_ALT_SQL.
   -- 이름이 아예 다른 대안에 들어간 것은 비어 있어 통과했다고 치지 않는다.
   left join bill alt on alt.bill_id = b.alt_bill_id
   where e.kind in ('bill', 'ordin', 'bid')
     and (e.kind <> 'bill' or b.bill_id is not null)
+    and (e.kind <> 'ordin' or o.id is not null)
+    and (e.kind <> 'bid' or n.id is not null)
+    -- 사람이 관련 없다고 확인한 근거는 세지 않는다(결정 M — 판정은 규칙표가, 사람은 근거에 표시만).
+    and split_part(coalesce(e.review, ''), ':', 1) <> 'reject'
   group by e.pledge_id
 ),
 -- 그 사람의 가장 최근 당선. 이 선거의 공약만 판정한다.
@@ -1266,25 +1312,30 @@ base as (
          coalesce(ev.law_n, 0)   as law_n,
          coalesce(ev.ordin_n, 0) as ordin_n,
          coalesce(ev.bid_n, 0)   as bid_n,
-         coalesce(m.office, '국회의원') as office,
-         -- 임기 시작일. 국회의원과 단체장은 선거도 취임도 다른 날이다.
-         case when coalesce(m.office,'국회의원') = '국회의원'
-              then %(mp_start)s::date else %(head_start)s::date end as term_start,
+         coalesce(ev.held_n, 0)  as held_n,
+         coalesce(ev.law_wd_n, 0) as law_wd_n,
+         pt.office, pt.term_start,
          -- 잴 수 있는 유형 / 잴 수 없는 유형
+         -- 국회 입법은 국회의원만, 조례는 단체장·교육감만 잴 수 있다. 단체장의 '입법' 공약은 그 사람이
+         -- 할 수 있는 일이 아니라 대조도 하지 않는데 not_checked 로 남았다(판정 계획 P6).
          array(select k from unnest(p.kinds) k
-                where k = '입법'
-                   or (k = '조례제도' and coalesce(m.office,'국회의원') <> '국회의원')
+                where (k = '입법' and pt.office = '국회의원')
+                   or (k = '조례제도' and pt.office <> '국회의원')
               ) as measurable,
          array(select k from unnest(p.kinds) k
-                where k <> '입법'
-                  and not (k = '조례제도' and coalesce(m.office,'국회의원') <> '국회의원')
+                where not (k = '입법' and pt.office = '국회의원')
+                  and not (k = '조례제도' and pt.office <> '국회의원')
               ) as unmeasurable,
          exists (select 1 from ingest_run r
                   where r.source = 'match:' || p.member_code) as law_checked,
          exists (select 1 from ingest_run r
                   where r.source = 'ordin:' || p.member_code) as ordin_checked,
-         (p.election_id = ce.election_id) as current_term
+         pt.won,
+         -- 지금 임기: 그 사람의 가장 최근 당선 선거. 22대 전 국회의원 공약은 근거 법안(22대뿐)이 없어 빼다.
+         (p.election_id = ce.election_id
+          and not (pt.office = '국회의원' and p.election_id < '20240410')) as current_term
   from pledge p
+  join pt on pt.pledge_id = p.id
   left join ev on ev.pledge_id = p.id
   left join member m on m.code = p.member_code
   left join cur_el ce on ce.member_code = p.member_code
@@ -1303,6 +1354,8 @@ flag as (
 judged as (
   select pledge_id,
     case
+      -- 당선되지 않은 선거의 공약은 이행할 자리가 없다(판정 계획 P7, 결정 H).
+      when not won                        then '판단불가'
       when cardinality(measurable) = 0 and bid_n = 0 then '판단불가'
       -- 지난 임기 공약은 판정하지 않는다. 지금 DB 에 든 법안이 제22대 것뿐이라
       -- (2024-05-30~) 그 이전 임기의 약속은 지킨 근거도, 안 지킨 근거도 없다.
@@ -1311,6 +1364,7 @@ judged as (
       when not coalesce(current_term, true) then '판단불가'
       when achieved and cardinality(unmeasurable) = 0 then '완료'
       when achieved                       then '진행'
+      when held_n > 0                     then '진행'
       when law_n > 0                      then '진행'
       -- 발주 기록은 여기까지다. 공고는 사업이 시작됐다는 뜻이지 준공이 아니고,
       -- 그 사업이 이 사람 덕이라는 증거도 아니다(단체장은 전임자가 추진하던 것을
@@ -1321,6 +1375,7 @@ judged as (
       else '판단불가'
     end as status,
     case
+      when not won                        then 'not_elected'
       when cardinality(measurable) = 0 and bid_n = 0
            then 'no_measure:' || array_to_string(kinds, '+')
       when not coalesce(current_term, true) then 'past_term'
@@ -1332,9 +1387,11 @@ judged as (
       -- 대안에 반영은 됐는데 그 대안을 찾지 못했다(이름이 다른 대안). 통과했을 가능성이
       -- 높지만(실측 99.9%%) 확인한 게 아니라 그렇게 적는다.
       when law_alt                        then 'law_alt_unverified'
+      when held_n > 0                     then 'review_partial'
       when law_n > 0                      then 'law_filed'
       when bid_n > 0                      then 'bid_ordered'
       when not checked                    then 'not_checked'
+      when law_wd_n > 0                   then 'law_withdrawn'
       when past_grace                     then 'none_2y'
       else 'none_early'
     end as note,

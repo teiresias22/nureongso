@@ -19,6 +19,18 @@ export type TimelineInput = {
   factLabel?: (key: string, v: unknown) => string;
 };
 
+/** 민선 9기 단체장·교육감 취임일. collector/judge.py HEAD_TERM_START 와 같아야 한다(test_judge 가 본다).
+ *  근거 줄에 '취임일 전 기록' 을 사실로 달 때만 쓴다 — 판정은 웹에서 다시 계산하지 않는다. */
+export const HEAD_TERM_START = "2026-07-01";
+
+/** 사람 검수 표시(pledge_evidence.review 'ok|reject|partial:YYYY-MM-DD')를 근거 줄의 말로. */
+export function reviewText(review: string | null | undefined): string {
+  if (!review) return "";
+  const [kind, day = ""] = review.split(":");
+  const label = { ok: "맞음", reject: "관련 없음(판정에 쓰지 않음)", partial: "일부만(진행까지)" }[kind] ?? kind;
+  return `사람 확인: ${label}${day ? ` ${day.slice(5).replace("-", ".")}` : ""}`;
+}
+
 /** 판정 이력의 사유. supabase/schema.sql log_pledge_status() 의 reason 과 1:1. */
 export const REASON_LABEL: Record<string, string> = {
   baseline: "기록 시작 시점 판정",

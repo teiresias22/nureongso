@@ -128,3 +128,15 @@ def test_gold_score():
             dict(row, layer="done", pledge_id="3", ev="bill:C")]                 # 아직 안 채움 — 세지 않는다
     out = "\n".join(sr.score_gold(rows))
     assert "근거 정밀도 bill: 1/1" in out and "근거 정밀도 ordin: 0/1" in out and "완료 정밀도(맞는 근거·전부·공포): 1/2" in out, out
+
+
+def test_web_term_start():
+    # 근거 줄의 '취임일 전 기록' 은 judge 와 같은 날짜로 단다(판정 계획 T0.3 (d)).
+    src = open(os.path.join(WEB, "lib", "timeline.ts")).read()
+    assert f'export const HEAD_TERM_START = "{judge.HEAD_TERM_START}";' in src
+
+
+def test_self_contradicted():
+    # 실측 근거 이유(4163·12186). 법안·조례 대조도 이런 연결을 버린다(판정 계획 T1.6).
+    assert judge.self_contradicted("공약은 지역 사업이나 법안 성격 불일치")
+    assert not judge.self_contradicted("공영주차장 확보 계획 수립을 의무화해 공약과 같은 일을 한다")
