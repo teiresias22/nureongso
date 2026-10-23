@@ -5,14 +5,10 @@ import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
 import { ldJson, pageOg, SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
 
-export const revalidate = 86400;
-
-/** 빈 목록 = 빌드 때는 안 그리고 처음 열릴 때 그려 ISR 로 둔다. 이게 없으면 검색어를 안 읽어도
- *  요청마다 그린다. 법안 1.9만 쪽을 크롤러가 돌 때 리전마다 따로인 CDN 캐시가 아니라 전역 ISR
- *  캐시에서 내준다. 서버에서 검색어(searchParams)를 읽으면 다시 요청마다 그려지니 읽지 않는다. */
-export async function generateStaticParams() {
-  return [];
-}
+/** ISR 이 아니라 요청마다 그리고 Vercel CDN 이 7일 들고 있는다(`next.config.ts` headers).
+ *  법안·공약 4.3만 쪽을 크롤러가 하루 9천 쪽씩 처음 열어, ISR 캐시는 읽기 92 대 쓰기 4.3K(12시간)로
+ *  쓰기만 하는 저장소였고 그 쓰기가 Vercel 무료 20만 건을 4~6배 넘겼다(2026-10). ISR 캐시는
+ *  배포마다 새로 시작해 하루 주기를 넘겨 잡아도 소용이 없었다. CDN 캐시는 ISR 쓰기를 쓰지 않는다. */
 
 /** 발의자 조인 뷰. bill_sponsor.member_code 에는 외래키가 없어 PostgREST 가
  *  member 를 임베드하지 못한다. member_bill 과 같은 방식으로 뷰를 쓴다. */

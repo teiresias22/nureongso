@@ -33,11 +33,14 @@ const nextConfig: NextConfig = {
   // 브라우저용 Cache-Control 은 그대로 두고, HTML·RSC 응답은 `_rsc` 검색어로 키가 갈린다.
   async headers() {
     const cdn = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=86400, stale-while-revalidate=86400" }];
-    // `/bill`·`/pledge` 는 검색어를 안 읽어 ISR(전역 캐시)로 돈다. 여기 넣지 않는다.
+    // 법안·공약 4.3만 쪽은 크롤러가 거의 한 번씩만 열어 하루로는 거의 안 맞는다. 7일 들고 있고,
+    // 처리 결과·판정이 바뀐 것은 최대 7일(그 사이 배포가 있으면 그때) 늦게 보인다.
+    const cdnWeek = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=604800, stale-while-revalidate=86400" }];
     // 미리 줄인 의원 사진(collector/photos.py). 임기 중엔 안 바뀌고, 바뀌면 다음 실행이 같은 이름에 덮어쓴다.
     const photo = [{ key: "Cache-Control", value: "public, max-age=604800, stale-while-revalidate=86400" }];
     return [
       ...["/", "/m/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn })),
+      ...["/bill/:id", "/pledge/:id"].map((source) => ({ source, headers: cdnWeek })),
       { source: "/photo/:file", headers: photo },
     ];
   },
