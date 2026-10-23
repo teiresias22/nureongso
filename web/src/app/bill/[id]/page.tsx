@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "@/lib/link";
 import { notFound } from "next/navigation";
-import { db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
+import { dbLive as db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
 import { ldJson, pageOg, SITE } from "@/lib/site";
 import { StackBar, type Part } from "../../m/[code]/charts";
 

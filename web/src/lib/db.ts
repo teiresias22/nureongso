@@ -19,6 +19,11 @@ export const db = createClient(url, key, {
   global: { fetch: cachedFetch },
 });
 
+/** 데이터 캐시를 타지 않는 읽기. `/bill`·`/pledge` 는 Vercel CDN 이 그린 화면을 7일 들고 있어서
+ *  데이터 캐시가 더 할 일이 없다(적중률 24.6%, 2026-10). 오히려 데이터 캐시는 배포로 비지 않아서,
+ *  판정이 바뀐 뒤 다시 그려도 하루 묵은 값이 CDN 에 7일 박혔다. */
+export const dbLive = createClient(url, key, { auth: { persistSession: false } });
+
 export type Member = {
   code: string;
   name: string;

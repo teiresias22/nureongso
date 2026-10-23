@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "@/lib/link";
 import { notFound } from "next/navigation";
-import { db, eok, electionYear, KIND_LABEL, noteText, STATUS_BG } from "@/lib/db";
+import { dbLive as db, eok, electionYear, KIND_LABEL, noteText, STATUS_BG } from "@/lib/db";
 import { pageOg, REPORT_URL } from "@/lib/site";
 import { HEAD_TERM_START, kstDate, REASON_LABEL, reviewText, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
 
