@@ -68,10 +68,11 @@ limit %(n)s
 REVIEW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "review")
 HEADER = ("# 정답 표본 — 사실 라벨만. 의견·평가를 적지 않는다. label: ok(그 공약의 이행 기록이 맞음)|wrong · "
           "missed: 놓친 기록 kind:ref(여럿이면 공백) · scope: 전부|일부 · enacted: 예|아니오 · prior: 예|아니오 "
-          "(같은 사업의 이전 단계 공고·설계용역이 2026-07-01 전에 있음) · reviewer · reviewed_at YYYY-MM-DD")
+          "(같은 사업의 이전 단계 공고·설계용역이 2026-07-01 전에 있음) · reviewer · reviewed_at YYYY-MM-DD · "
+          "claude_why: Claude 가 라벨할 때 근거 한 줄(필수) · codex_label·codex_why: crosscheck 가 채운다")
 COLS = ["layer", "pledge_id", "member_code", "election_id", "title", "status", "note", "rule",
         "ev", "ev_name", "ev_date", "ev_result", "ev_score", "ev_why", "candidates",
-        "label", "missed", "scope", "enacted", "prior", "reviewer", "reviewed_at", "codex_label", "codex_why"]
+        "label", "missed", "scope", "enacted", "prior", "reviewer", "reviewed_at", "claude_why", "codex_label", "codex_why"]
 
 # 층마다 모집단. 순서는 md5(id || seed) 라 다시 뽑아도 같다.
 LAYERS = {
@@ -337,7 +338,8 @@ def write_human_check(rows: list[dict], held: set[int], folder: str) -> str | No
             out.append(f"- 기록: **{r['ev_name']}** ({r['ev_date']}, {r['ev_result'] or '계류'}) · {r['ev']}")
         else:
             out.append(f"- 검수 때 찾은 기록: {r['missed']}")
-        out += [f"  - Claude: {claude_verdict(r)} · Codex: {r.get('codex_label') or '—'} {r.get('codex_why') or ''}",
+        out += [f"  - Claude: {claude_verdict(r)} — {r.get('claude_why') or '(근거 없음)'}",
+                f"  - Codex: {r.get('codex_label') or '—'} — {r.get('codex_why') or ''}",
                 "  - 답: ", ""]
     with open(path, "w") as f:
         f.write("\n".join(out) + "\n")
