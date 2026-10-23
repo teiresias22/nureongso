@@ -108,11 +108,44 @@ def test_pick_skips_latest_alias():
     assert llm.gemini_pick(models) == "gemini-3.1-flash-lite"
 
 
+def test_falls_back_to_claude_only_with_key():
+    # 제미나이 키를 다 쓰면 ANTHROPIC_API_KEY 가 있을 때만 Claude 로 넘어가고, 그 뒤는 계속 Claude 다.
+    reset("a")
+    llm.PROVIDER, llm._fell_back = "gemini", False
+
+    def exhausted(prompt, schema, pdf=None):
+        raise llm.QuotaExhausted("일일 한도")
+
+    claude: list[str] = []
+    llm.CALLS["gemini"] = exhausted
+    llm.CALLS["anthropic"] = lambda prompt, schema, pdf=None: claude.append(prompt) or "claude"
+    old = os.environ.pop("ANTHROPIC_API_KEY", None)
+    try:
+        try:
+            llm.complete("x")
+            assert False, "Claude 키가 없으면 QuotaExhausted 가 올라와야 한다"
+        except llm.QuotaExhausted:
+            pass
+        assert claude == [] and llm.active() == "gemini"
+
+        reset("a")
+        os.environ["ANTHROPIC_API_KEY"] = "test"
+        assert llm.complete("x") == "claude" and llm.complete("y") == "claude"
+        assert claude == ["x", "y"] and llm.active() == "anthropic"
+        assert llm.model_id().startswith("anthropic:")
+    finally:
+        llm._fell_back = False
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        if old is not None:
+            os.environ["ANTHROPIC_API_KEY"] = old
+
+
 if __name__ == "__main__":
     test_parsing()
     test_rotation_stops_at_the_end()
     test_complete_switches_keys_then_gives_up()
     test_overload_is_retried_then_raised()
     test_pick_skips_latest_alias()
+    test_falls_back_to_claude_only_with_key()
     print("ok")
 

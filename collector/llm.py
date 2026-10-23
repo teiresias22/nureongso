@@ -7,6 +7,9 @@
     LLM_PROVIDER=ollama           OLLAMA_MODEL     — 로컬, 한도·비용 없음, 느림
     LLM_PROVIDER=anthropic        ANTHROPIC_API_KEY — 유료 전용
 
+gemini 를 쓰다가 키를 다 돌려도 일일 한도가 차면, ANTHROPIC_API_KEY 가 있을 때 그 실행의
+나머지를 Claude 로 넘긴다(유료 — ANTHROPIC_MAX_CALLS, 기본 300 건에서 멈춘다).
+
 모델 이름은 자주 바뀌므로 코드에 박지 않는다. 지정이 없으면 계정에서 쓸 수 있는
 모델을 조회해 고른다.
 
@@ -211,33 +214,63 @@ def ollama_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> s
 
 # --------------------------------------------------------------------------- Anthropic
 
-ANTHROPIC_DEFAULT = "claude-haiku-4-5-20251001"
+ANTHROPIC_DEFAULT = "claude-opus-5-5"
+_anthropic = None
+_anthropic_used = 0
 
 
 def anthropic_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> str:
-    if pdf:
-        raise LLMError("이 경로는 PDF 입력을 지원하지 않습니다. LLM_PROVIDER=gemini 로 바꾸세요.")
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
+    global _anthropic, _anthropic_used
+    import anthropic
+    if not os.getenv("ANTHROPIC_API_KEY"):
         raise LLMError("ANTHROPIC_API_KEY 가 없습니다. (무료 등급 없음 — 사용량만큼 과금됩니다)")
-    model = os.getenv("ANTHROPIC_MODEL", ANTHROPIC_DEFAULT)
-    r = httpx.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-        json={"model": model, "max_tokens": 8000, "temperature": 0,
-              "messages": [{"role": "user", "content": prompt}]},
-        timeout=180,
-    )
-    if r.status_code == 429:
-        raise RateLimited(_flat(r.text))
-    if r.status_code in OVERLOADED:
-        raise Overloaded(f"{r.status_code}: {_flat(r.text)}")
-    if r.status_code >= 400:
-        raise LLMError(f"{r.status_code}: {_flat(r.text)}")
-    return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()
+    # 유료라 한 실행에서 쓸 수 있는 양을 막는다. 넘으면 제미나이 한도 소진과 똑같이 깨끗이 멈춘다.
+    cap = int(os.getenv("ANTHROPIC_MAX_CALLS", "300"))
+    if _anthropic_used >= cap:
+        raise QuotaExhausted(f"Claude 호출 상한 {cap}건에 닿았습니다 (ANTHROPIC_MAX_CALLS).")
+    if _anthropic is None:
+        _anthropic = anthropic.Anthropic(max_retries=0, timeout=180)  # 재시도는 complete() 가 한다
+    content: list[dict] = []
+    if pdf:
+        content.append({"type": "document", "source": {
+            "type": "base64", "media_type": "application/pdf", "data": base64.b64encode(pdf).decode()}})
+    if schema:
+        # 제미나이 responseSchema 는 OpenAPI 부분집합이라 구조화 출력에 그대로 못 넣는다. 지시로 준다.
+        prompt += ("\n\n다음 JSON 스키마에 맞는 JSON 하나만 답하세요. 다른 글은 쓰지 마세요.\n"
+                   + json.dumps(schema, ensure_ascii=False))
+    content.append({"type": "text", "text": prompt})
+    try:
+        r = _anthropic.beta.messages.create(
+            model=os.getenv("ANTHROPIC_MODEL", ANTHROPIC_DEFAULT),
+            max_tokens=16000,
+            output_config={"effort": os.getenv("ANTHROPIC_EFFORT", "low")},
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            messages=[{"role": "user", "content": content}],
+        )
+    except anthropic.RateLimitError as e:
+        raise RateLimited(_flat(str(e))) from e
+    except anthropic.InternalServerError as e:
+        raise Overloaded(f"{e.status_code}: {_flat(str(e))}") from e
+    except anthropic.APIStatusError as e:
+        raise LLMError(f"{e.status_code}: {_flat(str(e))}") from e
+    except anthropic.APIConnectionError as e:
+        raise Overloaded(f"연결: {_flat(str(e))}") from e
+    _anthropic_used += 1
+    if r.stop_reason == "refusal":
+        raise LLMError(f"Claude 가 거절했습니다 ({getattr(r.stop_details, 'category', None)})")
+    text = "".join(b.text for b in r.content if b.type == "text").strip()
+    if not text:
+        raise LLMError(f"빈 응답 (stop_reason={r.stop_reason})")
+    return text
 
 
 CALLS = {"gemini": gemini_call, "ollama": ollama_call, "anthropic": anthropic_call}
+_fell_back = False  # gemini 한도가 다 차서 이 실행의 나머지를 anthropic 으로 돌리는 중
+
+
+def active() -> str:
+    return "anthropic" if _fell_back else PROVIDER
 
 
 def complete(prompt: str, schema: dict | None = None, retries: int = 4,
@@ -247,19 +280,26 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
     pdf 를 주면 텍스트 대신 PDF 원본을 그대로 넘긴다. 글꼴에 문자 매핑이 없어
     텍스트 추출이 (cid:NNNN) 으로 깨지는 공보를 이 경로로 처리한다.
     """
-    call = CALLS.get(PROVIDER)
-    if not call:
+    global _fell_back
+    if PROVIDER not in CALLS:
         raise LLMError(f"모르는 LLM_PROVIDER: {PROVIDER} (가능: {', '.join(CALLS)})")
     attempt = 0
     while True:
         try:
-            return call(prompt, schema, pdf)
+            return CALLS[active()](prompt, schema, pdf)
         except QuotaExhausted:
-            # 일일 한도는 기다려도 그날은 안 풀린다. 남은 키가 있으면 갈아타고,
-            # 없으면 그대로 올려보내 호출한 쪽이 깨끗이 멈추게 한다.
-            # 키 전환은 재시도 횟수를 소모하지 않는다. 키 개수만큼만 일어난다.
-            if PROVIDER != "gemini" or not gemini_rotate():
+            # 일일 한도는 기다려도 그날은 안 풀린다. 남은 키가 있으면 갈아타고, 키를 다 쓰면
+            # ANTHROPIC_API_KEY 가 있을 때만 Claude 로 넘긴다. 둘 다 아니면 올려보내 호출한 쪽이
+            # 깨끗이 멈추게 한다. 키·업체 전환은 재시도 횟수를 소모하지 않는다.
+            if active() != "gemini":
                 raise
+            if gemini_rotate():
+                continue
+            if not os.getenv("ANTHROPIC_API_KEY"):
+                raise
+            _fell_back = True
+            print(f"[llm] 제미나이 키 모두 일일 한도 소진 → 나머지는 Claude"
+                  f" ({os.getenv('ANTHROPIC_MODEL', ANTHROPIC_DEFAULT)})", file=sys.stderr)
         except (RateLimited, Overloaded) as e:
             attempt += 1
             if attempt >= retries:
@@ -277,9 +317,9 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
 
 def model_id() -> str:
     """근거 행의 model 칸('gemini:gemini-3.5-flash'). 모델이 조용히 바뀌면 재현성 지표가 흔들려서 남긴다."""
-    if PROVIDER == "gemini":
+    if active() == "gemini":
         return f"gemini:{gemini_model()}"
-    if PROVIDER == "anthropic":
+    if active() == "anthropic":
         return f"anthropic:{os.getenv('ANTHROPIC_MODEL', ANTHROPIC_DEFAULT)}"
     return f"{PROVIDER}:{os.getenv('OLLAMA_MODEL', 'qwen3:8b')}"
 
@@ -287,8 +327,8 @@ def model_id() -> str:
 def key_usage() -> str:
     """'1번 키 412건 · 2번 키 0건' 형태. 2번이 0 이면 같은 프로젝트라 한도를 공유한
     것이다 — 무료 등급 한도는 키가 아니라 프로젝트 단위다(gemini_keys 주석 참고)."""
-    return " · ".join(f"{i + 1}번 키 {_key_used.get(i, 0)}건"
-                      for i in range(len(gemini_keys())))
+    out = " · ".join(f"{i + 1}번 키 {_key_used.get(i, 0)}건" for i in range(len(gemini_keys())))
+    return out + (f" · Claude {_anthropic_used}건" if _fell_back else "")
 
 
 def complete_json(prompt: str, schema: dict | None = None, **kw):
