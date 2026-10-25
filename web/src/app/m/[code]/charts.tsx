@@ -70,9 +70,13 @@ export function Strip({
     <figure className="mt-2" role="img" aria-label={`${caption}. 이 의원 ${format(mine)}, 중간값 ${format(median)}`}>
       <div className="relative mx-1.5 h-6">
         <div className="absolute inset-x-0 top-1/2 h-px bg-line" />
-        {values.map((v, i) => (
-          <div key={i} className="absolute top-1.5 h-3 w-px" style={{ left: `${x(v)}%`, background: "var(--viz-peer)" }} />
-        ))}
+        {/* 눈금 300여 개를 div 하나씩 그리면 의원 쪽 하나에 요소가 1,300개 늘어 HTML·RSC 가 커지고
+            렌더 CPU 를 먹었다(2026-10). 경로 하나로 그린다. 세로선만이라 가로로 늘려도 모양이 같고,
+            선 굵기는 non-scaling-stroke 로 1px 그대로다. */}
+        <svg className="absolute inset-x-0 top-1.5 h-3 w-full" viewBox="0 0 100 1" preserveAspectRatio="none" aria-hidden>
+          <path d={values.map((v) => `M${x(v).toFixed(2)} 0V1`).join("")} stroke="var(--viz-peer)"
+                strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        </svg>
         <div className="absolute top-0 h-6 w-[1.5px] bg-muted" style={{ left: `${x(median)}%` }}
              title={`중간값 ${format(median)}`} />
         <div
