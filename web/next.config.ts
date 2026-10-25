@@ -39,7 +39,10 @@ const nextConfig: NextConfig = {
     // 미리 줄인 의원 사진(collector/photos.py). 임기 중엔 안 바뀌고, 바뀌면 다음 실행이 같은 이름에 덮어쓴다.
     const photo = [{ key: "Cache-Control", value: "public, max-age=604800, stale-while-revalidate=86400" }];
     return [
-      ...["/", "/m/:path*", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn })),
+      ...["/", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn })),
+      // 인물 쪽은 역대 4천여 명을 크롤러가 법안 발의자 링크로 돌아 하루로는 거의 안 맞았다(2026-10,
+      // /m 이 Active CPU 1위). 3일 들고 있는다 — 현직의 새 법안·표결·판정은 최대 3일 늦게 보인다.
+      { source: "/m/:path*", headers: [{ key: "Vercel-CDN-Cache-Control", value: "max-age=259200, stale-while-revalidate=86400" }] },
       ...["/bill/:id", "/pledge/:id"].map((source) => ({ source, headers: cdnWeek })),
       { source: "/photo/:file", headers: photo },
     ];
