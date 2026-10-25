@@ -15,8 +15,6 @@ import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
 
-export const revalidate = 86400;
-
 const PAGE = 50;
 const DISTRICT_BID_PAGE = 30;
 

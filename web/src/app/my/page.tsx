@@ -9,8 +9,6 @@ import {
   type Area, type CardRecord, type CardStats, type Member,
 } from "@/lib/db";
 
-export const revalidate = 86400;
-
 const TITLE = "내 지역 대표";
 const DESC = "우리 동네 국회의원·시도지사·구청장·교육감을 한 화면에서. 선거공보에 없는 지난 임기 기록과 출석·재산 같은 공개 기록을 봅니다.";
 

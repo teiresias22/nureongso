@@ -32,18 +32,18 @@ const nextConfig: NextConfig = {
   // 수집이 하루 한 번(04:00)이라 길게 잡아도 잃는 게 적고, 1시간으로는 함수 CPU(무료 4시간의 85%)가 줄지 않았다.
   // 브라우저용 Cache-Control 은 그대로 두고, HTML·RSC 응답은 `_rsc` 검색어로 키가 갈린다.
   async headers() {
-    const cdn = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=86400, stale-while-revalidate=86400" }];
-    // 법안·공약 4.3만 쪽은 크롤러가 거의 한 번씩만 열어 하루로는 거의 안 맞는다. 7일 들고 있고,
-    // 처리 결과·판정이 바뀐 것은 최대 7일(그 사이 배포가 있으면 그때) 늦게 보인다.
-    const cdnWeek = [{ key: "Vercel-CDN-Cache-Control", value: "max-age=604800, stale-while-revalidate=86400" }];
+    const cdn = (days: number) =>
+      [{ key: "Vercel-CDN-Cache-Control", value: `max-age=${days * 86400}, stale-while-revalidate=86400` }];
     // 미리 줄인 의원 사진(collector/photos.py). 임기 중엔 안 바뀌고, 바뀌면 다음 실행이 같은 이름에 덮어쓴다.
     const photo = [{ key: "Cache-Control", value: "public, max-age=604800, stale-while-revalidate=86400" }];
     return [
-      ...["/", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn })),
+      ...["/", "/stats", "/compare", "/my"].map((source) => ({ source, headers: cdn(1) })),
       // 인물 쪽은 역대 4천여 명을 크롤러가 법안 발의자 링크로 돌아 하루로는 거의 안 맞았다(2026-10,
       // /m 이 Active CPU 1위). 3일 들고 있는다 — 현직의 새 법안·표결·판정은 최대 3일 늦게 보인다.
-      { source: "/m/:path*", headers: [{ key: "Vercel-CDN-Cache-Control", value: "max-age=259200, stale-while-revalidate=86400" }] },
-      ...["/bill/:id", "/pledge/:id"].map((source) => ({ source, headers: cdnWeek })),
+      { source: "/m/:path*", headers: cdn(3) },
+      // 법안·공약 4.3만 쪽은 크롤러가 거의 한 번씩만 열어 하루로는 거의 안 맞는다. 7일 들고 있고,
+      // 처리 결과·판정이 바뀐 것은 최대 7일(그 사이 배포가 있으면 그때) 늦게 보인다.
+      ...["/bill/:id", "/pledge/:id"].map((source) => ({ source, headers: cdn(7) })),
       { source: "/photo/:file", headers: photo },
     ];
   },

@@ -2,8 +2,6 @@ import Link from "@/lib/link";
 import { db, eok, OFFICES, partyColor, pct, type GroupRecord, type GroupStats } from "@/lib/db";
 import { pageOg } from "@/lib/site";
 
-export const revalidate = 86400;
-
 const TITLE = "정당·지역별 통계";
 const DESC = "정당과 지역에 따라 의정활동·출결·재산 같은 공개 기록이 어떻게 다른지 비교합니다.";
 

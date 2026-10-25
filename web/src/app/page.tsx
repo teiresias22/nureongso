@@ -6,8 +6,6 @@ import {
   type CardRecord, type CardStats, type Member, type OfficeTerm,
 } from "@/lib/db";
 
-export const revalidate = 86400;
-
 type SP = { q?: string; party?: string; sort?: string; elect?: string; office?: string };
 
 /** 직위마다 잴 수 있는 것이 다르다. 발의·표결은 국회에만 있고, 단체장·교육감은
