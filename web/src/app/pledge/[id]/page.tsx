@@ -64,10 +64,12 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   const pid = parseId((await params).id);
   if (pid == null) notFound();
 
-  const [base, extra, logRes] = await Promise.all([
+  const [base, extra, logRes, priorRes] = await Promise.all([
     db.from("pledge").select(PLEDGE_COLS).eq("id", pid).maybeSingle(),
     db.from("pledge_evidence").select("id, quote, quote_ok, model, prompt, linked_at, review").eq("pledge_id", pid),
     db.from("pledge_status_log").select("at, status, note, prev_status, prev_note, reason, rule").eq("pledge_id", pid).order("id"),
+    // 임기 첫해 발주 근거의 취임 전 같은 사업 공고(judge.py prior, 결정 J). 칸이 없으면 오류 → 표시만 빠진다.
+    db.from("pledge_evidence").select("id, prior_ref").eq("pledge_id", pid).eq("kind", "bid").not("prior_ref", "is", null),
   ]);
   // DB 오류를 '없는 공약' 404 로 내지 않는다(법안 페이지와 같은 처리).
   if (base.error) throw base.error;
@@ -76,10 +78,13 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   // 아래 둘은 새 칸·새 표라 아직 없을 수 있다. 없으면 비운다.
   const extraBy = new Map(((extra.error ? [] : extra.data ?? []) as EvExtra[]).map((e) => [e.id, e]));
   const log = (logRes.error ? [] : logRes.data ?? []) as (LogRow & { rule: string | null })[];
+  const priorBy = new Map(((priorRes.error ? [] : priorRes.data ?? []) as { id: number; prior_ref: string }[])
+    .map((e) => [e.id, e.prior_ref]));
+  const priorIds = (t: string) => [...priorBy.values()].filter((r) => r.startsWith(t + ":")).map((r) => r.slice(t.length + 1));
 
   const refs = (k: string) => p.pledge_evidence.filter((e) => e.kind === k).map((e) => e.ref_id);
   const none = Promise.resolve({ data: [] as never[], error: null });
-  const [bills, alts, ordins, bids, versions, doc, run] = await Promise.all([
+  const [bills, alts, ordins, bids, versions, doc, run, priorDesign, priorBid] = await Promise.all([
     refs("bill").length
       ? db.from("bill").select("bill_id, name, proposed_at, proc_dt, proc_result").in("bill_id", refs("bill"))
       : none,
@@ -102,6 +107,12 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
       ? db.from("candidacy").select("office").eq("member_code", p.member.code).eq("election_id", p.election_id)
           .limit(1).maybeSingle()
       : Promise.resolve({ data: null }),
+    priorIds("design").length
+      ? db.from("bid_design").select("id, name, budget, notice_at, url").in("id", priorIds("design"))
+      : none,
+    priorIds("bid").length
+      ? db.from("bid_notice").select("id, name, budget, notice_at, url").in("id", priorIds("bid"))
+      : none,
   ]);
   type BillRow = { bill_id: string; name: string; proposed_at: string | null; proc_dt: string | null; proc_result: string | null };
   type AltRow = { bill_id: string; alt_id: string; alt_name: string; alt_result: string | null; alt_dt: string | null };
@@ -111,6 +122,12 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   const altBy = new Map(((alts.error ? [] : alts.data ?? []) as AltRow[]).map((a) => [a.bill_id, a]));
   const ordinBy = new Map(((ordins.data ?? []) as OrdinRow[]).map((o) => [o.id, o]));
   const bidBy = new Map(((bids.data ?? []) as BidRow[]).map((b) => [b.id, b]));
+  const priorRow = new Map<string, BidRow>([
+    ...((priorDesign.error ? [] : priorDesign.data ?? []) as BidRow[]).map((b) => [`design:${b.id}`, b] as const),
+    ...((priorBid.error ? [] : priorBid.data ?? []) as BidRow[]).map((b) => [`bid:${b.id}`, b] as const),
+  ]);
+  // 임기 첫해 = 취임일부터 1년(결정 J). 판정은 바꾸지 않고 근거 줄에 사실만 단다.
+  const firstYearEnd = `${Number(HEAD_TERM_START.slice(0, 4)) + 1}${HEAD_TERM_START.slice(4)}`;
   const vers = ((versions.error ? [] : versions.data ?? []) as Version[]).filter((v) =>
     p.pledge_evidence.some((e) => e.kind === v.kind && e.ref_id === v.ref_id));
   const pdf = (doc.data as { pdf_url: string } | null)?.pdf_url;
@@ -277,6 +294,20 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
                         .filter(Boolean).join(" · ")}
                     </p>
                   )}
+                  {bd && day && day >= HEAD_TERM_START && day < firstYearEnd && (() => {
+                    const pr = priorRow.get(priorBy.get(e.id) ?? "");
+                    return pr ? (
+                      <p className="text-xs text-muted">
+                        취임 이전에 준비됨 ·{" "}
+                        {pr.url ? (
+                          <a href={pr.url} className="underline underline-offset-2" target="_blank" rel="noopener noreferrer">{pr.name}</a>
+                        ) : pr.name}
+                        {pr.notice_at ? ` ${kstDate(pr.notice_at)} 공고` : ""}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted">임기 첫해 공고(전임 임기에 준비됐을 수 있음)</p>
+                    );
+                  })()}
                   {diff.length > 0 && (
                     <p className="text-xs text-muted">
                       기록 변화 {diff.map(([k, a, c]) => `${fact(k, a)} → ${fact(k, c)}`).join(", ")} (
