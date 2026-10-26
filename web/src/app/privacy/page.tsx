@@ -38,16 +38,25 @@ export default function PrivacyPage() {
           </a>
           을 따릅니다.
         </p>
+        <p>
+          일부 방문 통계는 PostHog Inc.의 PostHog로도 처리합니다. 페이지 방문 기록과 익명 식별자가 PostHog의 서버(미국)로
+          전송됩니다. 처리 방식은{" "}
+          <a href="https://posthog.com/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+            PostHog 개인정보처리방침
+          </a>
+          을 따릅니다.
+        </p>
       </section>
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">3. 수집을 원하지 않을 때</h2>
         <p>
-          브라우저 설정에서 쿠키를 차단하거나,{" "}
+          브라우저의 추적 방지 기능이나 광고·추적 차단 부가기능을 쓰면 Google 애널리틱스와 PostHog 모두 수집되지 않습니다.
+          Google 애널리틱스만 끄려면{" "}
           <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
             Google 애널리틱스 차단 브라우저 부가기능
           </a>
-          을 쓰면 수집되지 않습니다. 서비스 이용에는 영향이 없습니다.
+          을 쓸 수 있습니다. 어느 쪽도 서비스 이용에는 영향이 없습니다.
         </p>
       </section>
 
@@ -62,7 +71,7 @@ export default function PrivacyPage() {
         </p>
       </section>
 
-      <p className="text-sm text-muted">시행일: 2026년 10월 22일</p>
+      <p className="text-sm text-muted">시행일: 2026년 10월 27일</p>
     </article>
   );
 }
