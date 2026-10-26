@@ -364,7 +364,8 @@ def write_human_check(rows: list[dict], held: set[int], folder: str) -> str | No
     return path
 
 
-def run_apply(conn, rows: list[dict], yes: bool, folder: str) -> None:
+def run_apply(conn, rows: list[dict], yes: bool, folder: str, allow: frozenset[int] = frozenset()) -> None:
+    """allow: 소유자가 사람 확인 대신 두 모델 답으로 처리하라고 한 공약. 미착수가 돼도 보류하지 않는다."""
     judge.wait_ingest(conn, "검수를 반영하지")
     judge.run_snapshot(conn)  # 원천 변화부터 따로 커밋한다(정기 단계와 같은 쓰기)
     with conn.cursor() as cur:
@@ -409,7 +410,7 @@ def run_apply(conn, rows: list[dict], yes: bool, folder: str) -> None:
             cur.execute("select s.pledge_id from before_apply b join pledge_status s using (pledge_id)"
                         " where s.status = '미착수' and b.status <> '미착수'")
             llm_pids = {k[0] for k in plan[True][0]} | {a[0] for a in plan[True][1]}
-            bad = {p for (p,) in cur.fetchall()} & llm_pids - held
+            bad = {p for (p,) in cur.fetchall()} & llm_pids - held - allow
             if not bad:
                 break
             print(f"[apply] LLM 표시로 미착수가 되는 공약 {sorted(bad)} — 사람 확인으로 돌리고 다시 단다", file=sys.stderr)
@@ -443,6 +444,7 @@ def main():
     ap.add_argument("--yes", action="store_true", help="apply: 미리보기 대신 반영한다")
     # 라벨 CSV 는 위 브랜치에 있고 apply 는 적용된 판의 코드로 돌아야 해서 경로를 따로 받는다.
     ap.add_argument("--dir", default=REVIEW_DIR, help="apply: 라벨 CSV 폴더")
+    ap.add_argument("--allow", default="", help="apply: 미착수가 돼도 두 모델 답으로 반영할 공약 id(쉼표). 소유자 결정 때만")
     a = ap.parse_args()
 
     if a.what == "score":  # DB 없이 CSV 만 읽는다
@@ -462,7 +464,7 @@ def main():
         rows = [r for f in sorted(os.listdir(a.dir)) if f.endswith(".csv")
                 for r in read_gold(os.path.join(a.dir, f))]
         with psycopg.connect(dsn) as c:
-            run_apply(c, rows, a.yes, a.dir)
+            run_apply(c, rows, a.yes, a.dir, frozenset(int(x) for x in a.allow.split(",") if x.strip()))
         return
     with psycopg.connect(dsn) as c, c.cursor() as cur:
         if a.what == "gold":
