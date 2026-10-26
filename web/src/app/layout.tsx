@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Script from "next/script";
+import { PostHogInit } from "./posthog-init";
 import { kstYear, ldJson, REPO, REPORT_URL, SITE } from "@/lib/site";
 import "./globals.css";
 
@@ -251,6 +252,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
         </footer>
+        <PostHogInit />
         {GA_ID && (
           <>
             <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} strategy="afterInteractive" />
