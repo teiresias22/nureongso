@@ -9,5 +9,11 @@ __pycache__/
 
 # 에이전트 설정·내부 문서는 공개하지 않는다(로컬에만 둔다, 2026-10-23)
 /.claude/
-/docs/
+/docs/*
+# 정답 표본은 판정 정밀도의 근거라 공개한다(판정 계획 결정 N). 라벨 CSV 와 채점 보고서만 — 작업 목록·초안은 로컬에.
+!/docs/review/
+/docs/review/*
+!/docs/review/gold-v1-*.csv
+!/docs/review/gold-v1-score.md
 /CLAUDE.md
+/docs/review/*.human7.csv
