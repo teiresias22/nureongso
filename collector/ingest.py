@@ -45,6 +45,7 @@ SERVICES = {
     "plenary": "ncocpgfiaoituanbr",  # 본회의 처리 의안 (표결 집계)
     "votes": "nojepdqqaweusdfbi",  # 국회의원 본회의 표결
     "summary": "BPMBILLSUMMARY",  # 법률안 제안이유 및 주요내용 (BILL_NO 필수)
+    "detail": "BILLINFODETAIL",  # 의안 상세정보 — 정부 이송일·공포일 (OOWY4R001216HX11461, BILL_ID 필수)
     # 목록(OPENSRVAPI)의 SRV_URL 은 설명 화면 주소다. 호출 이름은 명세서 xls 에만 있다.
     "sidejob": "nahfbzwvatmaxscwq",  # 국회의원 겸직 결정 내역 (OHAC6C000892WC13765)
     "trips": "nasnutdbapnfphwyr",  # 국회의원 직무상 국외활동 신고 내역 (O87UNV000897E818234)
@@ -537,6 +538,48 @@ def ingest_summaries(cur, age: int, limit: int | None = None) -> int:
     return got
 
 
+def ingest_promulgation(cur, age: int, limit: int | None = None) -> int:
+    """가결 법안의 정부 이송일·공포일. 의안 1건당 1회 호출이라 공포일이 아직 없는 가결 법안만 본다.
+
+    가결은 국회 의결이고 법이 되는 것은 공포다. 대통령이 재의를 요구하면 이송일만 있고 공포일은
+    끝내 비어 있다(실측: 채상병·김건희 특검법, 지역사랑상품권법·상법 대안). 판정은 공포일이 있어야
+    완료로 센다(judge.py law_passed). 이송 뒤 60일이 지나도 공포일이 없으면 재의로 끝난 것으로 보고
+    더 묻지 않는다 — 공포 기한은 15일이고, 재의결돼 확정된 법률도 그 안에 공포된다.
+
+    ponytail: 'N개 법률의 일부개정에 관한 법률안' 같은 일괄개정은 이송일만 있고 공포 칸이 늘 비어 있다
+    (2026-10 실측 2건 — 재의된 것이 아니라 API 가 개별 법률로 나눠 공포한 것을 잇지 못한다). 판정에서는
+    미공포로 읽힌다. 지금 근거로 쓰이는 것은 0건이다. 걸리면 국가법령정보(LAW_OC) 공포일로 메운다.
+    """
+    cur.execute(
+        "select bill_id from bill"
+        " where age = %s and proc_result like '%%가결%%' and prom_dt is null"
+        "   and (gvrn_trsf_dt is null or gvrn_trsf_dt > current_date - 60)"
+        " order by proc_dt desc nulls last", (age,))
+    todo = [r[0] for r in cur.fetchall()]
+    if limit is not None:
+        todo = todo[:limit]
+    print(f"  공포일 없는 가결 의안 {len(todo)}건", file=sys.stderr)
+
+    got = 0
+    for i, bid in enumerate(todo, 1):
+        try:
+            rows = fetch("detail", BILL_ID=bid)
+        except Exception as e:
+            print(f"  [{i}/{len(todo)}] {bid} 실패: {str(e)[:70]}", file=sys.stderr)
+            continue
+        r = rows[0] if rows else {}
+        trsf, prom = d(r.get("GVRN_TRSF_DT")), d(r.get("PROM_DT"))
+        if trsf or prom:
+            cur.execute("update bill set gvrn_trsf_dt = %s, prom_dt = %s where bill_id = %s"
+                        " and (gvrn_trsf_dt, prom_dt) is distinct from (%s::date, %s::date)",
+                        (trsf, prom, bid, trsf, prom))
+            got += cur.rowcount
+        if i % 50 == 0 or i == len(todo):
+            cur.connection.commit()  # 첫 실행은 1,700여 건이라 부분 결과를 남긴다
+            print(f"  [{i}/{len(todo)}] 바뀜 {got}건", file=sys.stderr)
+    return got
+
+
 # --------------------------------------------------------------------------- 이름으로 잇기
 
 HANJA = re.compile(r"^[一-鿿]+$")
@@ -1023,6 +1066,8 @@ STEPS = {
     "members": lambda cur, age: ingest_members(cur),
     "staff": lambda cur, age: ingest_staff(cur),
     "bills": lambda cur, age: ingest_bills(cur, age),
+    # 가결 법안의 공포일. 판정의 '완료' 가 이것을 본다(judge.py). bills 뒤에 둔다.
+    "promulgation": lambda cur, age: ingest_promulgation(cur, age),
     "plenary": lambda cur, age: ingest_plenary(cur, age),
     "votes": lambda cur, age: ingest_votes(cur, age),
     # 의안 1건당 1회 호출이라 첫 실행이 오래 걸린다. 중간중간 커밋해서

@@ -189,17 +189,31 @@ MATCH_PROMPT = """어떤 국회의원의 '입법형 공약' 목록과, 그 의�
 # --------------------------------------------------------------------------- classify
 
 
-def run_classify(conn, limit: int | None, redo: bool) -> None:
-    """의원 1명당 1회 호출. 그 사람 공약 전부를 한 번에 분류한다."""
+# 분류에 넘기는 본문 길이. 공약서(단체장·교육감 대표공약)는 본문이 길고 조례·제도 얘기가 뒤쪽에
+# 나온다 — 200자에서 잘라 조례제도 유형을 놓쳤다(판정 계획 T4.4). 선거공보는 짧아 그대로 둔다.
+CLASSIFY_BODY = {"공약서": 800}
+
+
+def run_classify(conn, limit: int | None, redo: bool, source: str | None = None, current: bool = False) -> None:
+    """의원 1명당 1회 호출. 그 사람 공약 전부를 한 번에 분류한다.
+    source·current 는 다시 분류할 범위를 좁힌다(공약 출처, 지금 직위 사람의 지금 임기 공약만)."""
+    scope = ""
+    params: list = []
+    if source:
+        scope += " and coalesce(p.source, '선거공보') = %s"
+        params.append(source)
+    if current:
+        scope += " and p.member_code in (select code from member where is_incumbent)" + cur_term("p")
     with conn.cursor() as cur:
         # 현직부터 돈다. 한도에 걸려 중간에 멈춰도 화면에 실제로 보이는 사람이 먼저 채워진다.
         # 지난 임기 공약도 그 사람이 현직이면 member_code 가 현직이라 같이 처리된다.
         cur.execute(
             "select p.member_code, count(*) from pledge p"
             " left join member m on m.code = p.member_code"
-            + ("" if redo else " where p.kinds is null")
+            " where true" + ("" if redo else " and p.kinds is null") + scope
             + " group by p.member_code, m.is_incumbent"
-            " order by m.is_incumbent desc nulls last, p.member_code"
+            " order by m.is_incumbent desc nulls last, p.member_code",
+            params,
         )
         targets = cur.fetchall()
     if limit is not None:
@@ -210,14 +224,14 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
     for i, (mcode, n) in enumerate(targets, 1):
         with conn.cursor() as cur:
             cur.execute(
-                "select id, title, coalesce(body,'') from pledge where member_code = %s"
-                + ("" if redo else " and kinds is null"),
-                (mcode,),
+                "select id, title, coalesce(body,''), coalesce(source, '선거공보'), kinds from pledge p"
+                " where member_code = %s" + ("" if redo else " and kinds is null") + scope,
+                [mcode, *params],
             )
             rows = cur.fetchall()
         if not rows:
             continue
-        listing = "\n".join(f'{pid}. {t} / {b[:200]}' for pid, t, b in rows)
+        listing = "\n".join(f'{pid}. {t} / {b[:CLASSIFY_BODY.get(src, 200)]}' for pid, t, b, src, _ in rows)
 
         try:
             out = llm.complete_json(
@@ -232,10 +246,10 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             print(f"  [{i}/{len(targets)}] {mcode} 실패: {str(e)[:120]}", file=sys.stderr)
             continue
 
-        valid = {pid for pid, _, _ in rows}
+        old = {pid: set(k or []) for pid, _, _, _, k in rows}
         pairs = []
         for it in out.get("items", []):
-            if it.get("id") not in valid:
+            if it.get("id") not in old:
                 continue
             ks = set(k for k in (it.get("kinds") or []) if k in KINDS)
             # '선언' 은 '확인할 수단이 없다' 는 뜻이라 다른 유형과 같이 설 수 없다.
@@ -254,11 +268,13 @@ def run_classify(conn, limit: int | None, redo: bool) -> None:
             # 5,262건이 이 상태였다 (입법 1,090 · 조례 846 · 예산사업 3,326).
             #
             # 유형이 바뀌었으면 다시 봐야 한다. 여기서 지우면 다음 match 실행이
-            # 이 사람만 정확히 집는다.
-            cur.execute(
-                "delete from ingest_run where source in"
-                " ('match:' || %s, 'ordin:' || %s, 'bid:' || %s)",
-                (mcode, mcode, mcode))
+            # 이 사람만 정확히 집는다. 바뀐 게 없으면 지우지 않는다 — 다시 분류만 해도
+            # 그 사람 대조를 처음부터 다시 돌려 LLM 한도를 썼다(판정 계획 T4.4).
+            if any(set(k) != old[i] for k, i in pairs):
+                cur.execute(
+                    "delete from ingest_run where source in"
+                    " ('match:' || %s, 'ordin:' || %s, 'bid:' || %s)",
+                    (mcode, mcode, mcode))
         conn.commit()
         done += 1
         tagged += len(pairs)
@@ -335,8 +351,9 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
               select p.member_code, count(*) as n
               from pledge p
               where '입법' = any(p.kinds)
-                and exists (select 1 from bill_sponsor s
-                             where s.member_code = p.member_code and s.role = 'rep')
+                -- 대표발의가 0건인 의원도 넣는다(국회의장은 관례상 발의하지 않는다). 빼면 대조 기록이
+                -- 안 남아 공약이 영영 '아직 대조하지 않음' 으로 남는다. 그런 사람은 아래에서 호출 없이 0건으로 적는다.
+                and exists (select 1 from member m where m.code = p.member_code and m.office = '국회의원' and m.is_incumbent)
               group by p.member_code
             ), r as (
               select substr(source, 7) as code, max(finished_at) as since
@@ -372,7 +389,14 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
                 " order by b.proposed_at desc",
                 (mcode, since, since))
             bills = cur.fetchall()
-        if not pledges or not bills:
+        if not pledges:
+            continue
+        if not bills:
+            if since is None:   # 대표발의가 아예 없다 — 대조할 것이 없다는 것도 대조 결과다
+                with conn.cursor() as cur:
+                    log_run(cur, f"match:{mcode}", 0)
+                conn.commit()
+                done += 1
             continue
 
         try:
@@ -1260,11 +1284,16 @@ ev as (
          max(e.score) as conf,
          -- 사람이 '일부만 이행·미공포' 로 표시한 근거는 진행까지다(review_partial).
          -- psycopg 는 주석까지 훑어 퍼센트 기호를 파라미터로 본다. 리터럴은 두 번 써야 한다.
-         bool_or(e.kind = 'bill' and not e.held and b.proc_result like '%%가결%%') as law_passed,
+         -- 가결은 국회 의결이고, 법이 되는 것은 공포다. 재의 요구로 공포되지 못한 가결 법안을 완료로 세지 않는다
+         -- (판정 계획 T5.3·결정 B. 2026-10 확인으로 완료 근거 1건이 재의된 상법 대안이었다).
+         bool_or(e.kind = 'bill' and not e.held and b.proc_result like '%%가결%%' and b.prom_dt is not null) as law_passed,
          -- 대안반영폐기: 위원회가 내용을 위원장 대안에 담고 원안은 폐기한 것이다.
          -- 국회에서 법안이 법이 되는 가장 흔한 길이라, 이걸 빼면 크게 모자라게 센다
          -- (실측: 대안반영폐기 4,101건 대 가결 699건).
-         bool_or(not e.held and alt.proc_result like '%%가결%%') as law_merged,
+         bool_or(not e.held and alt.proc_result like '%%가결%%' and alt.prom_dt is not null) as law_merged,
+         -- 가결됐는데 공포일이 없다: 공포 기한(이송 뒤 15일) 안이거나 재의 요구됐다. 진행까지다.
+         bool_or(not e.held and ((b.proc_result like '%%가결%%' and b.prom_dt is null)
+                                 or (alt.proc_result like '%%가결%%' and alt.prom_dt is null))) as law_unprom,
          bool_or(e.kind = 'bill' and b.proc_result = '대안반영폐기') as law_alt,
          -- 철회한 법안은 착수 기록이 아니다(본인이 거둬들였다). 따로 세어 사유로만 적는다(판정 계획 P8, 결정 W).
          -- 부결은 표결까지 간 착수 기록이라 폐기와 같이 센다.
@@ -1311,6 +1340,7 @@ base as (
          coalesce(ev.law_passed, false) as law_passed,
          coalesce(ev.law_merged, false) as law_merged,
          coalesce(ev.law_alt, false)    as law_alt,
+         coalesce(ev.law_unprom, false) as law_unprom,
          coalesce(ev.law_n, 0)   as law_n,
          coalesce(ev.ordin_n, 0) as ordin_n,
          coalesce(ev.bid_n, 0)   as bid_n,
@@ -1392,6 +1422,7 @@ judged as (
       when law_merged                     then 'law_merged'
       -- 대안에 반영은 됐는데 그 대안을 찾지 못했다(이름이 다른 대안). 통과했을 가능성이
       -- 높지만(실측 99.9%%) 확인한 게 아니라 그렇게 적는다.
+      when law_unprom                     then 'law_unpromulgated'
       when law_alt                        then 'law_alt_unverified'
       when held_n > 0                     then 'review_partial'
       when law_n > 0                      then 'law_filed'
@@ -1660,6 +1691,8 @@ def main():
     p.add_argument("--n", type=int, default=5, help="repro: 표본 사람 수")
     p.add_argument("--redo", action="store_true")
     p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다")
+    p.add_argument("--source", help="classify: 이 출처(공약서·선거공보) 공약만")
+    p.add_argument("--current", action="store_true", help="classify: 현직의 지금 임기 공약만")
     a = p.parse_args()
 
     dsn = os.environ.get("DATABASE_URL")
@@ -1667,7 +1700,7 @@ def main():
         sys.exit("DATABASE_URL 이 없습니다.")
     with psycopg.connect(dsn) as conn:
         if a.step in ("classify", "all"):
-            run_classify(conn, a.limit, a.redo)
+            run_classify(conn, a.limit, a.redo, a.source, a.current)
         if a.step in ("match", "all"):
             run_match(conn, a.limit, a.redo)
         if a.step in ("match_ordin", "all"):

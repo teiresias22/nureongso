@@ -23,6 +23,7 @@ MP, HEAD = "국회의원", "구시군의장"
 # (번호, 설명, 직위, 당선 선거들[(선거일, 당선[, 그 선거의 직위])], 공약 선거일, 유형, 대조 기록, 근거들, 기대 (상태, note))
 # 근거: ("bill", 발의일, 처리결과, 대안 처리결과|None[, review]) · ("ordin", 공포일) · ("bid", 공고일)
 # 대안 처리결과: "-" 면 대안반영폐기인데 대안을 못 이은 것.
+# 가결은 공포일을 처리일로 넣는다. 끝에 "·미공포" 를 붙이면 공포일을 비운다(재의·공포 대기).
 CASES = [
     (1, "2024 국회의원·입법·본인 법안 가결", MP, [("20240410", True)], "20240410", ["입법"], ["match"],
      [("bill", "2024-07-01", "원안가결", None)], ("완료", "law_passed")),
@@ -71,6 +72,10 @@ CASES = [
     (24, "지금 단체장인 사람의 2020 국회의원 선거 조례제도 공약(당선)", HEAD,
      [("20200415", True, MP), ("20260603", True)], "20200415", ["조례제도"], [], [],
      ("판단불가", "no_measure:조례제도")),        # T1.3: 그 선거의 직위(국회의원)로는 조례를 못 잰다
+    (25, "본인 법안 가결, 공포 안 됨(재의)", MP, [("20240410", True)], "20240410", ["입법"], ["match"],
+     [("bill", "2024-07-01", "원안가결·미공포", None)], ("진행", "law_unpromulgated")),   # 결정 B
+    (26, "대안반영폐기, 대안 가결이나 공포 안 됨", MP, [("20240410", True)], "20240410", ["입법"], ["match"],
+     [("bill", "2024-07-01", "대안반영폐기", "원안가결·미공포")], ("진행", "law_unpromulgated")),   # 결정 B
 ]
 # 근거 끝에 review 값을 붙일 수 있다(16·19). pledge_evidence.review 칸이 없는 DB(결정 F 전)면 그 경우는 건너뛴다.
 
@@ -106,13 +111,20 @@ def load(cur) -> dict[int, int]:
             ref = f"ZZDC{no:02d}-{k}"
             if ev[0] == "bill":
                 _, at, result, alt = ev[:4]
+
+                def prom(res):   # (처리결과, 공포일)
+                    if res and res.endswith("·미공포"):
+                        return res.removesuffix("·미공포"), None
+                    return res, (at if res and "가결" in res else None)
                 alt_id = None
                 if alt and alt != "-":
                     alt_id = ref + "-alt"
-                    cur.execute("insert into bill (bill_id, age, name, proc_result, proposed_at)"
-                                " values (%s, 22, '점검 대안', %s, %s)", (alt_id, alt, at))
-                cur.execute("insert into bill (bill_id, age, name, proc_result, proposed_at, alt_bill_id)"
-                            " values (%s, 22, '점검 법안', %s, %s, %s)", (ref, result, at, alt_id))
+                    res, pd = prom(alt)
+                    cur.execute("insert into bill (bill_id, age, name, proc_result, proposed_at, prom_dt)"
+                                " values (%s, 22, '점검 대안', %s, %s, %s)", (alt_id, res, at, pd))
+                res, pd = prom(result)
+                cur.execute("insert into bill (bill_id, age, name, proc_result, proposed_at, alt_bill_id, prom_dt)"
+                            " values (%s, 22, '점검 법안', %s, %s, %s, %s)", (ref, res, at, alt_id, pd))
             elif ev[0] == "ordin":
                 cur.execute("insert into ordinance (id, name, announced_at) values (%s, '점검 조례', %s)", (ref, ev[1]))
             else:

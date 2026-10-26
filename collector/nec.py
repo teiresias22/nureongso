@@ -460,7 +460,13 @@ def register_members(cur, sg_id: str, code: str, current: bool = True) -> None:
             "   party        = coalesce(member.party, excluded.party),"
             "   district     = coalesce(member.district, excluded.district),"
             "   elect_type   = coalesce(member.elect_type, excluded.elect_type),"
-            "   is_incumbent = member.is_incumbent or excluded.is_incumbent",
+            "   is_incumbent = member.is_incumbent or excluded.is_incumbent"
+            # 채울 빈 칸이 없으면 쓰지 않는다 (ingest.upsert 와 같은 이유: Disk IO).
+            " where (member.party, member.district, member.elect_type, member.is_incumbent)"
+            "   is distinct from (coalesce(member.party, excluded.party),"
+            "   coalesce(member.district, excluded.district),"
+            "   coalesce(member.elect_type, excluded.elect_type),"
+            "   member.is_incumbent or excluded.is_incumbent)",
             (mcode, name, birth, party, district, office, elect_type,
              current and bool(elected)),
         )

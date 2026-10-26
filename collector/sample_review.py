@@ -186,6 +186,11 @@ def score_gold(rows: list[dict]) -> list[str]:
         if layer == "bid":
             seen = [g for g in by.values() if g[0]["prior"] in ("예", "아니오")]
             out.append(fmt("이전 단계 공고 있음(prior, 결정 J 기준 1)", sum(g[0]["prior"] == "예" for g in seen), len(seen)))
+            sc = [g for g in by.values() if g[0]["scope"] in ("전부", "일부")]
+            out.append(fmt("공고가 공약 전부를 다룸(scope)", sum(g[0]["scope"] == "전부" for g in sc), len(sc)))
+        who = sorted({r["reviewer"] for r in rs if r["reviewed_at"]})
+        if who:
+            out.append("  라벨: " + ", ".join(who))
     return out
 
 
