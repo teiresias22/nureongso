@@ -83,6 +83,8 @@ LAYERS = {
               where e.pledge_id = p.id and e.kind = 'bid' and n.notice_at >= %(head_start)s::date)""",
     # R1·R2 뒤에도 미착수로 남는 몫: 22대 총선 입법 단독 공약
     "none": "s.note = 'none_2y' and p.kinds = array['입법'] and p.election_id = '20240410'",
+    # 대표발의 법안이 붙은 진행(계류·폐기). T4.2 법안 대조 입력을 바꾸기 전·후 법안 근거 정밀도 기준선
+    "filed": "s.note = 'law_filed'",
 }
 
 GOLD_SQL = """
