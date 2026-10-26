@@ -51,11 +51,12 @@ export default function PrivacyPage() {
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">3. 수집을 원하지 않을 때</h2>
         <p>
-          브라우저 설정에서 쿠키를 차단하거나,{" "}
+          브라우저의 추적 방지 기능이나 광고·추적 차단 부가기능을 쓰면 Google 애널리틱스와 PostHog 모두 수집되지 않습니다.
+          Google 애널리틱스만 끄려면{" "}
           <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
             Google 애널리틱스 차단 브라우저 부가기능
           </a>
-          을 쓰면 수집되지 않습니다. 서비스 이용에는 영향이 없습니다.
+          을 쓸 수 있습니다. 어느 쪽도 서비스 이용에는 영향이 없습니다.
         </p>
       </section>
 
