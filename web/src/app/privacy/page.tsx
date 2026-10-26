@@ -38,6 +38,14 @@ export default function PrivacyPage() {
           </a>
           을 따릅니다.
         </p>
+        <p>
+          일부 방문 통계는 PostHog Inc.의 PostHog로도 처리합니다. 페이지 방문 기록과 익명 식별자가 PostHog의 서버(미국)로
+          전송됩니다. 처리 방식은{" "}
+          <a href="https://posthog.com/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+            PostHog 개인정보처리방침
+          </a>
+          을 따릅니다.
+        </p>
       </section>
 
       <section className="space-y-2">
@@ -62,7 +70,7 @@ export default function PrivacyPage() {
         </p>
       </section>
 
-      <p className="text-sm text-muted">시행일: 2026년 10월 22일</p>
+      <p className="text-sm text-muted">시행일: 2026년 10월 27일</p>
     </article>
   );
 }
