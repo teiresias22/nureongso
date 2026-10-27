@@ -176,7 +176,8 @@ MATCH_PROMPT = """어떤 국회의원의 '입법형 공약' 목록과, 그 의�
   (예: 공약 '노인 간병비 지원' ↔ 법안 '노인복지법 개정' 은 내용이 맞아야만 연결)
 - 한 공약에 법안이 여럿이면 여럿 다 쓴다. 맞는 법안이 없으면 그 공약은 빼라.
   **없는 것을 억지로 붙이는 쪽이 빠뜨리는 쪽보다 훨씬 해롭다.**
-- confidence 는 0~1. 법안 이름만으로 판단하므로 확신이 없으면 낮게 준다.
+- confidence 는 0~1. 법안 이름과 제안이유 앞부분으로 판단한다. 이름이 포괄적인 개정안(소득세법 일부개정 등)은
+  제안이유를 보고 공약과 같은 일을 하는지 가린다. 확신이 없으면 낮게 준다.
 - why 는 왜 연결했는지 한 줄 (40자 이내).
 
 공약:
@@ -314,16 +315,44 @@ def save_evidence(cur, rows, prompt: str) -> None:
         [(*r, model, prompt) for r in rows])
 
 
+# 법안 대조 입력(판정 계획 T4.2). 이름만 보면 '소득세법 일부개정' 같은 포괄 개정안을 놓쳤다(gold-v1 미착수 층 놓침 6/30).
+# 이 값들은 PROMPT_VERSION['match'] 에 들어가 근거 행의 prompt 칸이 옛 입력과 새 입력을 가른다.
+MATCH_BODY = 400       # 공약 본문 글자 수(예전 150)
+MATCH_SUMMARY = 300    # 법안 줄에 붙이는 제안이유 앞부분
+MATCH_TOP = 20         # 공약마다 글자가 겹치는 상위 몇 건을 후보로 모으나(합집합). gold-v1 놓친 14건이 다 든다
+
+MATCH_BILLS_SQL = r"""
+with sc as (
+  select p.id as pid, b.bill_id, b.name, coalesce(b.proc_result, '계류') as res, b.proposed_at,
+         regexp_replace(left(coalesce(b.summary, ''), %(sumlen)s), '\s+', ' ', 'g') as sm,
+         similarity(p.title || ' ' || coalesce(p.body, ''), b.name || ' ' || left(coalesce(b.summary, ''), 600)) as s
+  from bill_sponsor sp join bill b on b.bill_id = sp.bill_id
+  join pledge p on p.member_code = sp.member_code and '입법' = any(p.kinds) {term}
+  where sp.member_code = %(code)s and sp.role = 'rep'
+    and (%(since)s::timestamptz is null or b.created_at > %(since)s::timestamptz)
+), rk as (select *, row_number() over (partition by pid order by s desc, bill_id) as r from sc)
+select bill_id, name, res, sm from rk where r <= %(top)s
+group by bill_id, name, res, sm, proposed_at order by proposed_at desc
+"""
+
+
+def match_bills(cur, mcode: str, since=None) -> list[tuple[str, str, str, str]]:
+    """그 사람의 대표발의 후보 (bill_id, 이름, 처리결과, 제안이유 앞부분). 지금 임기 입법 공약마다 겹치는 상위
+    MATCH_TOP 건의 합집합 — 대표발의가 수백 건인 사람도 후보가 백여 건 안쪽(중앙 45)이다."""
+    cur.execute(MATCH_BILLS_SQL.format(term=cur_term("p")), {"code": mcode, "since": since, "sumlen": MATCH_SUMMARY, "top": MATCH_TOP})
+    return [r[:4] for r in cur.fetchall()]
+
+
 def match_once(pledges, bills) -> set[tuple[int, str, float, str]]:
     """입법형 공약 ↔ 대표발의 법안 LLM 한 번. 목록에 없는 id·제 말과 어긋나는 연결은 버린다.
     run_match 와 run_repro 가 같이 쓴다. LLMError 는 그대로 올린다."""
     out = llm.complete_json(
         MATCH_PROMPT.format(
-            pledges="\n".join(f"{p}. {t} / {b[:150]}" for p, t, b in pledges),
-            bills="\n".join(f"{bid} | {nm} | {res}" for bid, nm, res in bills),
+            pledges="\n".join(f"{p}. {t} / {b[:MATCH_BODY]}" for p, t, b in pledges),
+            bills="\n".join(f"{bid} | {nm} | {res}" + (f" | {sm}" if sm else "") for bid, nm, res, sm in bills),
         ), MATCH_SCHEMA)
     pids = {p for p, _, _ in pledges}
-    bids = {b for b, _, _ in bills}
+    bids = {b[0] for b in bills}
     return {
         (m["pledge_id"], m["bill_id"], float(m.get("confidence") or 0), (m.get("why") or "")[:300])
         for m in out.get("matches", [])
@@ -334,13 +363,14 @@ def match_once(pledges, bills) -> set[tuple[int, str, float, str]]:
     }
 
 
-def run_match(conn, limit: int | None, redo: bool) -> None:
+def run_match(conn, limit: int | None, redo: bool, resume: str | None = None) -> None:
     """입법형 공약 ↔ 본인 대표발의 법안. 공동발의는 서명일 뿐이라 근거로 쓰지 않는다.
 
     대상: 아직 안 돈 사람 + **마지막 대조 뒤 새 대표발의가 들어온 사람**(bill.created_at).
     예전에는 한 번 대조한 사람을 다시 보지 않아 임기 중 새로 낸 법안이 공약에 영영 안 붙었다.
     다시 볼 때는 그 새 법안만 후보로 넘긴다 — 기존 연결은 그대로 두고, 새 기록이 없는 주에는 호출 0건.
     ponytail: 대조와 같은 순간에 커밋 중이던 법안은 since 보다 앞선 시각으로 들어와 빠질 수 있다.
+    resume(redo 와 함께): 그 시각 뒤에 이미 대조한 사람은 건너뛴다 — 하루 한도 때문에 redo 를 이틀에 나눌 때(T4.2).
     """
     with conn.cursor() as cur:
         # '매칭 0건' 과 '아직 안 돌림' 을 구별해야 해서 근거 유무가 아니라 실행 기록(ingest_run)으로 본다.
@@ -361,13 +391,14 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
             )
             select t.member_code, t.n, case when %(redo)s then null else r.since end
             from t left join r on r.code = t.member_code
-            where %(redo)s or r.since is null
+            where (%(redo)s and (%(resume)s::timestamptz is null or r.since is null or r.since < %(resume)s::timestamptz))
+               or r.since is null
                or exists (select 1 from bill_sponsor s join bill b on b.bill_id = s.bill_id
                            where s.member_code = t.member_code and s.role = 'rep'
                              and b.created_at > r.since)
             -- 안 돈 사람이 먼저다. 한도에 걸려 멈춰도 '한 번도 안 본 사람' 이 남지 않게.
             order by r.since is not null, t.n desc
-            """, {"redo": redo})
+            """, {"redo": redo, "resume": resume})
         targets = cur.fetchall()
     if limit is not None:
         targets = targets[:limit]
@@ -381,14 +412,7 @@ def run_match(conn, limit: int | None, redo: bool) -> None:
                 "select id, title, coalesce(body,'') from pledge"
                 " where member_code = %s and '입법' = any(kinds)" + cur_term("pledge") + " order by id", (mcode,))
             pledges = cur.fetchall()
-            cur.execute(
-                "select b.bill_id, b.name, coalesce(b.proc_result,'계류') from bill_sponsor s"
-                " join bill b on b.bill_id = s.bill_id"
-                " where s.member_code = %s and s.role = 'rep'"
-                "   and (%s::timestamptz is null or b.created_at > %s::timestamptz)"
-                " order by b.proposed_at desc",
-                (mcode, since, since))
-            bills = cur.fetchall()
+            bills = match_bills(cur, mcode, since)
         if not pledges:
             continue
         if not bills:
@@ -922,7 +946,7 @@ QUOTE_SCHEMA = {
 
 # 근거 행의 prompt 칸. 프롬프트·스키마 글자에서 만든다(version) — 고치면 저절로 바뀐다.
 PROMPT_VERSION = {
-    "match": version("match", MATCH_PROMPT, MATCH_SCHEMA),
+    "match": version("match", MATCH_PROMPT, MATCH_SCHEMA, MATCH_BODY, MATCH_SUMMARY, MATCH_TOP),
     "ordin": version("ordin", ORDIN_PROMPT, ORDIN_SCHEMA),
     "bid": version("bid", BID_PROMPT, BID_SCHEMA),
     "quote": version("quote", QUOTE_PROMPT, QUOTE_SCHEMA),
@@ -1099,9 +1123,7 @@ def run_repro(conn, n: int) -> tuple[int, int]:
             cur.execute("select id, title, coalesce(body,'') from pledge"
                         " where member_code = %s and '입법' = any(kinds) order by id", (code,))
             pledges = cur.fetchall()
-            cur.execute("select bill_id, name, coalesce(proc_result,'계류') from member_bill"
-                        " where member_code = %s and role = 'rep' order by proposed_at desc", (code,))
-            bills = cur.fetchall()
+            bills = match_bills(cur, code)
         try:
             a = {(p, b) for p, b, _, _ in match_once(pledges, bills)}
             b2 = {(p, b) for p, b, _, _ in match_once(pledges, bills)}
@@ -1750,7 +1772,8 @@ def main():
     p.add_argument("--rule", action="store_true", help="decide: 규칙 판 적용(이 실행의 변화는 이력에 'rule')")
     p.add_argument("--n", type=int, default=5, help="repro: 표본 사람 수")
     p.add_argument("--redo", action="store_true")
-    p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다")
+    p.add_argument("--since", help="match_race: 이 시각(예 2026-10-01T15:00Z) 전에 돈 선거구는 다시 돈다."
+                                    " match --redo: 이 시각 뒤에 이미 대조한 사람은 건너뛴다(이어받기)")
     p.add_argument("--source", help="classify: 이 출처(공약서·선거공보) 공약만")
     p.add_argument("--current", action="store_true", help="classify: 현직의 지금 임기 공약만")
     a = p.parse_args()
@@ -1762,7 +1785,7 @@ def main():
         if a.step in ("classify", "all"):
             run_classify(conn, a.limit, a.redo, a.source, a.current)
         if a.step in ("match", "all"):
-            run_match(conn, a.limit, a.redo)
+            run_match(conn, a.limit, a.redo, a.since)
         if a.step in ("match_ordin", "all"):
             run_match_ordin(conn, a.limit, a.redo)
         if a.step in ("match_bid", "all"):
