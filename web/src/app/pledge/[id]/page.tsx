@@ -57,7 +57,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   // 상세가 없는 공약은 검색에서 뺀다(링크도 의원 페이지에서 안 단다). 화면은 그대로.
   const detail = pledgeHasDetail({
     status: st?.status, note: st?.note, evidenceCount: p.pledge_evidence?.length ?? 0,
-    changed: ((logRes.error ? [] : logRes.data ?? []) as { prev_status: string | null }[]).some((r) => r.prev_status),
+    // 이력을 못 읽으면 바뀐 것으로 친다 — 한 번의 오류로 7일(CDN) 동안 검색에서 빠지지 않게.
+    changed: logRes.error ? true : ((logRes.data ?? []) as { prev_status: string | null }[]).some((r) => r.prev_status),
   });
   // 설명에는 실제 값만 — 판정과 그 근거 문장.
   const description = [
