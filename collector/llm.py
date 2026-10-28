@@ -7,8 +7,10 @@
     LLM_PROVIDER=ollama           OLLAMA_MODEL     — 로컬, 한도·비용 없음, 느림
     LLM_PROVIDER=anthropic        ANTHROPIC_API_KEY — 유료 전용
 
-gemini 를 쓰다가 키를 다 돌려도 일일 한도가 차면, ANTHROPIC_API_KEY 가 있을 때 그 실행의
-나머지를 Claude 로 넘긴다(유료 — ANTHROPIC_MAX_CALLS, 기본 300 건에서 멈춘다).
+gemini 를 쓰다가 키를 다 돌려도 일일 한도가 차거나, 서버 과부하(503) 대기가 LLM_OVERLOAD_WAIT 초
+(기본 600)를 넘으면 그 실행의 나머지를 Claude 로 넘긴다. CLAUDE_CODE_OAUTH_TOKEN 이 있으면 Claude Code CLI
+(`claude -p`, 구독 — `claude setup-token` 으로 발급), 없고 ANTHROPIC_API_KEY 가 있으면 API(유료 —
+ANTHROPIC_MAX_CALLS, 기본 300 건에서 멈춘다). 10-27 에 503 대기만으로 evidence.yml 2시간 제한을 넘겼다.
 
 모델 이름은 자주 바뀌므로 코드에 박지 않는다. 지정이 없으면 계정에서 쓸 수 있는
 모델을 조회해 고른다.
@@ -22,7 +24,9 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 
 import httpx
@@ -265,12 +269,71 @@ def anthropic_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -
     return text
 
 
-CALLS = {"gemini": gemini_call, "ollama": ollama_call, "anthropic": anthropic_call}
-_fell_back = False  # gemini 한도가 다 차서 이 실행의 나머지를 anthropic 으로 돌리는 중
+# --------------------------------------------------------------------------- Claude Code
+
+CLAUDE_CODE_DEFAULT = "sonnet"
+_cc_used = 0
+
+
+def claude_code_call(prompt: str, schema: dict | None, pdf: bytes | None = None) -> str:
+    """Claude Code CLI 한 번. 도구·MCP·설정 파일 없이 답만 받는다. 인증은 CLAUDE_CODE_OAUTH_TOKEN(CI)이나
+    이 컴퓨터의 로그인. 구독 사용 한도에 걸리면 QuotaExhausted 로 깨끗이 멈춘다."""
+    global _cc_used
+    if pdf:
+        raise LLMError("claude_code 는 PDF 입력을 지원하지 않습니다. LLM_PROVIDER=gemini 로 바꾸세요.")
+    if schema:
+        prompt += ("\n\n다음 JSON 스키마에 맞는 JSON 하나만 답하세요. 다른 글은 쓰지 마세요.\n"
+                   + json.dumps(schema, ensure_ascii=False))
+    try:
+        r = subprocess.run(
+            ["claude", "-p", "--tools", "", "--output-format", "json", "--no-session-persistence",
+             "--strict-mcp-config", "--setting-sources", "", "--model",
+             os.getenv("CLAUDE_CODE_MODEL", CLAUDE_CODE_DEFAULT)],
+            input=prompt, capture_output=True, text=True, timeout=300,
+            cwd=tempfile.gettempdir())  # 저장소의 CLAUDE.md 를 읽지 않게
+    except FileNotFoundError as e:
+        raise LLMError("claude CLI 가 없습니다 (npm i -g @anthropic-ai/claude-code)") from e
+    except subprocess.TimeoutExpired as e:
+        raise Overloaded("claude 응답 300초 초과") from e
+    try:
+        out = json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        raise LLMError(f"claude 출력 파싱 실패: {_flat(r.stdout or r.stderr)}") from e
+    text = (out.get("result") or "").strip()
+    if out.get("is_error"):
+        if re.search(r"limit|quota", text, re.I):
+            raise QuotaExhausted(f"Claude Code 사용 한도: {_flat(text)}")
+        if out.get("api_error_status") in OVERLOADED:
+            raise Overloaded(f"{out.get('api_error_status')}: {_flat(text)}")
+        raise LLMError(f"Claude Code: {_flat(text)}")
+    if not text:
+        raise LLMError("claude 빈 응답")
+    _cc_used += 1
+    return text
+
+
+CALLS = {"gemini": gemini_call, "ollama": ollama_call, "anthropic": anthropic_call, "claude_code": claude_code_call}
+_fallback: str | None = None  # gemini 를 못 써서 이 실행의 나머지를 넘긴 곳
+_overload_s = 0                # 이 실행에서 gemini 과부하로 기다린 초
 
 
 def active() -> str:
-    return "anthropic" if _fell_back else PROVIDER
+    return _fallback or PROVIDER
+
+
+def fall_back(why: str) -> bool:
+    """gemini 에서 Claude 로 넘긴다. 넘길 곳이 없으면 False(호출한 쪽이 원래대로 멈춘다)."""
+    global _fallback
+    if active() != "gemini":
+        return False
+    if os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+        _fallback, model = "claude_code", os.getenv("CLAUDE_CODE_MODEL", CLAUDE_CODE_DEFAULT)
+    elif os.getenv("ANTHROPIC_API_KEY"):
+        _fallback, model = "anthropic", os.getenv("ANTHROPIC_MODEL", ANTHROPIC_DEFAULT)
+    else:
+        return False
+    print(f"[llm] {why} → 나머지는 {_fallback} ({model})", file=sys.stderr)
+    return True
 
 
 def complete(prompt: str, schema: dict | None = None, retries: int = 4,
@@ -280,7 +343,7 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
     pdf 를 주면 텍스트 대신 PDF 원본을 그대로 넘긴다. 글꼴에 문자 매핑이 없어
     텍스트 추출이 (cid:NNNN) 으로 깨지는 공보를 이 경로로 처리한다.
     """
-    global _fell_back
+    global _overload_s
     if PROVIDER not in CALLS:
         raise LLMError(f"모르는 LLM_PROVIDER: {PROVIDER} (가능: {', '.join(CALLS)})")
     attempt = 0
@@ -288,23 +351,28 @@ def complete(prompt: str, schema: dict | None = None, retries: int = 4,
         try:
             return CALLS[active()](prompt, schema, pdf)
         except QuotaExhausted:
-            # 일일 한도는 기다려도 그날은 안 풀린다. 남은 키가 있으면 갈아타고, 키를 다 쓰면
-            # ANTHROPIC_API_KEY 가 있을 때만 Claude 로 넘긴다. 둘 다 아니면 올려보내 호출한 쪽이
-            # 깨끗이 멈추게 한다. 키·업체 전환은 재시도 횟수를 소모하지 않는다.
-            if active() != "gemini":
-                raise
-            if gemini_rotate():
+            # 일일 한도는 기다려도 그날은 안 풀린다. 남은 키가 있으면 갈아타고, 키를 다 쓰면 Claude 로 넘긴다.
+            # 넘길 곳이 없으면 올려보내 호출한 쪽이 깨끗이 멈추게 한다. 전환은 재시도 횟수를 소모하지 않는다.
+            if active() == "gemini" and gemini_rotate():
                 continue
-            if not os.getenv("ANTHROPIC_API_KEY"):
+            if not fall_back("제미나이 키 모두 일일 한도 소진"):
                 raise
-            _fell_back = True
-            print(f"[llm] 제미나이 키 모두 일일 한도 소진 → 나머지는 Claude"
-                  f" ({os.getenv('ANTHROPIC_MODEL', ANTHROPIC_DEFAULT)})", file=sys.stderr)
         except (RateLimited, Overloaded) as e:
             attempt += 1
+            busy = isinstance(e, Overloaded) and active() == "gemini"
             if attempt >= retries:
+                if busy and fall_back("제미나이 서버 과부하로 재시도 소진"):
+                    attempt = 0
+                    continue
                 raise
             wait = 20 * attempt
+            # 분당 한도는 기다리면 풀리는 정상 흐름이라 세지 않는다. 과부하는 몇 시간 이어지기도 한다.
+            if busy:
+                _overload_s += wait
+                if _overload_s > int(os.getenv("LLM_OVERLOAD_WAIT", "600")) and fall_back(
+                        f"제미나이 과부하 대기 {_overload_s}초"):
+                    attempt = 0
+                    continue
             what = "분당 한도 초과" if isinstance(e, RateLimited) else f"서버 과부하({str(e)[:3]})"
             print(f"[llm] {what}, {wait}초 대기", file=sys.stderr)
             time.sleep(wait)
@@ -321,6 +389,8 @@ def model_id() -> str:
         return f"gemini:{gemini_model()}"
     if active() == "anthropic":
         return f"anthropic:{os.getenv('ANTHROPIC_MODEL', ANTHROPIC_DEFAULT)}"
+    if active() == "claude_code":
+        return f"claude-code:{os.getenv('CLAUDE_CODE_MODEL', CLAUDE_CODE_DEFAULT)}"
     return f"{PROVIDER}:{os.getenv('OLLAMA_MODEL', 'qwen3:8b')}"
 
 
@@ -328,7 +398,7 @@ def key_usage() -> str:
     """'1번 키 412건 · 2번 키 0건' 형태. 2번이 0 이면 같은 프로젝트라 한도를 공유한
     것이다 — 무료 등급 한도는 키가 아니라 프로젝트 단위다(gemini_keys 주석 참고)."""
     out = " · ".join(f"{i + 1}번 키 {_key_used.get(i, 0)}건" for i in range(len(gemini_keys())))
-    return out + (f" · Claude {_anthropic_used}건" if _fell_back else "")
+    return out + (f" · Claude {_anthropic_used + _cc_used}건" if _fallback else "")
 
 
 def complete_json(prompt: str, schema: dict | None = None, **kw):

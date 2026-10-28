@@ -10,6 +10,14 @@ os.environ.setdefault("GEMINI_API_KEY", "k1, k2 k3")
 import llm  # noqa: E402
 
 
+FALLBACK_KEYS = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+
+
+def keys_off() -> dict:
+    """dotenvx 가 넣은 Claude 키를 잠깐 뺀다(되돌릴 값을 돌려준다). 있으면 재시도 소진이 Claude 전환이 된다."""
+    return {k: os.environ.pop(k) for k in FALLBACK_KEYS if k in os.environ}
+
+
 def reset(raw: str) -> None:
     os.environ["GEMINI_API_KEY"] = raw
     llm._keys = None
@@ -77,6 +85,7 @@ def test_overload_is_retried_then_raised():
     reset("a")
     llm.PROVIDER = "gemini"
     sleep, llm.time.sleep = llm.time.sleep, lambda s: None
+    saved = keys_off()
     try:
         n = [0]
 
@@ -99,6 +108,7 @@ def test_overload_is_retried_then_raised():
         assert n[0] == -97, n
     finally:
         llm.time.sleep = sleep
+        os.environ.update(saved)
 
 
 def test_pick_skips_latest_alias():
@@ -111,7 +121,7 @@ def test_pick_skips_latest_alias():
 def test_falls_back_to_claude_only_with_key():
     # 제미나이 키를 다 쓰면 ANTHROPIC_API_KEY 가 있을 때만 Claude 로 넘어가고, 그 뒤는 계속 Claude 다.
     reset("a")
-    llm.PROVIDER, llm._fell_back = "gemini", False
+    llm.PROVIDER, llm._fallback = "gemini", None
 
     def exhausted(prompt, schema, pdf=None):
         raise llm.QuotaExhausted("일일 한도")
@@ -119,7 +129,7 @@ def test_falls_back_to_claude_only_with_key():
     claude: list[str] = []
     llm.CALLS["gemini"] = exhausted
     llm.CALLS["anthropic"] = lambda prompt, schema, pdf=None: claude.append(prompt) or "claude"
-    old = os.environ.pop("ANTHROPIC_API_KEY", None)
+    saved = keys_off()
     try:
         try:
             llm.complete("x")
@@ -134,10 +144,51 @@ def test_falls_back_to_claude_only_with_key():
         assert claude == ["x", "y"] and llm.active() == "anthropic"
         assert llm.model_id().startswith("anthropic:")
     finally:
-        llm._fell_back = False
+        llm._fallback = None
         os.environ.pop("ANTHROPIC_API_KEY", None)
-        if old is not None:
-            os.environ["ANTHROPIC_API_KEY"] = old
+        os.environ.update(saved)
+
+
+def test_long_overload_moves_to_claude_code():
+    # 10-27: 503 대기만으로 evidence.yml 2시간 제한을 넘겼다. 과부하 대기가 LLM_OVERLOAD_WAIT 를 넘으면
+    # CLAUDE_CODE_OAUTH_TOKEN 이 있을 때 Claude Code 로 넘어가고, 분당 한도 대기는 세지 않는다.
+    reset("a")
+    llm.PROVIDER, llm._fallback, llm._overload_s = "gemini", None, 0
+    sleep, llm.time.sleep = llm.time.sleep, lambda s: None
+    saved = keys_off()
+    os.environ["CLAUDE_CODE_OAUTH_TOKEN"], os.environ["LLM_OVERLOAD_WAIT"] = "test", "50"
+    seen: list[str] = []
+    try:
+        def busy(prompt, schema, pdf=None):
+            seen.append("gemini")
+            raise llm.Overloaded("503: high demand")
+
+        llm.CALLS["gemini"] = busy
+        llm.CALLS["claude_code"] = lambda prompt, schema, pdf=None: seen.append("cc") or "cc"
+        assert llm.complete("x", retries=10) == "cc"
+        assert seen == ["gemini"] * 2 + ["cc"], seen  # 20+40 = 60초 > 50, 두 번째 대기 전에 넘긴다
+        assert llm.active() == "claude_code" and llm.model_id().startswith("claude-code:")
+        assert llm.complete("y") == "cc" and seen.count("gemini") == 2
+
+        # 분당 한도는 오래 기다려도 넘기지 않는다.
+        reset("a")
+        llm._fallback, llm._overload_s = None, 0
+        n = [0]
+
+        def limited(prompt, schema, pdf=None):
+            n[0] += 1
+            if n[0] < 5:
+                raise llm.RateLimited("429")
+            return "g"
+
+        llm.CALLS["gemini"] = limited
+        assert llm.complete("z", retries=10) == "g" and llm.active() == "gemini"
+    finally:
+        llm.time.sleep = sleep
+        llm._fallback, llm._overload_s = None, 0
+        for k in ("CLAUDE_CODE_OAUTH_TOKEN", "LLM_OVERLOAD_WAIT"):
+            os.environ.pop(k, None)
+        os.environ.update(saved)
 
 
 if __name__ == "__main__":
@@ -147,5 +198,6 @@ if __name__ == "__main__":
     test_overload_is_retried_then_raised()
     test_pick_skips_latest_alias()
     test_falls_back_to_claude_only_with_key()
+    test_long_overload_moves_to_claude_code()
     print("ok")
 
