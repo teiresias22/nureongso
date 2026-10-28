@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { dbLive as db, eok, electionYear, KIND_LABEL, noteText, STATUS_BG } from "@/lib/db";
 import { pageOg, REPORT_URL } from "@/lib/site";
-import { HEAD_TERM_START, kstDate, REASON_LABEL, reviewText, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
+import { HEAD_TERM_START, kstDate, pledgeHasDetail, REASON_LABEL, reviewText, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
 
 /** ISR 이 아니라 CDN 7일 캐시로 내준다(법안 페이지와 같은 이유). */
 
@@ -40,13 +41,24 @@ const PLEDGE_COLS =
 
 const parseId = (id: string) => (/^\d{1,15}$/.test(id) ? Number(id) : null);
 
+// 메타데이터와 본문이 같은 요청에서 같은 행을 읽는다. 한 번만 읽게 묶는다(쪽마다 DB 왕복 하나 덜).
+// 빌더는 await 할 때마다 요청을 보내므로 async 안에서 await 한 결과를 캐시한다.
+const getPledge = cache(async (pid: number) => await db.from("pledge").select(PLEDGE_COLS).eq("id", pid).maybeSingle());
+const getLog = cache(async (pid: number) =>
+  await db.from("pledge_status_log").select("at, status, note, prev_status, prev_note, reason, rule").eq("pledge_id", pid).order("id"));
+
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const pid = parseId((await params).id);
   if (pid == null) return { title: "찾을 수 없는 공약" };
-  const { data } = await db.from("pledge").select(PLEDGE_COLS).eq("id", pid).maybeSingle();
+  const [{ data }, logRes] = await Promise.all([getPledge(pid), getLog(pid)]);
   if (!data) return { title: "찾을 수 없는 공약" };
   const p = data as unknown as Pledge;
   const st = p.pledge_status;
+  // 상세가 없는 공약은 검색에서 뺀다(링크도 의원 페이지에서 안 단다). 화면은 그대로.
+  const detail = pledgeHasDetail({
+    status: st?.status, note: st?.note, evidenceCount: p.pledge_evidence?.length ?? 0,
+    changed: ((logRes.error ? [] : logRes.data ?? []) as { prev_status: string | null }[]).some((r) => r.prev_status),
+  });
   // 설명에는 실제 값만 — 판정과 그 근거 문장.
   const description = [
     p.member && `${p.member.name}(${p.member.office ?? "국회의원"}) ${electionYear(p.election_id)}년 공약`,
@@ -56,6 +68,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     title: p.title,
     description,
     alternates: { canonical: `/pledge/${pid}` },
+    ...(detail ? {} : { robots: { index: false, follow: true } }),
     ...pageOg(p.title, description, `/pledge/${pid}`, { type: "article" }),
   };
 }
@@ -65,9 +78,9 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   if (pid == null) notFound();
 
   const [base, extra, logRes, priorRes] = await Promise.all([
-    db.from("pledge").select(PLEDGE_COLS).eq("id", pid).maybeSingle(),
+    getPledge(pid),
     db.from("pledge_evidence").select("id, quote, quote_ok, model, prompt, linked_at, review").eq("pledge_id", pid),
-    db.from("pledge_status_log").select("at, status, note, prev_status, prev_note, reason, rule").eq("pledge_id", pid).order("id"),
+    getLog(pid),
     // 임기 첫해 발주 근거의 취임 전 같은 사업 공고(judge.py prior, 결정 J). 칸이 없으면 오류 → 표시만 빠진다.
     db.from("pledge_evidence").select("id, prior_ref").eq("pledge_id", pid).eq("kind", "bid").not("prior_ref", "is", null),
   ]);
