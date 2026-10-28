@@ -299,7 +299,8 @@ def run_codex(prompt: str) -> str:
         out = os.path.join(d, "last.txt")
         try:
             subprocess.run(["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
-                            "-o", out, prompt], cwd=d, capture_output=True, timeout=300, check=False)
+                            "-o", out, "-"], input=prompt, cwd=d, capture_output=True, text=True,
+                           timeout=300, check=False)  # 인자로 주면 백그라운드에서 stdin 을 기다리며 멈췄다(2026-10-28)
         except subprocess.TimeoutExpired:
             return ""  # 그 줄은 비워 두고 다음에 다시 본다
         return open(out).read() if os.path.exists(out) else ""
