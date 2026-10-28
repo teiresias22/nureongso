@@ -1,7 +1,7 @@
 // 실행: node web/src/lib/timeline.check.mjs  (Node 24 가 .ts 를 그대로 읽는다)
 // 공약 상세의 타임라인: 날짜순, 같은 날은 일어난 일 → 확인한 일, 기준선은 '기록 시작 시점'.
 import assert from "node:assert";
-import { changeMarks, kstDate, REASON_LABEL, reviewText, timeline, versionDiff } from "./timeline.ts";
+import { changeMarks, kstDate, pledgeHasDetail, REASON_LABEL, reviewText, timeline, versionDiff } from "./timeline.ts";
 
 assert.equal(kstDate("20261101"), "2026-11-01");
 assert.equal(kstDate("2026-09-14"), "2026-09-14");
@@ -57,5 +57,18 @@ assert.equal(marks.has(3), false);             // 상태가 그대로면 표시 
 // 검수 표시: 끝에 ':llm' 이 붙으면 LLM 확인(판정 계획 T1.8)
 assert.equal(reviewText("reject:2026-10-19"), "사람 확인: 관련 없음(판정에 쓰지 않음) 10.19");
 assert.equal(reviewText("partial:2026-10-19:llm"), "LLM 확인: 일부만(진행까지) 10.19");
+
+// 공약 상세가 있는가 — 의원 페이지 링크와 공약 페이지 noindex 가 같이 쓴다.
+const thin = { status: "판단불가", note: "no_measure:예산사업", evidenceCount: 0, changed: false };
+assert.equal(pledgeHasDetail(thin), false);
+assert.equal(pledgeHasDetail({ ...thin, status: "진행" }), true);
+assert.equal(pledgeHasDetail({ ...thin, status: "미착수" }), true);
+assert.equal(pledgeHasDetail({ ...thin, evidenceCount: 1 }), true);
+assert.equal(pledgeHasDetail({ ...thin, changed: true }), true);
+// 지난 임기의 예전 근거는 화면에 싣지 않으니 상세가 있는 것으로 치지 않는다.
+assert.equal(pledgeHasDetail({ ...thin, note: "past_term", evidenceCount: 3 }), false);
+assert.equal(pledgeHasDetail({ ...thin, note: "past_term", evidenceCount: 3, changed: true }), true);
+// 아직 판정이 없는 공약(상태 행 없음)은 상세가 없다.
+assert.equal(pledgeHasDetail({ status: null, note: null, evidenceCount: 0, changed: false }), false);
 
 console.log("timeline ok");

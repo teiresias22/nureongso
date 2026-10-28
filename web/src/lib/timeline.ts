@@ -118,3 +118,14 @@ export function timeline(i: TimelineInput): TEvent[] {
   // 정렬은 안정적이라 같은 날·같은 종류는 넣은 순서(이력 id 순)를 지킨다.
   return out.sort((a, b) => a.date.localeCompare(b.date) || rank[a.kind] - rank[b.kind]);
 }
+
+/** 공약 상세 쪽에 보일 것이 있는가. 없으면 의원 페이지가 링크하지 않고 공약 쪽은 검색에서 뺀다 —
+ *  공약 본문은 의원 페이지에 이미 다 나오고, 판단불가·근거 없음·이력 없음이면 상세가 더할 게 없다.
+ *  그런 쪽이 1.6만 개라 크롤러가 한 바퀴 돌 때마다 Vercel 무료 한도를 먹었다(2026-10). */
+export function pledgeHasDetail(p: {
+  status: string | null | undefined; note: string | null | undefined; evidenceCount: number; changed: boolean;
+}): boolean {
+  if (!p.status) return false;
+  const evidence = p.note === "past_term" ? 0 : p.evidenceCount;
+  return p.status !== "판단불가" || evidence > 0 || p.changed;
+}
