@@ -10,7 +10,7 @@ import {
   type BidNotice, type Cosponsor, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
 } from "@/lib/db";
 import { kstYear, ldJson, pageOg, SITE } from "@/lib/site";
-import { changeMarks, daysAgo } from "@/lib/timeline";
+import { changeMarks, daysAgo, pledgeHasDetail } from "@/lib/timeline";
 import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
@@ -434,7 +434,7 @@ export default async function MemberPage({
     { data: rivalRows }, { data: ordinRows }, { data: bidRows },
     { data: attPeers }, { data: linePeers }, { data: issueStats },
     { data: districtBids, count: districtBidTotal }, [{ data: expenseMonths }, { data: expenseRows }],
-    { data: changedRows },
+    { data: changedRows }, { data: everChanged },
   ] = await Promise.all([
     rivalQ, ordinQ, bidQ,
     att
@@ -457,9 +457,15 @@ export default async function MemberPage({
           .eq("pledge.member_code", code).not("prev_status", "is", null)
           .gte("at", daysAgo(30)).order("id")
       : Promise.resolve({ data: [] }),
+    // 판정이 한 번이라도 바뀐 공약. 상세 링크를 달지 정한다(pledgeHasDetail). 사람당 많아야 수십 줄(실측 최대 32).
+    pledges?.length
+      ? db.from("pledge_status_log").select("pledge_id, pledge!inner(member_code)")
+          .eq("pledge.member_code", code).not("prev_status", "is", null)
+      : Promise.resolve({ data: [] }),
   ]);
   // 공약마다 가장 최근에 상태가 바뀐 날(한국 날짜 MM.DD). 규칙 변경만 있으면 '기준 변경' 으로 따로 적는다.
   const changedOn = changeMarks((changedRows ?? []) as Parameters<typeof changeMarks>[0]);
+  const changedIds = new Set((everChanged ?? []).map((r) => (r as { pledge_id: number }).pledge_id));
   const ordinBy = new Map(
     (ordinRows ?? []).map((o) => [o.id as string, o as Ordinance]),
   );
@@ -1022,7 +1028,10 @@ export default async function MemberPage({
                         );
                       })}
                       {p.body && <p className="whitespace-pre-wrap text-muted">{p.body}</p>}
-                      {st && (
+                      {pledgeHasDetail({
+                        status: st?.status, note: st?.note,
+                        evidenceCount: (p.pledge_evidence ?? []).length, changed: changedIds.has(p.id),
+                      }) && (
                         <Link href={`/pledge/${p.id}`} className="inline-block text-foreground underline underline-offset-2">
                           판정 이력·원문 근거 →
                         </Link>
