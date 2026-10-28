@@ -34,22 +34,34 @@ async function all<T extends Record<string, unknown>>(
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
-  const [members, bills, areas] = await Promise.all([
+  const [members, bills, areas, voted, evidence] = await Promise.all([
     all<{ code: string; updated_at: string | null }>(
       "member", "code, updated_at", "code", ["is_incumbent", true],
     ),
     // 법안은 '제안이유 및 주요내용' 원문이 붙은 고유 문서다. 사이트에서 가장 많은 내용이면서
     // 의원 페이지의 50건씩 페이지네이션 뒤에 숨어 있어 크롤러가 끝까지 따라오기 어렵다.
-    all<{ bill_id: string; proc_dt: string | null; proposed_at: string | null }>(
-      "bill", "bill_id, proc_dt, proposed_at", "bill_id",
+    all<{ bill_id: string; proc_dt: string | null; proposed_at: string | null; proc_result: string | null }>(
+      "bill", "bill_id, proc_dt, proposed_at, proc_result", "bill_id",
     ),
     // 지역 허브(/my?sd=&wiw=). '송파구 국회의원' 같은 검색을 받는 곳이다.
     all<Area>("member_area", "member_code, office, sd_name, wiw_name", "member_code"),
+    // 본회의 표결이 있는 법안과 공약 근거 법안. 둘 다 사이트맵에 남긴다.
+    all<{ bill_id: string }>("plenary_bill", "bill_id", "bill_id"),
+    all<{ id: number; ref_id: string }>("pledge_evidence", "id, ref_id", "id", ["kind", "bill"]),
   ]);
   const hubs = Object.entries(regionsOf(areas)).flatMap(([sd, wiws]) => [
     myPath(sd),
     ...wiws.map((w) => myPath(sd, w)),
   ]);
+
+  // 법안 2.2만 쪽을 다 내면 크롤러가 거의 한 번씩만 열어 CDN 이 안 맞고, 한 바퀴가 Vercel 무료 CPU 의
+  // 1/7 이었다(2026-10). 결과가 났거나·표결했거나·공약 근거거나·최근 180일 법안만 낸다(약 5.9천).
+  // 빠진 법안도 의원 페이지 링크로 닿고 색인에서 지우지 않는다.
+  const keep = new Set([...voted.map((v) => v.bill_id), ...evidence.map((e) => e.ref_id)]);
+  const recent = new Date(now.getTime() - 180 * 86400e3).toISOString().slice(0, 10);
+  const listed = bills.filter((b) =>
+    keep.has(b.bill_id) || (b.proposed_at ?? "") >= recent ||
+    (!!b.proc_result && b.proc_result !== "대안반영폐기" && b.proc_result !== "철회"));
 
   return [
     ...["", "/my", "/stats", "/compare", "/network", "/rules", "/about"].map((p) => ({
@@ -65,7 +77,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: m.updated_at ? new Date(m.updated_at) : now,
       priority: 0.8,
     })),
-    ...bills.map((b) => ({
+    ...listed.map((b) => ({
       url: `${SITE}/bill/${b.bill_id}`,
       lastModified: new Date(b.proc_dt || b.proposed_at || now),
       priority: 0.3,
