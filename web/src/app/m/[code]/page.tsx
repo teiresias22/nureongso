@@ -945,7 +945,8 @@ export default async function MemberPage({
             {list.map((p) => {
               const st = p.pledge_status as unknown as
                 { status: string; decided_by: string; note: string | null } | null;
-              const ev = (p.pledge_evidence ?? []) as unknown as {
+              // 지난 임기 공약의 예전 근거는 싣지 않는다(공약 상세와 같음).
+              const ev = (st?.note === "past_term" ? [] : p.pledge_evidence ?? []) as unknown as {
                 kind: string; ref_id: string; summary: string | null;
               }[];
               return (

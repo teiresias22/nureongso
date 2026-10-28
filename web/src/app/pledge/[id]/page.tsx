@@ -75,6 +75,9 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   if (base.error) throw base.error;
   if (!base.data) notFound();
   const p = base.data as unknown as Pledge;
+  // 지난 임기 공약은 판정하지 않는다(past_term). 예전에 붙은 근거는 지우지 않았지만(결정 S) 그 임기에 낸
+  // 기록이 아니라(법안은 22대 것뿐) 싣지 않는다 — 2016 공약 밑에 2026 법안이 근거처럼 보였다.
+  if (p.pledge_status?.note === "past_term") p.pledge_evidence = [];
   // 아래 둘은 새 칸·새 표라 아직 없을 수 있다. 없으면 비운다.
   const extraBy = new Map(((extra.error ? [] : extra.data ?? []) as EvExtra[]).map((e) => [e.id, e]));
   const log = (logRes.error ? [] : logRes.data ?? []) as (LogRow & { rule: string | null })[];
