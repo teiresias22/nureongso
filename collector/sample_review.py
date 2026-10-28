@@ -229,20 +229,21 @@ def final_verdict(r: dict) -> str | None:
     return "partial" if "partial" in (a, b) else None
 
 
-def held_rows(rows: list[dict], held: set[int] = frozenset()) -> list[dict]:
-    """반영하지 않고 사람에게 넘길 LLM 줄: 맞음↔관련 없음으로 갈렸거나 아직 안 봤거나, 반영하면 미착수가 되는 공약."""
+def held_rows(rows: list[dict]) -> list[dict]:
+    """반영하지 않고 사람에게 넘길 LLM 줄: 맞음↔관련 없음으로 갈렸거나 아직 안 봤다.
+    두 모델이 합의한 답은 미착수가 되더라도 그대로 반영한다(2026-10-28 소유자 결정)."""
     return [r for r in rows if r["reviewed_at"] and is_llm(r) and (r["label"] or r["missed"])
-            and (final_verdict(r) is None or int(r["pledge_id"]) in held)]
+            and final_verdict(r) is None]
 
 
-def plan_marks(rows: list[dict], held: set[int] = frozenset()) -> dict[bool, tuple[dict, list]]:
+def plan_marks(rows: list[dict]) -> dict[bool, tuple[dict, list]]:
     """{llm 여부: ({(pid, kind, ref): review}, [(pid, kind, ref, model, review) 추가할 근거])}. DB 없이 계산한다."""
     out = {False: ({}, []), True: ({}, [])}
     for r in rows:
         if not r["reviewed_at"]:
             continue
         llm = is_llm(r)
-        if llm and (final_verdict(r) is None or int(r["pledge_id"]) in held):
+        if llm and final_verdict(r) is None:
             continue
         tail = f"{r['reviewed_at']}{':llm' if llm else ''}"
         marks, adds = out[llm]
@@ -257,6 +258,9 @@ def plan_marks(rows: list[dict], held: set[int] = frozenset()) -> dict[bool, tup
             add = (pid, kind, ref, f"{'llm-reviewer' if llm else 'reviewer'}:{r['reviewed_at']}", f"{verb}:{tail}")
             if add not in adds:
                 adds.append(add)
+    # 놓친 기록으로 찾은 근거가 나중에 근거 줄로 다시 검수되면 그 표시가 이긴다. 둘 다 두면 실행마다 번갈아 쓴다.
+    for marks, adds in out.values():
+        adds[:] = [a for a in adds if a[:3] not in marks]
     return out
 
 
@@ -342,16 +346,16 @@ def write_gold(path: str, rows: list[dict]) -> None:
         w.writerows({c: r.get(c) or "" for c in COLS} for r in rows)
 
 
-def write_human_check(rows: list[dict], held: set[int], folder: str) -> str | None:
+def write_human_check(rows: list[dict], folder: str) -> str | None:
     """보류한 LLM 줄을 사람이 볼 목록으로. 근거마다 맞음 / 관련 없음 / 일부만 을 적어 CSV 로 옮긴다."""
-    rs = held_rows(rows, held)
+    rs = held_rows(rows)
     if not rs:
         return None
     path = os.path.join(folder, f"human-check-{rs[0]['reviewed_at'] or 'x'}.md")
-    out = ["# 사람 확인 — LLM 두 모델이 다르게 봤거나, 반영하면 미착수가 되는 기록", "",
+    out = ["# 사람 확인 — LLM 두 모델이 다르게 봤거나 아직 한쪽만 본 기록", "",
            "근거마다 **맞음 / 관련 없음 / 일부만** 중 하나로 답한다.", ""]
     for r in rs:
-        why = "반영하면 미착수" if int(r["pledge_id"]) in held else "두 모델이 다름" if r.get("codex_label") else "Codex 미확인"
+        why = "두 모델이 다름" if r.get("codex_label") else "Codex 미확인"
         out += [f"## {r['pledge_id']} · {r['title']}  ({why})",
                 f"- 공약: https://nureongso.joon.is-a.dev/pledge/{r['pledge_id']}  (지금 판정: {r['status']} · {r['note']})"]
         if r["ev"]:
@@ -366,8 +370,7 @@ def write_human_check(rows: list[dict], held: set[int], folder: str) -> str | No
     return path
 
 
-def run_apply(conn, rows: list[dict], yes: bool, folder: str, allow: frozenset[int] = frozenset()) -> None:
-    """allow: 소유자가 사람 확인 대신 두 모델 답으로 처리하라고 한 공약. 미착수가 돼도 보류하지 않는다."""
+def run_apply(conn, rows: list[dict], yes: bool, folder: str) -> None:
     judge.wait_ingest(conn, "검수를 반영하지")
     judge.run_snapshot(conn)  # 원천 변화부터 따로 커밋한다(정기 단계와 같은 쓰기)
     with conn.cursor() as cur:
@@ -379,48 +382,36 @@ def run_apply(conn, rows: list[dict], yes: bool, folder: str, allow: frozenset[i
         cur.execute(judge.DECIDE_SQL, judge.PARAMS)
         flushed = cur.rowcount
         cur.execute("create temp table before_apply on commit drop as select pledge_id, status, note from pledge_status")
-        # LLM 표시로 새로 미착수가 되는 공약은 두 모델이 합의해도 빼고(사람 확인) 처음부터 다시 단다.
-        held: set[int] = set()
-        while True:
-            cur.execute("savepoint marks")
-            plan = plan_marks(rows, held)
-            for llm, (marks, adds) in plan.items():
-                if not marks and not adds:
-                    continue
-                cur.execute("select set_config('judge.reason', %s, true)", ("llm" if llm else "reviewer",))
-                # LLM 은 사람이 단 표시를 덮지 않는다. 같은 값은 다시 쓰지 않는다(Disk IO).
-                keep = " and (review is null or review like '%%:llm')" if llm else ""
-                hit = miss = 0
-                for (pid, kind, ref), rv in marks.items():
-                    cur.execute("update pledge_evidence set review = %s where pledge_id = %s and kind = %s and ref_id = %s"
-                                " and review is distinct from %s" + keep, (rv, pid, kind, ref, rv))
-                    hit += cur.rowcount
-                    if not cur.rowcount:
-                        cur.execute("select 1 from pledge_evidence where pledge_id = %s and kind = %s and ref_id = %s",
-                                    (pid, kind, ref))
-                        miss += cur.fetchone() is None
-                for pid, kind, ref, model, rv in adds:
-                    cur.execute("insert into pledge_evidence (pledge_id, kind, ref_id, score, summary, model, review)"
-                                " values (%s, %s, %s, 1, '검수 때 추가', %s, %s) on conflict (pledge_id, kind, ref_id) do update"
-                                " set review = excluded.review where pledge_evidence.review is null"
-                                + (" or pledge_evidence.review like '%%:llm'" if llm else ""),
-                                (pid, kind, ref, model, rv))
-                    hit += cur.rowcount
-                cur.execute(judge.DECIDE_SQL, judge.PARAMS)
-                print(f"[apply] {'LLM' if llm else '사람'} 검수: 표시 {hit}건(근거가 사라져 못 단 것 {miss}) · 판정 {cur.rowcount}건",
-                      file=sys.stderr)
-            cur.execute("select s.pledge_id from before_apply b join pledge_status s using (pledge_id)"
-                        " where s.status = '미착수' and b.status <> '미착수'")
-            llm_pids = {k[0] for k in plan[True][0]} | {a[0] for a in plan[True][1]}
-            bad = {p for (p,) in cur.fetchall()} & llm_pids - held - allow
-            if not bad:
-                break
-            print(f"[apply] LLM 표시로 미착수가 되는 공약 {sorted(bad)} — 사람 확인으로 돌리고 다시 단다", file=sys.stderr)
-            held |= bad
-            cur.execute("rollback to savepoint marks")
-        hc = write_human_check(rows, held, folder)
+        plan = plan_marks(rows)
+        for llm, (marks, adds) in plan.items():
+            if not marks and not adds:
+                continue
+            cur.execute("select set_config('judge.reason', %s, true)", ("llm" if llm else "reviewer",))
+            # LLM 은 사람이 단 표시를 덮지 않는다. 같은 값은 다시 쓰지 않는다(Disk IO).
+            keep = " and (review is null or review like '%%:llm')" if llm else ""
+            hit = miss = 0
+            for (pid, kind, ref), rv in marks.items():
+                cur.execute("update pledge_evidence set review = %s where pledge_id = %s and kind = %s and ref_id = %s"
+                            " and review is distinct from %s" + keep, (rv, pid, kind, ref, rv))
+                hit += cur.rowcount
+                if not cur.rowcount:
+                    cur.execute("select 1 from pledge_evidence where pledge_id = %s and kind = %s and ref_id = %s",
+                                (pid, kind, ref))
+                    miss += cur.fetchone() is None
+            for pid, kind, ref, model, rv in adds:
+                cur.execute("insert into pledge_evidence (pledge_id, kind, ref_id, score, summary, model, review)"
+                            " values (%s, %s, %s, 1, '검수 때 추가', %s, %s) on conflict (pledge_id, kind, ref_id) do update"
+                            " set review = excluded.review where pledge_evidence.review is distinct from excluded.review"
+                            " and (pledge_evidence.review is null"
+                            + (" or pledge_evidence.review like '%%:llm'" if llm else "") + ")",
+                            (pid, kind, ref, model, rv))
+                hit += cur.rowcount
+            cur.execute(judge.DECIDE_SQL, judge.PARAMS)
+            print(f"[apply] {'LLM' if llm else '사람'} 검수: 표시 {hit}건(근거가 사라져 못 단 것 {miss}) · 판정 {cur.rowcount}건",
+                  file=sys.stderr)
+        hc = write_human_check(rows, folder)
         if hc:
-            print(f"[apply] 반영하지 않은 LLM 줄 {len(held_rows(rows, held))}개 → 사람 확인 목록 {hc}", file=sys.stderr)
+            print(f"[apply] 반영하지 않은 LLM 줄 {len(held_rows(rows))}개 → 사람 확인 목록 {hc}", file=sys.stderr)
         cur.execute("select b.status, b.note, s.status, s.note from before_apply b join pledge_status s using (pledge_id)"
                     " where (b.status, b.note) is distinct from (s.status, s.note)")
         moves = Counter((f"{a}({an})", f"{c}({cn})") for a, an, c, cn in cur.fetchall())
@@ -446,7 +437,6 @@ def main():
     ap.add_argument("--yes", action="store_true", help="apply: 미리보기 대신 반영한다")
     # 라벨 CSV 는 위 브랜치에 있고 apply 는 적용된 판의 코드로 돌아야 해서 경로를 따로 받는다.
     ap.add_argument("--dir", default=REVIEW_DIR, help="apply: 라벨 CSV 폴더")
-    ap.add_argument("--allow", default="", help="apply: 미착수가 돼도 두 모델 답으로 반영할 공약 id(쉼표). 소유자 결정 때만")
     a = ap.parse_args()
 
     if a.what == "score":  # DB 없이 CSV 만 읽는다
@@ -466,7 +456,7 @@ def main():
         rows = [r for f in sorted(os.listdir(a.dir)) if f.endswith(".csv")
                 for r in read_gold(os.path.join(a.dir, f))]
         with psycopg.connect(dsn) as c:
-            run_apply(c, rows, a.yes, a.dir, frozenset(int(x) for x in a.allow.split(",") if x.strip()))
+            run_apply(c, rows, a.yes, a.dir)
         return
     with psycopg.connect(dsn) as c, c.cursor() as cur:
         if a.what == "gold":

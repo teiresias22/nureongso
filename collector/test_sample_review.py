@@ -39,10 +39,6 @@ def test_llm_rows_need_codex_agreement():
     assert out[True][1] == [(7, "bill", "H", "llm-reviewer:2026-10-19", "partial:2026-10-19:llm")]
     assert out[False][0] == {(5, "bill", "E"): "reject:2026-10-19"}
     assert [r["pledge_id"] for r in sample_review.held_rows(rows)] == ["2", "3"]
-    # 미착수로 가서 보류한 공약은 합의해도 빼고, 보류 목록에 넣는다.
-    out = sample_review.plan_marks(rows, held={1})
-    assert (1, "bill", "A") not in out[True][0]
-    assert [r["pledge_id"] for r in sample_review.held_rows(rows, held={1})] == ["1", "2", "3"]
 
 
 def test_parse_codex():
