@@ -77,7 +77,6 @@ web/         Next.js (App Router) 프론트, Vercel 배포
              ingest.yml 매일 — ingest.py all (의원·법안·표결·겸직·출결·국외활동·연구단체·연구용역)
              nec.yml    매주 — 선거·당선인·공약, asset.py(국회공보 재산), gwanbo.py(관보 재산)
              evidence.yml 매주 — 조례·발주 수집, judge.py 분류·대조·근거 버전·판정, 원문 구절·재현성 표본
-             race.yml   매일 — 후보 공약 비교를 이어서 다시 만든다(다 돌면 지운다)
              digest.yml 매일 — 구독자 주간 기록 메일(한 사람에게 한 주 한 통, 하루 한도에서 멈추면 다음 날 잇는다)
 ```
 
