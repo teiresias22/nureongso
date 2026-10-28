@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { dbLive as db, lastPart, partyLine, partyColor, type Bill } from "@/lib/db";
@@ -25,16 +26,16 @@ const stripHead = (s: string) => s.replace(/^\s*제안이유\s*및\s*주요내�
 /** 대안·반영 법안 목록에 쓰는 줄. */
 type BillRef = Pick<Bill, "bill_id" | "bill_no" | "name" | "proposer" | "proc_result">;
 const REF_COLS = "bill_id, bill_no, name, proposer, proc_result";
+// 화면·메타데이터가 쓰는 칸만. `select *` 는 created_at·updated_at 같은 안 쓰는 칸까지 실었다.
+const BILL_COLS = "bill_id, bill_no, name, committee, proposed_at, proc_result, proc_dt, proposer, detail_link, summary, alt_bill_id";
+// 메타데이터와 본문이 같은 행을 읽는다. 한 번만. supabase 조회는 await 할 때마다 다시 보내므로 안에서 await 한다.
+const getBill = cache(async (id: string) => await db.from("bill").select(BILL_COLS).eq("bill_id", id).maybeSingle());
 
 export async function generateMetadata(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Metadata> {
   const { id } = await params;
-  const { data } = await db
-    .from("bill")
-    .select("name, bill_no, proc_result, summary")
-    .eq("bill_id", id)
-    .maybeSingle();
+  const { data } = await getBill(id);
   if (!data) return { title: "찾을 수 없는 법안" };
 
   const b = data as Pick<Bill, "name" | "bill_no" | "proc_result"> & { summary: string | null };
@@ -62,7 +63,7 @@ export default async function BillPage({
 
   const [{ data: bill, error: billError }, { data: sponsors }, { data: plenary }, { data: votes }, { data: merged }] =
     await Promise.all([
-      db.from("bill").select("*").eq("bill_id", id).maybeSingle(),
+      getBill(id),
       db
         .from("bill_sponsor_member")
         .select("role, code, name, party")
