@@ -22,7 +22,11 @@ async function all<T extends Record<string, unknown>>(
     let q = db.from(table).select(cols);
     if (eq) q = q.eq(eq[0], eq[1]);
     if (after !== null) q = q.gt(key, after);
-    const { data, error } = await q.order(key).limit(CAP);
+    const page = q.order(key).limit(CAP);
+    let { data, error } = await page;
+    // 빌드 때 DB 캐시가 식어 있으면 한 쪽이 anon 3초 제한(57014)에 걸려 배포가 통째로 실패했다(2026-10-29).
+    // 조회 객체는 await 할 때마다 다시 보내므로 한 번만 다시 읽는다.
+    if (error?.code === "57014") ({ data, error } = await page);
     // 조용히 빈 사이트맵을 내보내면 색인이 통째로 빠진다. 차라리 빌드를 세운다.
     if (error) throw error;
     const rows = (data ?? []) as unknown as T[];
