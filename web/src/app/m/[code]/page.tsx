@@ -10,7 +10,7 @@ import {
   type BidNotice, type Cosponsor, type Ordinance, type PartyLine, type PledgeOverlap, type Rival, type RivalPledge, type Research, type Sidejob, type Study, type Trip,
 } from "@/lib/db";
 import { kstYear, ldJson, pageOg, SITE } from "@/lib/site";
-import { changeMarks, daysAgo, pledgeHasDetail } from "@/lib/timeline";
+import { changeMarks, daysAgo, pledgeHasDetail, reviewCount } from "@/lib/timeline";
 import { CompareButton, ShareButton } from "./actions";
 import { Columns, StackBar, Strip, type Part } from "./charts";
 import { TocNav } from "./toc";
@@ -241,7 +241,7 @@ export default async function MemberPage({
     db
       .from("pledge")
       .select(
-        "id, title, body, category, election_id, source, kinds, pledge_status(status, decided_by, note), pledge_evidence(kind, ref_id, summary)",
+        "id, title, body, category, election_id, source, kinds, pledge_status(status, decided_by, note), pledge_evidence(kind, ref_id, summary, review)",
       )
       .eq("member_code", code)
       .order("order_no"),
@@ -954,8 +954,9 @@ export default async function MemberPage({
                 { status: string; decided_by: string; note: string | null } | null;
               // 지난 임기 공약의 예전 근거는 싣지 않는다(공약 상세와 같음).
               const ev = (st?.note === "past_term" ? [] : p.pledge_evidence ?? []) as unknown as {
-                kind: string; ref_id: string; summary: string | null;
+                kind: string; ref_id: string; summary: string | null; review: string | null;
               }[];
+              const checked = reviewCount(ev.map((e) => e.review));
               return (
                 <li key={p.id}>
                   <Fold
@@ -983,6 +984,7 @@ export default async function MemberPage({
                           {st?.note && (
                             <span className="mt-0.5 block text-xs text-muted">{noteText(st.note, run?.office)}</span>
                           )}
+                          {checked && <span className="block text-[11px] text-muted">{checked}</span>}
                         </span>
                       </span>
                     }

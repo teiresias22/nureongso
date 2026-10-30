@@ -4,7 +4,7 @@ import Link from "@/lib/link";
 import { notFound } from "next/navigation";
 import { dbLive as db, eok, electionYear, KIND_LABEL, noteText, STATUS_BG } from "@/lib/db";
 import { pageOg, REPORT_URL } from "@/lib/site";
-import { HEAD_TERM_START, kstDate, pledgeHasDetail, REASON_LABEL, reviewText, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
+import { HEAD_TERM_START, kstDate, pledgeHasDetail, REASON_LABEL, reviewCount, reviewText, timeline, versionDiff, type Facts, type LogRow } from "@/lib/timeline";
 
 /** ISR 이 아니라 CDN 7일 캐시로 내준다(법안 페이지와 같은 이유). */
 
@@ -157,6 +157,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
   const change = [...log].reverse().find((l) => l.prev_status != null);
   // 표시만 한다. 구절 확인은 판정(완료 등)의 조건이 아니다 — 원문 일치율을 몇 주 본 뒤 정한다(설계 열린 질문 1).
   const quoted = p.pledge_evidence.filter((e) => extraBy.get(e.id)?.quote_ok).length;
+  const checked = reviewCount(p.pledge_evidence.map((e) => extraBy.get(e.id)?.review));
 
   const events = timeline({
     election: p.election_id
@@ -216,6 +217,7 @@ export default async function PledgePage({ params }: { params: Promise<{ id: str
               <span className="text-xs text-muted">{st.decided_by === "reviewer" ? "사람 검수" : "자동 판정"}</span>{" "}
               {st.note && <span>{noteText(st.note, office)}</span>}
             </p>
+            {checked && <p className="mt-1 text-xs text-muted">{checked}</p>}
             {quoted > 0 && (
               <p className="mt-1 text-xs text-muted">
                 ✓ 원문 구절 확인됨 (법안 근거 {p.pledge_evidence.filter((e) => e.kind === "bill").length}건 중 {quoted}건) — 판정에는 쓰지 않는 표시입니다.

@@ -32,6 +32,15 @@ export function reviewText(review: string | null | undefined): string {
   return `${by === "llm" ? "LLM 확인" : "사람 확인"}: ${label}${day ? ` ${day.slice(5).replace("-", ".")}` : ""}`;
 }
 
+/** 공약 하나의 근거 검수 건수 '근거 N건 중 M건 사람 확인 · K건 LLM 확인'. 0건인 항목은 빼고,
+ *  근거가 없거나 검수 표시가 하나도 없으면 빈 문자열. 지난 임기 공약은 부르는 쪽이 근거를 비워 넘긴다. */
+export function reviewCount(reviews: (string | null | undefined)[]): string {
+  const llm = reviews.filter((r) => r?.endsWith(":llm")).length;
+  const human = reviews.filter((r) => r && !r.endsWith(":llm")).length;
+  const parts = [human && `${human}건 사람 확인`, llm && `${llm}건 LLM 확인`].filter(Boolean);
+  return parts.length ? `근거 ${reviews.length}건 중 ${parts.join(" · ")}` : "";
+}
+
 /** 판정 이력의 사유. supabase/schema.sql log_pledge_status() 의 reason 과 1:1. */
 export const REASON_LABEL: Record<string, string> = {
   baseline: "기록 시작 시점 판정",

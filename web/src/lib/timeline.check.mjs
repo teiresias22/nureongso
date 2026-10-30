@@ -1,7 +1,7 @@
 // 실행: node web/src/lib/timeline.check.mjs  (Node 24 가 .ts 를 그대로 읽는다)
 // 공약 상세의 타임라인: 날짜순, 같은 날은 일어난 일 → 확인한 일, 기준선은 '기록 시작 시점'.
 import assert from "node:assert";
-import { changeMarks, kstDate, pledgeHasDetail, REASON_LABEL, reviewText, timeline, versionDiff } from "./timeline.ts";
+import { changeMarks, kstDate, pledgeHasDetail, REASON_LABEL, reviewCount, reviewText, timeline, versionDiff } from "./timeline.ts";
 
 assert.equal(kstDate("20261101"), "2026-11-01");
 assert.equal(kstDate("2026-09-14"), "2026-09-14");
@@ -72,3 +72,8 @@ assert.equal(pledgeHasDetail({ ...thin, note: "past_term", evidenceCount: 3, cha
 assert.equal(pledgeHasDetail({ status: null, note: null, evidenceCount: 0, changed: false }), false);
 
 console.log("timeline ok");
+// 근거 검수 건수: 0건 항목은 빼고, 표시가 없으면 아무것도 달지 않는다
+assert.equal(reviewCount(["ok:2026-10-19", "ok:2026-10-28:llm", "partial:2026-10-28:llm", null]), "근거 4건 중 1건 사람 확인 · 2건 LLM 확인");
+assert.equal(reviewCount(["ok:2026-10-28:llm"]), "근거 1건 중 1건 LLM 확인");
+assert.equal(reviewCount([null, null]), "");
+assert.equal(reviewCount([]), "");
