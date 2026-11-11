@@ -3,9 +3,11 @@ import { SITE } from "@/lib/site";
 
 export default function robots(): MetadataRoute.Robots {
   return {
-    // 공공데이터를 정리해 공개하는 것이 목적이라 검색엔진과 생성형 검색·인용 크롤러
-    // (OAI-SearchBot·ChatGPT-User·Claude-SearchBot·PerplexityBot 등)는 다 받는다.
-    // 대신 llms.txt 에 '공동발의를 대표발의처럼 세지 말 것' 같은 인용 규칙을 적어 둔다.
+    // 여기서는 검색엔진과 생성형 검색·인용 크롤러를 다 받지만, 2026-11-11 부터 Vercel Firewall 의
+    // AI Bots → AI Crawlers 를 Deny 로 둬서 알려진 AI 크롤러(색인·학습용, OAI-SearchBot·PerplexityBot 등)는
+    // robots 와 관계없이 403 을 받는다. Fluid Active CPU 초과로 11-08~12-08 사이트가 402 로 멈춘 뒤의 조치다.
+    // 사용자 요청으로 가져가는 AI Assistants(ChatGPT-User 등)는 Log 라 그대로 들어온다.
+    // llms.txt 의 인용 규칙('공동발의를 대표발의처럼 세지 말 것' 등)은 그쪽이 읽는다.
     rules: [
       {
         userAgent: "*",
@@ -24,7 +26,7 @@ export default function robots(): MetadataRoute.Robots {
       },
       {
         // 모델 학습용 수집기. 검색·인용으로 사람을 데려오지 않으면서 법안 2만 쪽을 통째로
-        // 훑어 Vercel 무료 한도(ISR 쓰기·CPU·전송량)를 먹는다(2026-10 초과). 검색용 봇은 위에서 받는다.
+        // 훑어 Vercel 무료 한도(ISR 쓰기·CPU·전송량)를 먹는다(2026-10 초과). Firewall AI Crawlers Deny 가 같은 봇을 먼저 403 으로 막지만, robots 를 지키는 봇에게 뜻을 남겨 둔다.
         userAgent: [
           "GPTBot", "ClaudeBot", "anthropic-ai", "CCBot", "Bytespider",
           "meta-externalagent", "Amazonbot", "cohere-ai", "Diffbot", "ImagesiftBot", "omgili",
